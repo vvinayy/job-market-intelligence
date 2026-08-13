@@ -1,6 +1,11 @@
 -- =====================================================================
 -- SCHEMA v2 — cities, states, merged skills, split employment fields
 --
+-- REQUIRES cleaning_setup.sql to have already run: the clean_and_populate()
+-- function below calls normalize_skill() and parse_range_min/max(), which
+-- are defined there, not here. Run order: schema.sql, cleaning_setup.sql,
+-- THEN this file, then roles_setup.sql, then trends_setup.sql.
+--
 -- Run once:
 --   psql -U postgres -d jobmarket -f schema_v2.sql
 --   (or open in pgAdmin Query Tool and run the whole file)
