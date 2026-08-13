@@ -1,0 +1,7 @@
+streamlit>=1.30
+pandas>=2.0
+plotly>=5.18
+psycopg2-binary>=2.9
+playwright>=1.40
+fastapi>=0.110
+uvicorn[standard]>=0.27
