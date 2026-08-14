@@ -1,18 +1,18 @@
 """
 Cleaning layer — raw_postings -> cleaned_postings, in Python.
 
-Previously this transformation lived as PL/pgSQL functions in
-cleaning_setup.sql, schema_v2.sql and roles_setup.sql: normalize_skill(),
-parse_range_min/max(), parse_employment_type(), parse_contract_type(),
-normalize_working_type(), classify_role(), and clean_and_populate()
-itself. All of that logic now lives here instead — Postgres is read
-from and written to, but no cleaning decision is made inside it anymore.
+Previously this transformation lived as PL/pgSQL functions across a
+few now-retired SQL files: normalize_skill(), parse_range_min/max(),
+parse_employment_type(), parse_contract_type(), normalize_working_type(),
+classify_role(), and clean_and_populate() itself. All of that logic now
+lives here instead — Postgres is read from and written to, but no
+cleaning decision is made inside it anymore.
 
 Same tables, same columns, same values. cleaned_postings and
-posting_cities keep the exact shape schema_v2.sql defined; every
-computed value here matches what the SQL functions were already
-producing (verified row-for-row against the live database before this
-replaced them — see the migration notes in the project history).
+posting_cities keep the exact shape schema.sql defines; every computed
+value here matches what the SQL functions were already producing
+(verified row-for-row against the live database before this replaced
+them — see the migration notes in the project history).
 
 One deliberate behavior change from the old SQL: cleaned_postings.url/
 title/company now refresh on every re-scrape, matching the fix already
