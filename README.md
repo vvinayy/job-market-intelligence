@@ -7,13 +7,13 @@ Postings come from a fixed set of Naukri searches and cities, sampled daily — 
 ## Architecture
 
 ```
-Naukri.com → Playwright scraper → PostgreSQL (raw) → SQL cleaning layer
+Naukri.com → Playwright scraper → PostgreSQL (raw) → Python cleaning layer
            → PostgreSQL (cleaned) → FastAPI → Streamlit dashboard
 ```
 
 - **Collection** (`naukri_collector.py`, `skill_taxonomy.py`) — Playwright scraper, visible browser (Naukri blocks headless). Discovers job URLs from a search page, then reads each posting's fields directly off labelled DOM elements — no AI, no guessing. A regex-based skill taxonomy mines the description text for tools/frameworks Naukri's own tags missed.
 - **Storage** (`job_database.py`) — writes to `raw_postings`, deduped by a fingerprint of company + title + location + experience. A repeat sighting refreshes every field to its latest known value (salary, description, URL — postings do get edited after they go live) while preserving `first_seen_date`.
-- **Cleaning layer** (`schema.sql`, `cleaning_setup.sql`, `schema_v2.sql`, `roles_setup.sql`, `trends_setup.sql`, run in that order) — pure PL/pgSQL. `clean_and_populate()` rebuilds `cleaned_postings` from `raw_postings`: normalizes skill spelling, splits employment/contract/work-mode fields, resolves free-text locations to a `cities`/`states` schema, classifies titles into role families. `snapshot_daily_skills()` freezes one skill-count-per-day so trends are possible even though `cleaned_postings` itself is overwritten on every run.
+- **Cleaning layer** (`cleaning.py`) — plain Python, not SQL. Reads `raw_postings`, computes every derived field (skill normalization, experience/salary range parsing, work-mode/employment/contract-type detection, city resolution, role classification), writes `cleaned_postings` and `posting_cities`. Postgres stores; Python decides. `schema.sql` and `schema_v2.sql` only define table shapes now — the transformation logic that used to live in PL/pgSQL functions moved here. `snapshot_daily_skills()` (still SQL, in `trends_setup.sql`) freezes one skill-count-per-day afterward, since `cleaned_postings` itself is overwritten on every run.
 - **API** (`api/`) — FastAPI + Pydantic + a psycopg2 connection pool, no ORM. Four routers: `postings` (filtered/paginated search), `reference` (canonical lookups for filter UIs), `analytics` (aggregates), `trends` (time series, movers). Every query is parameterised. Interactive docs at `/docs`.
 - **Dashboard** (`Home.py`, `pages/`, `dash_common.py`) — Streamlit multipage app, Plotly charts. `dash_common.py` is the only file that talks HTTP; every page calls named wrapper functions there, which hit the API and cache results for 5 minutes. Pages have no knowledge of the database schema.
 - **Automation** (`run_daily_scrape.bat`, `start_demo.bat`, Windows Task Scheduler) — daily scrape → clean → snapshot, logged per run. `start_demo.bat` brings up the API and waits for a real health check before starting the dashboard, so nothing races.
@@ -24,11 +24,10 @@ Naukri.com → Playwright scraper → PostgreSQL (raw) → SQL cleaning layer
 naukri_collector.py      scraper — discovery + detail extraction
 skill_taxonomy.py        regex skill vocabulary used by the scraper
 job_database.py          scraper's DB layer — fingerprinting, upsert
-schema.sql                base schema — raw_postings
-cleaning_setup.sql         skill alias table, normalize_skill(), parse_range_min/max()
-schema_v2.sql               cities/states, cleaned_postings, clean_and_populate()
-roles_setup.sql               role-family classification
-trends_setup.sql               daily snapshot + trend views
+cleaning.py               cleaning layer — raw_postings -> cleaned_postings, in Python
+schema.sql                 base schema — raw_postings
+schema_v2.sql                table shapes only — cities/states, cleaned_postings, posting_cities
+trends_setup.sql              daily snapshot + trend views
 api/
   main.py               FastAPI app, lifespan-managed connection pool
   database.py           pooled cursor helpers, WhereBuilder
@@ -59,9 +58,7 @@ playwright install chromium
 
 ```
 psql -U postgres -d jobmarket -f schema.sql
-psql -U postgres -d jobmarket -f cleaning_setup.sql
 psql -U postgres -d jobmarket -f schema_v2.sql
-psql -U postgres -d jobmarket -f roles_setup.sql
 psql -U postgres -d jobmarket -f trends_setup.sql
 ```
 
@@ -92,4 +89,4 @@ To scrape on demand:
 python naukri_collector.py "https://www.naukri.com/software-engineer-jobs-in-hyderabad" --limit 20
 ```
 
-Then run `SELECT clean_and_populate();` and `SELECT snapshot_daily_skills();` to bring the cleaned tables and trend history up to date — `run_daily_scrape.bat` does this automatically for the scheduled searches.
+Then run `python cleaning.py` and `SELECT snapshot_daily_skills();` to bring the cleaned tables and trend history up to date — `run_daily_scrape.bat` does this automatically for the scheduled searches.
