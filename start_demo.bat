@@ -57,4 +57,4 @@ start "Job Market Dashboard" cmd /k "streamlit run Home.py"
 
 echo.
 echo Both are launching in their own windows. Streamlit opens your browser
-echo automatically once it's ready. Close both windows when the demo's done.
+echo automatically once it's ready.
