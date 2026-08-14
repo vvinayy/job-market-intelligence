@@ -93,6 +93,10 @@ with tab3:
 
         fig = px.imshow(matrix, color_continuous_scale=dc.SCALE, aspect="auto",
                         labels=dict(color="% of that level's skill mentions"))
+        # A gap between cells turns the grid into distinct boxes instead
+        # of one continuous smear of color — makes each skill/level cell
+        # readable on its own rather than bleeding into its neighbors.
+        fig.update_traces(xgap=3, ygap=3)
         fig.update_layout(height=560, margin=dict(l=0, r=0, t=10, b=0),
                           xaxis_title=None, yaxis_title=None, **dc.TRANSPARENT)
         st.plotly_chart(fig, use_container_width=True)
