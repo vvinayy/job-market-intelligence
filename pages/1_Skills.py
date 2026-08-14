@@ -64,6 +64,24 @@ with tab2:
         st.plotly_chart(fig, use_container_width=True)
         st.caption("Ranked among the 30 most in-demand skills — a pair outside that pool wouldn't appear here even if it were common.")
 
+        st.divider()
+        st.write("Full picture: every pairing among those same skills, not just the top ones.")
+
+        mirrored = pairs.rename(columns={"skill_a": "skill_b", "skill_b": "skill_a"})
+        both = pd.concat([pairs, mirrored], ignore_index=True)
+        matrix = both.pivot_table(index="skill_a", columns="skill_b", values="together", fill_value=0)
+
+        heatmap = px.imshow(matrix, color_continuous_scale=dc.SCALE, aspect="auto",
+                            labels=dict(color="postings together"))
+        # Same box-separation treatment as the experience-level chart —
+        # a gap between cells so each pairing reads as its own square
+        # instead of bleeding into its neighbors.
+        heatmap.update_traces(xgap=2, ygap=2)
+        heatmap.update_layout(height=620, margin=dict(l=0, r=0, t=10, b=0),
+                              xaxis_title=None, yaxis_title=None, **dc.TRANSPARENT)
+        st.plotly_chart(heatmap, use_container_width=True)
+        st.caption("Darker cells mean the two skills are more often requested together. The diagonal (a skill against itself) is always empty.")
+
 
 with tab3:
     st.write("Whether junior and senior postings ask for different things.")
