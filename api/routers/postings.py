@@ -47,7 +47,7 @@ BASE_SELECT = """
         COALESCE(
             (SELECT array_agg(sk.skill_name ORDER BY sk.skill_name)
              FROM posting_skills ps
-             JOIN skills sk ON sk.skill_id = ps.skill_id
+             JOIN skills sk ON sk.skill_id = ANY(ps.skill_ids)
              WHERE ps.job_id = c.job_id),
             '{}'
         ) AS skills,
@@ -78,16 +78,23 @@ def build_filters(
     if skill:
         w.add_raw("""EXISTS (
             SELECT 1 FROM posting_skills ps
-            JOIN skills sk ON sk.skill_id = ps.skill_id
-            WHERE ps.job_id = c.job_id AND sk.skill_name = ANY(%s))""")
+            WHERE ps.job_id = c.job_id
+              AND ps.skill_ids && (SELECT array_agg(skill_id) FROM skills WHERE skill_name = ANY(%s)))""")
         w.params.append(list(skill))
     if skills_all:
-        w.add_raw("""NOT EXISTS (
-            SELECT 1 FROM unnest(%s::text[]) req(skill)
-            WHERE NOT EXISTS (
+        # The count check guards against a requested name that doesn't
+        # match any skill at all — without it, array_agg would silently
+        # drop that name from the containment check below and the filter
+        # would quietly accept postings missing a skill that was asked
+        # for, instead of correctly returning nothing.
+        w.add_raw("""(
+            SELECT COUNT(*) FROM skills WHERE skill_name = ANY(%s)) = %s
+            AND EXISTS (
                 SELECT 1 FROM posting_skills ps
-                JOIN skills sk ON sk.skill_id = ps.skill_id
-                WHERE ps.job_id = c.job_id AND sk.skill_name = req.skill))""")
+                WHERE ps.job_id = c.job_id
+                  AND ps.skill_ids @> (SELECT COALESCE(array_agg(skill_id), '{}') FROM skills WHERE skill_name = ANY(%s)))""")
+        w.params.append(list(skills_all))
+        w.params.append(len(set(skills_all)))
         w.params.append(list(skills_all))
 
     if role_family:

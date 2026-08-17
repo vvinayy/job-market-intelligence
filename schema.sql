@@ -163,18 +163,26 @@ CREATE TABLE skills (
 
 
 -- ---------------------------------------------------------------------
--- POSTING_SKILLS — one row per skill per posting, both sources merged
--- (Naukri's own Key Skills chips and skills found by scanning the
--- description) and deduplicated. References skills(skill_id) rather
--- than storing the skill name directly.
+-- POSTING_SKILLS — one row per posting, skill_ids as an array (both
+-- sources merged — Naukri's own Key Skills chips and skills found by
+-- scanning the description — deduplicated, resolved against the skills
+-- dictionary). GIN-indexed so `&&` (any of) and `@>` (all of) filters
+-- stay fast.
+--
+-- Postgres has no way to enforce a foreign key on individual array
+-- elements, so referential integrity here is an application guarantee,
+-- not a database one — job_database.py only ever writes skill_ids that
+-- came from resolving a name through the skills dictionary. Analytics
+-- that need one row per skill (demand, co-occurrence, suggestions,
+-- the daily snapshot) unnest this array at query time instead of
+-- reading it pre-exploded.
 -- ---------------------------------------------------------------------
 CREATE TABLE posting_skills (
-    job_id    BIGINT NOT NULL REFERENCES cleaned_postings(job_id) ON DELETE CASCADE,
-    skill_id  INT    NOT NULL REFERENCES skills(skill_id),
-    PRIMARY KEY (job_id, skill_id)
+    job_id     BIGINT NOT NULL PRIMARY KEY REFERENCES cleaned_postings(job_id) ON DELETE CASCADE,
+    skill_ids  INT[]  NOT NULL DEFAULT '{}'
 );
 
-CREATE INDEX IF NOT EXISTS idx_posting_skills_skill_id ON posting_skills (skill_id);
+CREATE INDEX IF NOT EXISTS idx_posting_skills_skill_ids ON posting_skills USING GIN (skill_ids);
 
 
 -- ---------------------------------------------------------------------

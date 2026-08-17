@@ -164,7 +164,12 @@ def save_records(records: list[dict]) -> tuple[int, int]:
             for c in deduped:
                 job_id = fingerprint_to_job_id[c["posting"]["fingerprint"]]
                 job_ids_touched.append(job_id)
-                skill_rows += [(job_id, skill_name_to_id[s]) for s in c["skills"]]
+                # posting_skills is one row per posting now (skill_ids is an
+                # array), so every touched posting gets exactly one row here,
+                # even one with no skills — unlike qualifications/cities below,
+                # which stay one-row-per-entry and simply contribute zero rows
+                # when a posting has none.
+                skill_rows.append((job_id, sorted(skill_name_to_id[s] for s in c["skills"])))
                 qualification_rows += [(job_id, q["level"], q["field_of_study"]) for q in c["qualifications"]]
                 city_rows += [(job_id, city_id) for city_id in c["posting"]["city_ids"]]
 
@@ -177,7 +182,7 @@ def save_records(records: list[dict]) -> tuple[int, int]:
                 cur.execute("DELETE FROM posting_cities WHERE job_id = ANY(%s)", (job_ids_touched,))
 
             if skill_rows:
-                execute_values(cur, "INSERT INTO posting_skills (job_id, skill_id) VALUES %s", skill_rows)
+                execute_values(cur, "INSERT INTO posting_skills (job_id, skill_ids) VALUES %s", skill_rows)
             if qualification_rows:
                 execute_values(cur, "INSERT INTO posting_qualifications (job_id, level, field_of_study) VALUES %s", qualification_rows)
             if city_rows:

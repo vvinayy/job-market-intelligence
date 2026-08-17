@@ -68,7 +68,8 @@ BEGIN
         COUNT(DISTINCT c.job_id)
     FROM cleaned_postings c
     JOIN posting_skills ps ON ps.job_id = c.job_id
-    JOIN skills sk ON sk.skill_id = ps.skill_id
+    JOIN LATERAL unnest(ps.skill_ids) AS u(skill_id) ON true
+    JOIN skills sk ON sk.skill_id = u.skill_id
     WHERE c.last_seen_date = CURRENT_DATE
     GROUP BY sk.skill_name
     ON CONFLICT (snapshot_date, skill) DO UPDATE
