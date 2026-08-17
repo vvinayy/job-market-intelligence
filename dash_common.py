@@ -168,10 +168,14 @@ def skill_series(skills: list[str]) -> pd.DataFrame:
     return df("/trends/skills", tuple(("skill", s) for s in skills))
 
 
-def movers(limit: int = 25) -> tuple[pd.DataFrame, str]:
+def movers(limit: int = 25, skills: list[str] | None = None) -> tuple[pd.DataFrame, str]:
     """Returns (movers, comparison_mode) — the API picks rolling_7d once
-    enough history exists, previous_day otherwise, and reports which."""
-    data = df("/trends/movers", (("comparison", "auto"), ("limit", limit)))
+    enough history exists, previous_day otherwise, and reports which.
+    Pass skills to see specific ones instead of the biggest movers overall."""
+    params = [("comparison", "auto"), ("limit", limit)]
+    if skills:
+        params += [("skill", s) for s in skills]
+    data = df("/trends/movers", tuple(params))
     mode = data["comparison"].iloc[0] if not data.empty else None
     return data, mode
 

@@ -48,7 +48,13 @@ with tab1:
 
 
 with tab2:
-    data, mode = dc.movers(limit=25)
+    chosen_movers = st.multiselect("Skills to see", tracked, key="movers_skills")
+    st.caption("Listed most in-demand first — leave empty for the biggest movers overall, or pick specific skills to track.")
+
+    data, mode = dc.movers(
+        limit=len(chosen_movers) if chosen_movers else 25,
+        skills=chosen_movers or None,
+    )
 
     if mode == "previous_day":
         st.warning(
@@ -61,7 +67,7 @@ with tab2:
         label = "change vs 7-day average"
 
     if data.empty:
-        st.info("Nothing has moved yet.")
+        st.info("No movement data yet for those skills." if chosen_movers else "Nothing has moved yet.")
     else:
         fig = px.bar(
             data.sort_values("change"), x="change", y="skill", orientation="h",

@@ -68,6 +68,7 @@ def movers(
     limit: int = Query(25, ge=1, le=200),
     direction: str = Query("both", pattern="^(both|up|down)$"),
     on: date | None = Query(None, description="Defaults to the latest snapshot"),
+    skill: list[str] | None = Query(None, description="Restrict to specific skills; omit for the biggest movers overall"),
 ):
     days = fetch_value(
         "SELECT COUNT(DISTINCT snapshot_date) FROM skill_daily_counts") or 0
@@ -103,6 +104,12 @@ def movers(
         """
         order_col = "change_vs_baseline"
 
+    params = [target]
+
+    if skill:
+        sql += " AND skill = ANY(%s)"
+        params.append(list(skill))
+
     if direction == "up":
         sql += f" AND {order_col} > 0"
         ordering = f"ORDER BY {order_col} DESC"
@@ -112,7 +119,8 @@ def movers(
     else:
         ordering = f"ORDER BY ABS({order_col}) DESC"
 
-    return fetch_all(f"{sql} {ordering} LIMIT %s", (target, limit))
+    params.append(limit)
+    return fetch_all(f"{sql} {ordering} LIMIT %s", tuple(params))
 
 
 @router.get("/new-skills", response_model=list[FirstAppearance],
