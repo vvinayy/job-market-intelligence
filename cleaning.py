@@ -505,8 +505,6 @@ def clean_record(raw: dict, city_name_to_id: dict[str, int]) -> dict:
         "contract_type": parse_contract_type(_clean(raw.get("employment_type"))),
         "role_family": classify_role(title),
         "role_category": _clean(raw.get("role_category")),
-        "department": _clean(raw.get("department")),
-        "industry_type": _clean(raw.get("industry_type")),
         "posted_date": _clean(raw.get("posted_date")),
         "posted_raw": _clean(raw.get("posted_raw")),
         "openings": raw.get("openings") if isinstance(raw.get("openings"), int) else None,

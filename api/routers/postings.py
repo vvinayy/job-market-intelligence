@@ -41,7 +41,7 @@ SORTABLE = {
 BASE_SELECT = """
     SELECT
         c.job_id, c.title, c.company, c.role_family,
-        c.role_category, c.department, c.industry_type,
+        c.role_category,
         c.experience_min, c.experience_max,
         c.salary_min, c.salary_max,
         COALESCE(

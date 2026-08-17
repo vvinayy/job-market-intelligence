@@ -119,8 +119,6 @@ CREATE TABLE cleaned_postings (
     contract_type      TEXT,
     role_family        TEXT,
     role_category      TEXT,
-    department         TEXT,
-    industry_type      TEXT,
     posted_date        DATE,
     posted_raw         TEXT,
     openings           INT,

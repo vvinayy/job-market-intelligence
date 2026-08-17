@@ -46,7 +46,7 @@ INSERT INTO cleaned_postings (
     fingerprint, url, title, company, description,
     experience_min, experience_max, salary_min, salary_max,
     city_ids, unmapped_locations, working_type, employment_type, contract_type,
-    role_family, role_category, department, industry_type,
+    role_family, role_category,
     posted_date, posted_raw, openings
 ) VALUES %s
 ON CONFLICT (fingerprint) DO UPDATE SET
@@ -65,8 +65,6 @@ ON CONFLICT (fingerprint) DO UPDATE SET
     contract_type      = EXCLUDED.contract_type,
     role_family        = EXCLUDED.role_family,
     role_category      = EXCLUDED.role_category,
-    department         = EXCLUDED.department,
-    industry_type      = EXCLUDED.industry_type,
     posted_date        = EXCLUDED.posted_date,
     posted_raw         = EXCLUDED.posted_raw,
     openings           = EXCLUDED.openings,
@@ -121,8 +119,7 @@ def save_records(records: list[dict]) -> tuple[int, int]:
                 c["posting"]["city_ids"], c["posting"]["unmapped_locations"],
                 c["posting"]["working_type"], c["posting"]["employment_type"],
                 c["posting"]["contract_type"], c["posting"]["role_family"],
-                c["posting"]["role_category"], c["posting"]["department"],
-                c["posting"]["industry_type"], c["posting"]["posted_date"],
+                c["posting"]["role_category"], c["posting"]["posted_date"],
                 c["posting"]["posted_raw"], c["posting"]["openings"],
             )
             for c in deduped
