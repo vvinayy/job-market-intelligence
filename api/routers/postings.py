@@ -65,7 +65,7 @@ BASE_SELECT = """
 def build_filters(
     skill, skills_all, role_family, company, city, state,
     experience_min, experience_max, has_salary, salary_min, salary_max,
-    working_type, employment_type, contract_type,
+    working_type, employment_type, contract_type, qualification_level,
     posted_after, posted_before, seen_after, search, min_openings,
 ) -> WhereBuilder:
     """Turn optional query parameters into a parameterised WHERE clause."""
@@ -126,6 +126,12 @@ def build_filters(
     if contract_type:
         w.add("c.contract_type = ANY(%s)", list(contract_type))
 
+    if qualification_level:
+        w.add_raw("""EXISTS (
+            SELECT 1 FROM posting_qualifications pq
+            WHERE pq.job_id = c.job_id AND pq.level = ANY(%s))""")
+        w.params.append(list(qualification_level))
+
     w.add("c.posted_date >= %s", posted_after)
     w.add("c.posted_date <= %s", posted_before)
     w.add("c.last_seen_date >= %s", seen_after)
@@ -165,6 +171,7 @@ def list_postings(
     working_type: list[str] | None = Query(None, description="Remote, Hybrid, On-site"),
     employment_type: list[str] | None = Query(None, description="Full Time, Part Time"),
     contract_type: list[str] | None = Query(None, description="Permanent, Contract, Internship"),
+    qualification_level: list[str] | None = Query(None, description="e.g. 'UG', 'PG', 'Doctorate'"),
 
     # --- dates ---
     posted_after: date | None = Query(None),
@@ -186,7 +193,7 @@ def list_postings(
     w = build_filters(
         skill, skills_all, role_family, company, city, state,
         experience_min, experience_max, has_salary, salary_min, salary_max,
-        working_type, employment_type, contract_type,
+        working_type, employment_type, contract_type, qualification_level,
         posted_after, posted_before, seen_after, search, min_openings,
     )
 

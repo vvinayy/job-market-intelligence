@@ -59,6 +59,8 @@ def summary():
         "SELECT COUNT(DISTINCT skill) FROM posting_skills") or 0
     row["cities_covered"] = fetch_value(
         "SELECT COUNT(DISTINCT city_id) FROM posting_cities") or 0
+    row["postings_with_education"] = fetch_value(
+        "SELECT COUNT(DISTINCT job_id) FROM posting_qualifications") or 0
     row["median_openings"] = fetch_value("""
         SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY openings)
         FROM cleaned_postings WHERE openings IS NOT NULL""")
@@ -173,6 +175,22 @@ def location_distribution(
         {w.sql}
         GROUP BY {column} ORDER BY postings DESC LIMIT %s
     """, w.values + (limit,))
+
+
+@router.get("/qualifications", response_model=list[Bucket], summary="Education level breakdown")
+def qualification_distribution():
+    # Denominator is postings that disclose ANY education requirement,
+    # not all postings — Education is a newer field, only populated for
+    # postings scraped after it was added, so dividing by every posting
+    # would understate these percentages for a reason that has nothing
+    # to do with actual demand.
+    total = fetch_value("SELECT COUNT(DISTINCT job_id) FROM posting_qualifications") or 1
+    return fetch_all(f"""
+        SELECT level AS bucket, COUNT(DISTINCT job_id)::int AS postings,
+               ROUND(100.0 * COUNT(DISTINCT job_id) / {total}, 2)::float AS share_pct
+        FROM posting_qualifications
+        GROUP BY level ORDER BY postings DESC
+    """)
 
 
 @router.get("/openings", response_model=list[Bucket], summary="Vacancies per posting")

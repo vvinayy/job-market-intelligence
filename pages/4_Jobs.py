@@ -25,11 +25,13 @@ role_family = f2.multiselect("Role", dc.roles(), key="jobs_role")
 cities_df = dc.cities_reference()
 city = f3.multiselect("City", cities_df["city_name"].tolist() if not cities_df.empty else [], key="jobs_city")
 
-f4, f5, f6 = st.columns(3)
+f4, f5, f6, f10 = st.columns(4)
 exp = f4.slider("Experience range required (years)", 0, 20, (0, 20), key="jobs_exp",
                  help="Matches postings whose minimum requirement falls in this range.")
 working_type = f5.multiselect("Work arrangement", ["On-site", "Hybrid", "Remote"], key="jobs_wt")
 has_salary = f6.checkbox("Only postings that disclose salary", key="jobs_salary")
+qualification_level = f10.multiselect("Education level", ["UG", "PG", "Doctorate"], key="jobs_qual",
+                                       help="Only postings scraped since Education tracking was added carry this field.")
 
 f7, f8, f9 = st.columns(3)
 search = f7.text_input("Search title or company", key="jobs_search")
@@ -54,6 +56,7 @@ filters = dict(
     skill=skill or None, role_family=role_family or None, city=city or None,
     experience_min=exp[0], experience_max=exp[1],
     working_type=working_type or None, has_salary=True if has_salary else None,
+    qualification_level=qualification_level or None,
     search=search or None,
 )
 signature = (tuple(sorted((k, tuple(v) if isinstance(v, list) else v) for k, v in filters.items())),

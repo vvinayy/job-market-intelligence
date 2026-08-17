@@ -72,6 +72,27 @@ with tab1:
             "posting with no badge is On-site by Naukri's own convention, not an unknown."
         )
 
+    st.divider()
+    st.subheader("Education requirements")
+    quals = dc.qualification_distribution()
+
+    if quals.empty:
+        st.info("No education data yet — this field was added recently, so only postings scraped since then carry it.")
+    else:
+        base = int(dc.summary().get("postings_with_education") or 0)
+        fig = px.bar(quals.sort_values("postings"), x="postings", y="bucket", orientation="h",
+                     text="postings", color="postings", color_continuous_scale=dc.SCALE)
+        fig.update_traces(textposition="outside", cliponaxis=False)
+        fig.update_layout(height=280, margin=dict(l=0, r=40, t=10, b=0),
+                          coloraxis_showscale=False, xaxis_title=None, yaxis_title=None,
+                          **dc.TRANSPARENT)
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption(
+            f"Based on the {base} postings that disclose an education requirement so far — "
+            "a much smaller, newer slice of the data than most other charts here. A posting "
+            "can require more than one level (e.g. both UG and PG), so shares don't sum to 100%."
+        )
+
 
 with tab2:
     st.subheader("Who is posting the most")

@@ -23,13 +23,23 @@ import hashlib
 NOT_FOUND = "not found"
 
 
+_HAS_CONTENT_RE = re.compile(r"[A-Za-z0-9]")
+
+
 def _clean(value):
     """Scraper fields use the string "not found" (and sometimes an
     empty value) as a sentinel for "this label wasn't on the page".
     Convert that into a real absence (None) so the database holds NULL
     instead of a magic string, and downstream code doesn't need to
-    know about the scraper's sentinel convention."""
+    know about the scraper's sentinel convention.
+
+    Also treats a string with no actual letters or digits (a bare ","
+    or "-") as absent — a selector occasionally grabs a separator or
+    punctuation-only fragment instead of real content, and that's not
+    a value worth keeping any more than "not found" is."""
     if value in (None, NOT_FOUND, ""):
+        return None
+    if isinstance(value, str) and not _HAS_CONTENT_RE.search(value):
         return None
     return value
 

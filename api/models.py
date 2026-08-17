@@ -101,6 +101,7 @@ class Summary(BaseModel):
     cities_covered: int
     postings_with_salary: int
     salary_disclosure_pct: float
+    postings_with_education: int
     avg_skills_per_posting: float
     median_openings: float | None = None
     max_openings: int | None = None
