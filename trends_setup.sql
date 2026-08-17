@@ -4,7 +4,7 @@
 -- Run once to set up:
 --   psql -U postgres -d jobmarket -f trends_setup.sql
 --
--- Then, once per day AFTER clean_and_populate():
+-- Then, once per day AFTER the scrape completes:
 --   SELECT snapshot_daily_skills();
 -- =====================================================================
 
@@ -64,11 +64,12 @@ BEGIN
     INSERT INTO skill_daily_counts (snapshot_date, skill, posting_count)
     SELECT
         CURRENT_DATE,
-        skill,
+        ps.skill,
         COUNT(DISTINCT c.job_id)
-    FROM cleaned_postings c, unnest(c.skills) AS skill
+    FROM cleaned_postings c
+    JOIN posting_skills ps ON ps.job_id = c.job_id
     WHERE c.last_seen_date = CURRENT_DATE
-    GROUP BY skill
+    GROUP BY ps.skill
     ON CONFLICT (snapshot_date, skill) DO UPDATE
         SET posting_count = EXCLUDED.posting_count;
 

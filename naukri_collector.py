@@ -97,6 +97,30 @@ def safe_texts(scope, selector: str) -> list[str]:
         return []
 
 
+def safe_education(page) -> dict[str, str]:
+    """Naukri's Education block lists UG/PG/Doctorate as label:value rows
+    under styles_education__KXFkO — but not every posting shows all
+    three (a posting with no doctorate requirement often omits that row
+    entirely rather than showing 'not required'), so this reads
+    whatever rows are actually present instead of assuming a fixed set.
+    Never raises — same contract as safe_text/safe_texts."""
+    try:
+        rows = page.query_selector_all("div.styles_education__KXFkO div.styles_details__Y424J")
+        education = {}
+        for row in rows:
+            label_el = row.query_selector("label")
+            span_el = row.query_selector("span")
+            if not label_el or not span_el:
+                continue
+            key = label_el.inner_text().strip().rstrip(":").strip()
+            value = span_el.inner_text().strip()
+            if key and value:
+                education[key] = value
+        return education
+    except Exception:
+        return {}
+
+
 # ---------------------------------------------------------------------
 # STAGE 1 — DISCOVERY
 # Collect job URLs from a search results page.
@@ -149,10 +173,24 @@ def scrape_job_detail(page, url: str) -> dict | None:
     if not skills:
         skills = safe_texts(page, "div.styles_key-skill__GIPn_ span")
 
-    # --- Employment Type: sits in the labelled "other details" block ---
+    # --- Employment Type, Role Category, Department, Industry Type: all
+    # sibling rows in the same labelled "other details" block, same
+    # class, same nested-span markup — just different label text. ---
     employment_type = safe_text(
         page, "div.styles_details__Y424J:has-text('Employment Type') span span"
     )
+    role_category = safe_text(
+        page, "div.styles_details__Y424J:has-text('Role Category') span span"
+    )
+    department = safe_text(
+        page, "div.styles_details__Y424J:has-text('Department') span span"
+    )
+    industry_type = safe_text(
+        page, "div.styles_details__Y424J:has-text('Industry Type') span span"
+    )
+
+    # --- Education: UG/PG/Doctorate, wherever those rows actually appear ---
+    education = safe_education(page)
 
     # --- Working type: Naukri's separate work-mode badge (Hybrid/Remote/WFO) ---
     working_type = safe_text(page, ".styles_jhc__wfhmode__iQwF4 span")
@@ -200,12 +238,17 @@ def scrape_job_detail(page, url: str) -> dict | None:
         "posted_raw": posted_raw or NOT_FOUND,
         "openings": openings if openings is not None else NOT_FOUND,
         "description": description or NOT_FOUND,
+        "role_category": role_category or NOT_FOUND,
+        "department": department or NOT_FOUND,
+        "industry_type": industry_type or NOT_FOUND,
     }
 
-    # Only include this field when the taxonomy actually matched something.
-    # An empty "not found" line adds noise without adding information.
+    # Only include these when something was actually found — an empty
+    # "not found" line, or an empty dict, adds noise without information.
     if tech_in_description:
         record["tech_in_description"] = tech_in_description
+    if education:
+        record["education"] = education
 
     return record
 
@@ -214,12 +257,15 @@ def print_record(record: dict, index: int, total: int):
     print(f"\n--- Job {index}/{total} ---")
     for field in ["title", "company", "experience", "location",
                   "key_skills", "tech_in_description", "employment_type",
+                  "role_category", "department", "industry_type", "education",
                   "working_type", "salary", "posted_date", "openings"]:
         if field not in record:  # omitted fields stay omitted in the output too
             continue
         value = record[field]
         if isinstance(value, list):
             value = ", ".join(value)
+        elif isinstance(value, dict):
+            value = ", ".join(f"{k}: {v}" for k, v in value.items())
         print(f"{field}: {value}")
 
 

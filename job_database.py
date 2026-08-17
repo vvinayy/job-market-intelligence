@@ -1,8 +1,11 @@
 """
-Database layer — fingerprinting and inserting scraped postings.
+Database layer — cleans and writes scraped postings.
 
 Kept separate from the scraper so each file does one job: the scraper
-knows how to read web pages, this knows how to talk to Postgres.
+knows how to read web pages, cleaning.py knows how to turn one scraped
+record into a cleaned one, this knows how to talk to Postgres. There is
+no raw_postings table — every record is cleaned in-process, right here,
+before it's ever written.
 
 Connection settings come from environment variables so no password ends
 up committed in a file:
@@ -16,17 +19,13 @@ up committed in a file:
 """
 
 import os
-import hashlib
 import psycopg2
-from psycopg2.extras import execute_values
+from psycopg2.extras import execute_values, RealDictCursor
+
+from cleaning import clean_record
 
 
 def get_connection():
-    """Open a connection using environment variables.
-
-    psycopg2 reads PGPASSWORD, PGUSER, PGHOST and PGPORT from the
-    environment automatically, but being explicit here makes the
-    defaults visible rather than hidden."""
     return psycopg2.connect(
         dbname=os.environ.get("PGDATABASE", "jobmarket"),
         user=os.environ.get("PGUSER", "postgres"),
@@ -36,135 +35,132 @@ def get_connection():
     )
 
 
-def normalize(text: str | None) -> str:
-    """Lowercase and collapse whitespace, so 'Acme  Corp ' and
-    'acme corp' produce the same fingerprint. Without this, trivial
-    formatting differences would look like different jobs."""
-    if not text:
-        return ""
-    return " ".join(text.lower().split())
-
-
-def make_fingerprint(company: str, title: str, location: str, experience: str = "") -> str:
-    """Turn the identifying fields into one short code.
-
-    Same values always produce the same code, on any machine, every
-    time — that predictability is what makes it usable as a 'have I
-    seen this job before?' check.
-
-    Experience is included deliberately. Large employers post many
-    openings sharing a title and city (Accenture had 15+ 'Custom
-    Software Engineer' roles in Hyderabad), and without experience in
-    the mix they all collapse into one row and real postings are lost.
-    A genuine repost keeps the same experience range, so repost
-    detection still works."""
-    combined = (
-        f"{normalize(company)}|{normalize(title)}"
-        f"|{normalize(location)}|{normalize(experience)}"
-    )
-    return hashlib.sha256(combined.encode()).hexdigest()
-
-
 # ON CONFLICT is where dedup actually happens. If this fingerprint is
-# already in the table, don't insert a second row — refresh it instead.
-#
-# Every field except identity (job_id, fingerprint) and first_seen_date
-# gets overwritten with the latest scrape's values. Naukri postings get
-# edited after they go live — a salary gets added, a description gets
-# reworded, a posting gets relisted under a new URL — and a narrower
-# SET clause would freeze all of that at whatever was true the first
-# time this fingerprint was ever seen, silently going stale on every
-# repeat sighting after.
-INSERT_SQL = """
-INSERT INTO raw_postings (
-    url, fingerprint, title, company, experience, location,
-    key_skills, tech_in_desc, employment_type, working_type, salary,
-    posted_date, posted_raw, openings, description
+# already in the table, refresh it in place instead of inserting a
+# second row. Every field refreshes except job_id and first_seen_date —
+# postings get edited after they go live (a salary gets added, a
+# description gets reworded, a listing moves to a new URL), so a
+# narrower SET clause would silently go stale on every repeat sighting.
+UPSERT_SQL = """
+INSERT INTO cleaned_postings (
+    fingerprint, url, title, company, description,
+    experience_min, experience_max, salary_min, salary_max,
+    city_ids, unmapped_locations, working_type, employment_type, contract_type,
+    role_family, role_category, department, industry_type,
+    posted_date, posted_raw, openings
 ) VALUES %s
-ON CONFLICT (fingerprint) DO UPDATE
-    SET url              = EXCLUDED.url,
-        title             = EXCLUDED.title,
-        company           = EXCLUDED.company,
-        experience        = EXCLUDED.experience,
-        location          = EXCLUDED.location,
-        key_skills        = EXCLUDED.key_skills,
-        tech_in_desc      = EXCLUDED.tech_in_desc,
-        employment_type   = EXCLUDED.employment_type,
-        working_type      = EXCLUDED.working_type,
-        salary            = EXCLUDED.salary,
-        posted_date       = EXCLUDED.posted_date,
-        posted_raw        = EXCLUDED.posted_raw,
-        openings          = EXCLUDED.openings,
-        description       = EXCLUDED.description,
-        last_seen_date    = CURRENT_DATE,
-        times_seen        = raw_postings.times_seen + 1
-RETURNING (xmax = 0) AS was_inserted;
+ON CONFLICT (fingerprint) DO UPDATE SET
+    url                = EXCLUDED.url,
+    title              = EXCLUDED.title,
+    company            = EXCLUDED.company,
+    description        = EXCLUDED.description,
+    experience_min     = EXCLUDED.experience_min,
+    experience_max     = EXCLUDED.experience_max,
+    salary_min         = EXCLUDED.salary_min,
+    salary_max         = EXCLUDED.salary_max,
+    city_ids           = EXCLUDED.city_ids,
+    unmapped_locations = EXCLUDED.unmapped_locations,
+    working_type       = EXCLUDED.working_type,
+    employment_type    = EXCLUDED.employment_type,
+    contract_type      = EXCLUDED.contract_type,
+    role_family        = EXCLUDED.role_family,
+    role_category      = EXCLUDED.role_category,
+    department         = EXCLUDED.department,
+    industry_type      = EXCLUDED.industry_type,
+    posted_date        = EXCLUDED.posted_date,
+    posted_raw         = EXCLUDED.posted_raw,
+    openings           = EXCLUDED.openings,
+    last_seen_date     = CURRENT_DATE,
+    times_seen         = cleaned_postings.times_seen + 1
+RETURNING job_id, fingerprint, (xmax = 0) AS was_inserted;
 """
 
 
 def save_records(records: list[dict]) -> tuple[int, int]:
-    """Write scraped postings to raw_postings.
+    """Clean and write scraped postings — cleaned_postings, plus
+    posting_skills, posting_qualifications and posting_cities for
+    whatever job_ids this batch actually touched.
 
     Returns (new_count, repeat_count) so the run can report how much
     was genuinely new versus already known."""
     if not records:
         return 0, 0
 
-    rows = []
-    seen_fingerprints = set()
-    skipped_in_batch = 0
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT city_id, city_name FROM cities")
+            city_name_to_id = {row["city_name"]: row["city_id"] for row in cur.fetchall()}
 
-    for r in records:
-        # Fields that may be absent (tech_in_description is omitted when
-        # empty) or the "not found" placeholder — store NULL instead, so
-        # the database holds a real absence rather than a magic string.
-        def clean(value):
-            return None if value in (None, "not found", "") else value
-
-        fingerprint = make_fingerprint(
-            r.get("company", ""),
-            r.get("title", ""),
-            r.get("location", ""),
-            r.get("experience", ""),
-        )
+        cleaned = [clean_record(r, city_name_to_id) for r in records]
 
         # Postgres can't ON CONFLICT DO UPDATE the same row twice inside
         # one statement, so duplicates have to be removed BEFORE the
         # insert. Naukri does list the same job more than once on a
         # single search page, so this fires in practice.
-        if fingerprint in seen_fingerprints:
-            skipped_in_batch += 1
-            continue
-        seen_fingerprints.add(fingerprint)
+        seen_fingerprints = set()
+        deduped = []
+        skipped_in_batch = 0
+        for c in cleaned:
+            fp = c["posting"]["fingerprint"]
+            if fp in seen_fingerprints:
+                skipped_in_batch += 1
+                continue
+            seen_fingerprints.add(fp)
+            deduped.append(c)
 
-        rows.append((
-            r.get("url"),
-            fingerprint,
-            clean(r.get("title")),
-            clean(r.get("company")),
-            clean(r.get("experience")),
-            clean(r.get("location")),
-            r.get("key_skills") if isinstance(r.get("key_skills"), list) else None,
-            r.get("tech_in_description") if isinstance(r.get("tech_in_description"), list) else None,
-            clean(r.get("employment_type")),
-            clean(r.get("working_type")),
-            clean(r.get("salary")),
-            clean(r.get("posted_date")),   # already an ISO date string, or None
-            clean(r.get("posted_raw")),
-            clean(r.get("openings")),
-            clean(r.get("description")),
-        ))
+        if skipped_in_batch:
+            print(f"  ({skipped_in_batch} duplicate posting(s) within this batch collapsed into one)")
 
-    if skipped_in_batch:
-        print(f"  ({skipped_in_batch} duplicate posting(s) within this batch collapsed into one)")
+        rows = [
+            (
+                c["posting"]["fingerprint"], c["posting"]["url"], c["posting"]["title"],
+                c["posting"]["company"], c["posting"]["description"],
+                c["posting"]["experience_min"], c["posting"]["experience_max"],
+                c["posting"]["salary_min"], c["posting"]["salary_max"],
+                c["posting"]["city_ids"], c["posting"]["unmapped_locations"],
+                c["posting"]["working_type"], c["posting"]["employment_type"],
+                c["posting"]["contract_type"], c["posting"]["role_family"],
+                c["posting"]["role_category"], c["posting"]["department"],
+                c["posting"]["industry_type"], c["posting"]["posted_date"],
+                c["posting"]["posted_raw"], c["posting"]["openings"],
+            )
+            for c in deduped
+        ]
 
-    conn = get_connection()
-    try:
         with conn.cursor() as cur:
-            results = execute_values(cur, INSERT_SQL, rows, fetch=True)
-            # xmax = 0 means the row was newly inserted rather than updated.
-            new_count = sum(1 for row in results if row[0])
+            results = execute_values(cur, UPSERT_SQL, rows, fetch=True)
+            # Looked up by fingerprint rather than trusting result order
+            # to match input order — true in practice for a single
+            # multi-row INSERT, but this doesn't rely on it either way.
+            fingerprint_to_job_id = {row[1]: row[0] for row in results}
+            new_count = sum(1 for row in results if row[2])
             repeat_count = len(results) - new_count
+
+            skill_rows, qualification_rows, city_rows, job_ids_touched = [], [], [], []
+
+            for c in deduped:
+                job_id = fingerprint_to_job_id[c["posting"]["fingerprint"]]
+                job_ids_touched.append(job_id)
+                skill_rows += [(job_id, s["skill"], s["category"]) for s in c["skills"]]
+                qualification_rows += [(job_id, q["level"], q["field_of_study"]) for q in c["qualifications"]]
+                city_rows += [(job_id, city_id) for city_id in c["posting"]["city_ids"]]
+
+            # Rebuild each touched posting's skills/qualifications/cities —
+            # cheap at this scale, and avoids stale rows when a posting's
+            # skills or location change between scrapes.
+            if job_ids_touched:
+                cur.execute("DELETE FROM posting_skills WHERE job_id = ANY(%s)", (job_ids_touched,))
+                cur.execute("DELETE FROM posting_qualifications WHERE job_id = ANY(%s)", (job_ids_touched,))
+                cur.execute("DELETE FROM posting_cities WHERE job_id = ANY(%s)", (job_ids_touched,))
+
+            if skill_rows:
+                execute_values(cur, "INSERT INTO posting_skills (job_id, skill, category) VALUES %s", skill_rows)
+            if qualification_rows:
+                execute_values(cur, "INSERT INTO posting_qualifications (job_id, level, field_of_study) VALUES %s", qualification_rows)
+            if city_rows:
+                execute_values(cur, "INSERT INTO posting_cities (job_id, city_id) VALUES %s ON CONFLICT DO NOTHING", city_rows)
+
         conn.commit()
         return new_count, repeat_count
     finally:

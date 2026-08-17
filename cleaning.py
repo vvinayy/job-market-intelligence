@@ -1,47 +1,59 @@
 """
-Cleaning layer — raw_postings -> cleaned_postings, in Python.
+Cleaning layer — one scraped record in, a cleaned record out. Pure
+Python, no PL/pgSQL.
 
-Previously this transformation lived as PL/pgSQL functions across a
-few now-retired SQL files: normalize_skill(), parse_range_min/max(),
-parse_employment_type(), parse_contract_type(), normalize_working_type(),
-classify_role(), and clean_and_populate() itself. All of that logic now
-lives here instead — Postgres is read from and written to, but no
-cleaning decision is made inside it anymore.
+Called in-process by the scraper (job_database.py), right after each
+posting is scraped — there is no raw_postings table and no separate
+batch step. clean_record() is the single entry point: it takes one
+record shaped like naukri_collector.py's scrape_job_detail() output
+and returns everything needed to write it — the cleaned_postings row,
+plus the derived skills (with categories) and qualifications.
 
-Same tables, same columns, same values. cleaned_postings and
-posting_cities keep the exact shape schema.sql defines; every computed
-value here matches what the SQL functions were already producing
-(verified row-for-row against the live database before this replaced
-them — see the migration notes in the project history).
-
-One deliberate behavior change from the old SQL: cleaned_postings.url/
-title/company now refresh on every re-scrape, matching the fix already
-applied to raw_postings. The old SQL never refreshed them here, which
-had become inconsistent with that fix.
-
-Run standalone:
-    python cleaning.py
-Or import:
-    from cleaning import clean_and_populate
-    clean_and_populate()
+fingerprinting also lives here now (moved from job_database.py, which
+is now purely a database-I/O layer) since deciding "is this the same
+posting as one we've already seen" is a cleaning decision, not a
+storage one.
 """
 
-import os
 import re
 import math
-
-import psycopg2
-from psycopg2.extras import execute_values, RealDictCursor
+import hashlib
 
 
-def get_connection():
-    return psycopg2.connect(
-        dbname=os.environ.get("PGDATABASE", "jobmarket"),
-        user=os.environ.get("PGUSER", "postgres"),
-        password=os.environ.get("PGPASSWORD"),
-        host=os.environ.get("PGHOST", "localhost"),
-        port=os.environ.get("PGPORT", "5432"),
+NOT_FOUND = "not found"
+
+
+def _clean(value):
+    """Scraper fields use the string "not found" (and sometimes an
+    empty value) as a sentinel for "this label wasn't on the page".
+    Convert that into a real absence (None) so the database holds NULL
+    instead of a magic string, and downstream code doesn't need to
+    know about the scraper's sentinel convention."""
+    if value in (None, NOT_FOUND, ""):
+        return None
+    return value
+
+
+# =====================================================================
+# FINGERPRINTING — same fields always produce the same fingerprint, on
+# any machine, which is what makes it usable as "have I seen this job
+# before?". Experience is included deliberately: large employers post
+# many openings sharing a title and city, and without experience in
+# the mix they'd all collapse into one row.
+# =====================================================================
+def _normalize_for_fingerprint(text: str | None) -> str:
+    if not text:
+        return ""
+    return " ".join(text.lower().split())
+
+
+def make_fingerprint(company: str | None, title: str | None,
+                      location: str | None, experience: str | None) -> str:
+    combined = (
+        f"{_normalize_for_fingerprint(company)}|{_normalize_for_fingerprint(title)}"
+        f"|{_normalize_for_fingerprint(location)}|{_normalize_for_fingerprint(experience)}"
     )
+    return hashlib.sha256(combined.encode()).hexdigest()
 
 
 # =====================================================================
@@ -99,7 +111,9 @@ def normalize_skill(raw_skill: str) -> str:
 
 
 def merge_skills(key_skills: list[str] | None, tech_in_desc: list[str] | None) -> list[str]:
-    """Merge both skill sources, normalize each, drop duplicates."""
+    """Merge both skill sources (Naukri's own Key Skills chips and
+    skills found by scanning the description), normalize each, drop
+    duplicates."""
     combined = (key_skills or []) + (tech_in_desc or [])
     seen = set()
     result = []
@@ -111,6 +125,69 @@ def merge_skills(key_skills: list[str] | None, tech_in_desc: list[str] | None) -
             seen.add(norm)
             result.append(norm)
     return sorted(result)
+
+
+# =====================================================================
+# SKILL CATEGORIES — Frontend / Backend / Database / Cloud-DevOps /
+# Data-ML / Testing / Languages. Covers the canonical names produced by
+# both SKILL_ALIASES above and skill_taxonomy.py's larger vocabulary
+# (that's what actually populates key_skills/tech_in_description, so
+# this needs to cover its canonical names too, not just this file's).
+# Anything not listed here gets category=None rather than a forced
+# guess — an uncategorized skill is honest; a wrongly categorized one
+# isn't.
+# =====================================================================
+SKILL_CATEGORIES = {
+    # Languages
+    "Python": "Languages", "Java": "Languages", "C": "Languages", "C++": "Languages",
+    "C#": "Languages", "Go": "Languages", "Rust": "Languages", "Ruby": "Languages",
+    "PHP": "Languages", "Scala": "Languages", "Kotlin": "Languages", "Swift": "Languages",
+    "R": "Languages", "SQL": "Languages", "Shell scripting": "Languages", "PowerShell": "Languages",
+
+    # Frontend
+    "React": "Frontend", "Angular": "Frontend", "Vue": "Frontend", "Next.js": "Frontend",
+    "HTML": "Frontend", "CSS": "Frontend", "Tailwind": "Frontend", "Bootstrap": "Frontend",
+    "jQuery": "Frontend", "Redux": "Frontend", "JavaScript": "Frontend", "TypeScript": "Frontend",
+    "UI": "Frontend", "UX": "Frontend",
+
+    # Backend
+    "Node.js": "Backend", "Express": "Backend", "Django": "Backend", "Flask": "Backend",
+    "FastAPI": "Backend", "Spring Boot": "Backend", "Spring": "Backend", ".NET": "Backend",
+    ".NET Core": "Backend", "ASP.NET": "Backend", "Entity Framework": "Backend", "MVC": "Backend",
+    "LINQ": "Backend", "Web API": "Backend", "REST API": "Backend", "GraphQL": "Backend",
+    "gRPC": "Backend", "Microservices": "Backend", "API": "Backend", "SDK": "Backend",
+
+    # Database
+    "PostgreSQL": "Database", "MySQL": "Database", "MongoDB": "Database", "Redis": "Database",
+    "Oracle": "Database", "SQL Server": "Database", "Cassandra": "Database",
+    "Elasticsearch": "Database", "DynamoDB": "Database", "Snowflake": "Database", "NoSQL": "Database",
+
+    # Cloud / DevOps
+    "AWS": "Cloud/DevOps", "Azure": "Cloud/DevOps", "GCP": "Cloud/DevOps", "Lambda": "Cloud/DevOps",
+    "S3": "Cloud/DevOps", "EC2": "Cloud/DevOps", "Docker": "Cloud/DevOps", "Kubernetes": "Cloud/DevOps",
+    "Terraform": "Cloud/DevOps", "Ansible": "Cloud/DevOps", "Jenkins": "Cloud/DevOps",
+    "CI/CD": "Cloud/DevOps", "Git": "Cloud/DevOps", "GitHub": "Cloud/DevOps", "GitLab": "Cloud/DevOps",
+    "Linux": "Cloud/DevOps", "Nginx": "Cloud/DevOps", "RabbitMQ": "Cloud/DevOps", "DevOps": "Cloud/DevOps",
+
+    # Data / ML
+    "Pandas": "Data/ML", "NumPy": "Data/ML", "TensorFlow": "Data/ML", "PyTorch": "Data/ML",
+    "scikit-learn": "Data/ML", "LangChain": "Data/ML", "Power BI": "Data/ML", "Tableau": "Data/ML",
+    "Microsoft Fabric": "Data/ML", "Databricks": "Data/ML", "Synapse": "Data/ML",
+    "Data Factory": "Data/ML", "dbt": "Data/ML", "Looker": "Data/ML", "BigQuery": "Data/ML",
+    "Redshift": "Data/ML", "Delta Lake": "Data/ML", "Data Warehouse": "Data/ML", "ETL": "Data/ML",
+    "ELT": "Data/ML", "Solr": "Data/ML", "OpenSearch": "Data/ML", "Lucene": "Data/ML",
+    "Kafka": "Data/ML", "Airflow": "Data/ML", "Spark": "Data/ML", "Hadoop": "Data/ML",
+    "Machine Learning": "Data/ML", "AI": "Data/ML", "NLP": "Data/ML", "LLM": "Data/ML",
+    "RAG": "Data/ML", "IoT": "Data/ML",
+
+    # Testing
+    "NUnit": "Testing", "JUnit": "Testing", "pytest": "Testing", "Selenium": "Testing",
+    "Jest": "Testing",
+}
+
+
+def categorize_skill(skill: str) -> str | None:
+    return SKILL_CATEGORIES.get(skill)
 
 
 # =====================================================================
@@ -146,10 +223,10 @@ def parse_range_max(raw: str | None) -> float | None:
 
 
 def _round_half_up(x: float) -> int:
-    """Matches Postgres's NUMERIC::INT cast (round half away from
-    zero), which Python's built-in round() doesn't guarantee (it rounds
-    half to even). Experience values are virtually always whole numbers
-    in the source text, so this only ever matters at the margin."""
+    """Round half away from zero, matching Postgres's old NUMERIC::INT
+    cast behavior — Python's round() rounds half to even instead.
+    Experience values are virtually always whole numbers in the source
+    text, so this only ever matters at the margin."""
     return math.floor(x + 0.5) if x >= 0 else math.ceil(x - 0.5)
 
 
@@ -261,18 +338,15 @@ def resolve_locations(raw_location: str | None, city_name_to_id: dict[str, int])
 
 
 # =====================================================================
-# ROLE CLASSIFICATION — ported from role_patterns. Lower priority
-# number wins; most-specific patterns are given the lowest numbers so
-# they beat generic catch-alls like "engineer".
+# ROLE CLASSIFICATION — lower priority number wins; most-specific
+# patterns are given the lowest numbers so they beat generic catch-alls
+# like "engineer".
 # =====================================================================
-# Listed in the exact order roles_setup.sql originally inserted them.
-# That order matters: for two patterns tied on priority, Postgres's
-# `ORDER BY priority LIMIT 1` (no secondary sort key) resolved ties by
-# table scan order, which followed insertion order on this untouched
-# table. A Python-side re-sort that didn't preserve this (e.g. sorting
-# ties alphabetically) picks a different winner on real, ambiguous
-# titles like "Data Scientist | Data Engineer (...)" — verified against
-# live data, this is not a hypothetical.
+# For two patterns tied on priority, the first one listed wins — this
+# order matches the original SQL implementation's real tie behavior
+# (table scan order followed insertion order), confirmed against a
+# real ambiguous title ("Data Scientist | Data Engineer (...)") that
+# the two orderings classify differently. Not a hypothetical.
 _ROLE_PATTERNS_SOURCE = [
     ("machine learning", "ML Engineer", 10),
     ("ml engineer", "ML Engineer", 10),
@@ -341,16 +415,11 @@ _ROLE_PATTERNS_SOURCE = [
     ("engineer", "Software Engineer", 30),
     ("analyst", "Business Analyst", 30),
     ("consultant", "Consultant", 28),
-    # Added directly to the live table at some point, not present in
-    # roles_setup.sql — reads like leftover test data ("some phrase" is
-    # not a real job-title fragment). Kept last, matching its later
-    # insertion, and ported faithfully rather than silently dropped.
     ("some phrase", "Data Scientist", 10),
 ]
 
 # Stable sort: for equal priority, order is unchanged from the list
-# above — i.e. insertion order — which is what reproduces the tie
-# behavior actually observed in the live SQL function.
+# above — i.e. insertion order.
 ROLE_PATTERNS = sorted(_ROLE_PATTERNS_SOURCE, key=lambda row: row[2])
 
 
@@ -363,101 +432,78 @@ def classify_role(raw_title: str | None) -> str:
 
 
 # =====================================================================
-# ORCHESTRATION
+# QUALIFICATIONS — Naukri's Education block, read by the scraper as
+# {"UG": "Any Graduate", "PG": "Any Postgraduate", ...}. Not every
+# posting shows all three levels (a posting with no doctorate
+# requirement usually omits that row rather than saying "not
+# required"), so this just normalizes whatever levels are actually
+# present instead of assuming a fixed set.
 # =====================================================================
-UPSERT_SQL = """
-INSERT INTO cleaned_postings (
-    job_id, url, title, company,
-    experience_min, experience_max, salary_min, salary_max,
-    skills, city_ids, working_type, employment_type, contract_type,
-    unmapped_locations, posted_date, openings,
-    first_seen_date, last_seen_date, times_seen, role_family
-) VALUES %s
-ON CONFLICT (job_id) DO UPDATE SET
-    url                = EXCLUDED.url,
-    title              = EXCLUDED.title,
-    company            = EXCLUDED.company,
-    experience_min     = EXCLUDED.experience_min,
-    experience_max     = EXCLUDED.experience_max,
-    salary_min         = EXCLUDED.salary_min,
-    salary_max         = EXCLUDED.salary_max,
-    skills             = EXCLUDED.skills,
-    city_ids           = EXCLUDED.city_ids,
-    working_type       = EXCLUDED.working_type,
-    employment_type    = EXCLUDED.employment_type,
-    contract_type      = EXCLUDED.contract_type,
-    unmapped_locations = EXCLUDED.unmapped_locations,
-    posted_date        = EXCLUDED.posted_date,
-    openings           = EXCLUDED.openings,
-    last_seen_date     = EXCLUDED.last_seen_date,
-    times_seen         = EXCLUDED.times_seen,
-    role_family        = EXCLUDED.role_family;
-"""
+_QUALIFICATION_LEVEL_ALIASES = {
+    "ug": "UG", "under graduate": "UG", "undergraduate": "UG",
+    "pg": "PG", "post graduate": "PG", "postgraduate": "PG",
+    "doctorate": "Doctorate", "phd": "Doctorate", "ph.d": "Doctorate",
+}
 
 
-def clean_and_populate() -> int:
-    """Read raw_postings, compute every cleaned field in Python, write
-    cleaned_postings and posting_cities. Safe to run repeatedly."""
-    conn = get_connection()
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute("SELECT city_id, city_name FROM cities")
-            city_name_to_id = {row["city_name"]: row["city_id"] for row in cur.fetchall()}
-
-            cur.execute("SELECT * FROM raw_postings")
-            raw_rows = cur.fetchall()
-
-        rows = []
-        posting_city_pairs = []
-
-        for r in raw_rows:
-            exp_min = parse_range_min(r["experience"])
-            exp_max = parse_range_max(r["experience"])
-            city_ids, unmapped = resolve_locations(r["location"], city_name_to_id)
-
-            rows.append((
-                r["job_id"], r["url"], r["title"], r["company"],
-                _round_half_up(exp_min) if exp_min is not None else None,
-                _round_half_up(exp_max) if exp_max is not None else None,
-                parse_range_min(r["salary"]),
-                parse_range_max(r["salary"]),
-                merge_skills(r["key_skills"], r["tech_in_desc"]),
-                city_ids,
-                normalize_working_type(r["working_type"]),
-                parse_employment_type(r["employment_type"]),
-                parse_contract_type(r["employment_type"]),
-                unmapped,
-                r["posted_date"], r["openings"],
-                r["first_seen_date"], r["last_seen_date"], r["times_seen"],
-                classify_role(r["title"]),
-            ))
-
-            for city_id in city_ids:
-                posting_city_pairs.append((r["job_id"], city_id))
-
-        with conn.cursor() as cur:
-            if rows:
-                execute_values(cur, UPSERT_SQL, rows)
-
-            # Rebuild the city links — cheap at this scale, avoids stale
-            # rows when a posting's location changes between scrapes.
-            cur.execute("""
-                DELETE FROM posting_cities
-                WHERE job_id IN (SELECT job_id FROM cleaned_postings)
-            """)
-            if posting_city_pairs:
-                execute_values(
-                    cur,
-                    "INSERT INTO posting_cities (job_id, city_id) VALUES %s ON CONFLICT DO NOTHING",
-                    posting_city_pairs,
-                )
-
-        conn.commit()
-        return len(rows)
-    finally:
-        conn.close()
+def parse_qualifications(education: dict[str, str] | None) -> list[dict[str, str]]:
+    if not isinstance(education, dict):
+        return []
+    qualifications = []
+    for level, field_of_study in education.items():
+        level_key = level.strip().lower()
+        normalized_level = _QUALIFICATION_LEVEL_ALIASES.get(level_key, level.strip())
+        field_of_study = (field_of_study or "").strip()
+        if normalized_level and field_of_study:
+            qualifications.append({"level": normalized_level, "field_of_study": field_of_study})
+    return qualifications
 
 
-if __name__ == "__main__":
-    affected = clean_and_populate()
-    print(f"clean_and_populate: {affected} row(s) processed.")
+# =====================================================================
+# clean_record() — the single entry point. Takes one scraped record
+# (naukri_collector.py's scrape_job_detail() shape) plus a city-name ->
+# city_id lookup, returns everything needed to write it.
+# =====================================================================
+def clean_record(raw: dict, city_name_to_id: dict[str, int]) -> dict:
+    experience = _clean(raw.get("experience"))
+    salary = _clean(raw.get("salary"))
+    exp_min = parse_range_min(experience)
+    exp_max = parse_range_max(experience)
+    city_ids, unmapped = resolve_locations(_clean(raw.get("location")), city_name_to_id)
+
+    key_skills = raw.get("key_skills") if isinstance(raw.get("key_skills"), list) else None
+    tech_in_desc = raw.get("tech_in_description") if isinstance(raw.get("tech_in_description"), list) else None
+    skills = merge_skills(key_skills, tech_in_desc)
+
+    title = _clean(raw.get("title"))
+    company = _clean(raw.get("company"))
+
+    posting = {
+        "fingerprint": make_fingerprint(company, title, _clean(raw.get("location")), experience),
+        "url": raw.get("url"),
+        "title": title,
+        "company": company,
+        "description": _clean(raw.get("description")),
+        "experience_min": _round_half_up(exp_min) if exp_min is not None else None,
+        "experience_max": _round_half_up(exp_max) if exp_max is not None else None,
+        "salary_min": parse_range_min(salary),
+        "salary_max": parse_range_max(salary),
+        "city_ids": city_ids,
+        "unmapped_locations": unmapped,
+        "working_type": normalize_working_type(_clean(raw.get("working_type"))),
+        "employment_type": parse_employment_type(_clean(raw.get("employment_type"))),
+        "contract_type": parse_contract_type(_clean(raw.get("employment_type"))),
+        "role_family": classify_role(title),
+        "role_category": _clean(raw.get("role_category")),
+        "department": _clean(raw.get("department")),
+        "industry_type": _clean(raw.get("industry_type")),
+        "posted_date": _clean(raw.get("posted_date")),
+        "posted_raw": _clean(raw.get("posted_raw")),
+        "openings": raw.get("openings") if isinstance(raw.get("openings"), int) else None,
+    }
+
+    return {
+        "posting": posting,
+        "skills": [{"skill": s, "category": categorize_skill(s)} for s in skills],
+        "qualifications": parse_qualifications(raw.get("education")),
+    }

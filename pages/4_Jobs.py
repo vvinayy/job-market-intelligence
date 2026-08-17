@@ -136,10 +136,19 @@ if selected_rows:
         d3.metric("Times seen", detail.get("times_seen") or 1)
         d4.metric("Days listed", detail.get("days_listed") if detail.get("days_listed") is not None else "—")
 
-        if detail.get("key_skills"):
-            st.markdown("**Key skills:** " + ", ".join(detail["key_skills"]))
-        if detail.get("tech_in_description"):
-            st.markdown("**Also mentioned in the description:** " + ", ".join(detail["tech_in_description"]))
+        extra_facts = [
+            f for f in [detail.get("role_category"), detail.get("department"), detail.get("industry_type")]
+            if f
+        ]
+        if extra_facts:
+            st.caption(" · ".join(extra_facts))
+
+        if detail.get("skills"):
+            st.markdown("**Skills:** " + ", ".join(detail["skills"]))
+
+        if detail.get("qualifications"):
+            quals = ", ".join(f"{q['level']}: {q['field_of_study']}" for q in detail["qualifications"])
+            st.markdown("**Education:** " + quals)
 
         st.markdown("**Description**")
         st.write(detail.get("description") or "No description available.")

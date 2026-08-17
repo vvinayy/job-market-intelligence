@@ -101,7 +101,7 @@ def list_skills(
         SELECT skill,
                COUNT(*)::int AS postings,
                ROUND(100.0 * COUNT(*) / {total}, 2)::float AS share_pct
-        FROM cleaned_postings, unnest(skills) AS skill
+        FROM posting_skills
         {where}
         GROUP BY skill
         HAVING COUNT(*) >= %s

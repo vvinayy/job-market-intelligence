@@ -7,26 +7,26 @@ Postings come from a fixed set of Naukri searches and cities, sampled daily — 
 ## Architecture
 
 ```
-Naukri.com → Playwright scraper → PostgreSQL (raw) → Python cleaning layer
-           → PostgreSQL (cleaned) → FastAPI → Streamlit dashboard
+Naukri.com → Playwright scraper → Python cleaning layer (in-process)
+           → PostgreSQL (cleaned_postings + sub-tables) → FastAPI → Streamlit dashboard
 ```
 
-- **Collection** (`naukri_collector.py`, `skill_taxonomy.py`) — Playwright scraper, visible browser (Naukri blocks headless). Discovers job URLs from a search page, then reads each posting's fields directly off labelled DOM elements — no AI, no guessing. A regex-based skill taxonomy mines the description text for tools/frameworks Naukri's own tags missed.
-- **Storage** (`job_database.py`) — writes to `raw_postings`, deduped by a fingerprint of company + title + location + experience. A repeat sighting refreshes every field to its latest known value (salary, description, URL — postings do get edited after they go live) while preserving `first_seen_date`.
-- **Cleaning layer** (`cleaning.py`) — plain Python, not SQL. Reads `raw_postings`, computes every derived field (skill normalization, experience/salary range parsing, work-mode/employment/contract-type detection, city resolution, role classification), writes `cleaned_postings` and `posting_cities`. Postgres stores; Python decides. `schema.sql` only defines table shapes now — the transformation logic that used to live in PL/pgSQL functions moved here. `snapshot_daily_skills()` (still SQL, in `trends_setup.sql`) freezes one skill-count-per-day afterward, since `cleaned_postings` itself is overwritten on every run.
+- **Collection** (`naukri_collector.py`, `skill_taxonomy.py`) — Playwright scraper, visible browser (Naukri blocks headless). Discovers job URLs from a search page, then reads each posting's fields directly off labelled DOM elements — no AI, no guessing: title, company, experience, location, key skills, employment type, work mode, salary, posted date, openings, description, Role Category / Department / Industry Type, and Education (UG/PG/Doctorate, whichever levels a posting actually shows). A regex-based skill taxonomy mines the description text for tools/frameworks Naukri's own tags missed.
+- **Cleaning layer** (`cleaning.py`) — plain Python, not SQL, and not a separate batch step. `clean_record()` takes one scraped posting and returns everything needed to write it: skill normalization, experience/salary range parsing, work-mode/employment/contract-type detection, city resolution, role classification, skill categorization (Frontend/Backend/Database/Cloud-DevOps/Data-ML/Testing/Languages), and qualification-level normalization.
+- **Storage** (`job_database.py`) — calls `clean_record()` on every scraped posting and writes straight into `cleaned_postings`, `posting_skills`, `posting_qualifications`, and `posting_cities`. There is no raw/staging table — nothing scraped is ever stored unprocessed. Dedup is by a fingerprint of company + title + location + experience; a repeat sighting refreshes every field to its latest known value (salary, description, URL — postings do get edited after they go live) while preserving `first_seen_date`. `snapshot_daily_skills()` (SQL, in `trends_setup.sql`) freezes one skill-count-per-day afterward, since `cleaned_postings` itself only ever shows the present.
 - **API** (`api/`) — FastAPI + Pydantic + a psycopg2 connection pool, no ORM. Four routers: `postings` (filtered/paginated search), `reference` (canonical lookups for filter UIs), `analytics` (aggregates), `trends` (time series, movers). Every query is parameterised. Interactive docs at `/docs`.
 - **Dashboard** (`Home.py`, `pages/`, `dash_common.py`) — Streamlit multipage app, Plotly charts. `dash_common.py` is the only file that talks HTTP; every page calls named wrapper functions there, which hit the API and cache results for 5 minutes. Pages have no knowledge of the database schema.
-- **Automation** (`run_daily_scrape.bat`, `start_demo.bat`, Windows Task Scheduler) — daily scrape → clean → snapshot, logged per run. `start_demo.bat` brings up the API and waits for a real health check before starting the dashboard, so nothing races.
+- **Automation** (`run_daily_scrape.bat`, `start_demo.bat`, Windows Task Scheduler) — daily scrape (cleans and writes as it goes) → snapshot, logged per run. `start_demo.bat` brings up the API and waits for a real health check before starting the dashboard, so nothing races.
 
 ## Project structure
 
 ```
 naukri_collector.py      scraper — discovery + detail extraction
 skill_taxonomy.py        regex skill vocabulary used by the scraper
-job_database.py          scraper's DB layer — fingerprinting, upsert
-cleaning.py               cleaning layer — raw_postings -> cleaned_postings, in Python
-schema.sql                 every table shape — raw_postings, cities/states, cleaned_postings, posting_cities
-trends_setup.sql             daily snapshot + trend views
+cleaning.py               cleaning layer — one scraped record in, a cleaned record out
+job_database.py            writes cleaned_postings + posting_skills/qualifications/cities
+schema.sql                   every table shape — cities/states, cleaned_postings, posting_cities/skills/qualifications
+trends_setup.sql                daily snapshot + trend views
 api/
   main.py               FastAPI app, lifespan-managed connection pool
   database.py           pooled cursor helpers, WhereBuilder
@@ -34,12 +34,12 @@ api/
   routers/              postings, reference, analytics, trends
 Home.py                 dashboard landing page
 pages/
-  1_Skills.py           demand, pairings, seniority split, network view
+  1_Skills.py           demand, pairings, seniority split
   2_Market.py           roles, employers, locations, work arrangement
   3_Trends.py           demand over time, movers, new arrivals
   4_Jobs.py             individual posting search
 dash_common.py           shared API client for every dashboard page
-run_daily_scrape.bat     scheduled scrape → clean → snapshot
+run_daily_scrape.bat     scheduled scrape (cleans in-process) → snapshot
 start_demo.bat           health-checked launcher: API, then dashboard
 ```
 
@@ -87,4 +87,4 @@ To scrape on demand:
 python naukri_collector.py "https://www.naukri.com/software-engineer-jobs-in-hyderabad" --limit 20
 ```
 
-Then run `python cleaning.py` and `SELECT snapshot_daily_skills();` to bring the cleaned tables and trend history up to date — `run_daily_scrape.bat` does this automatically for the scheduled searches.
+Each run cleans and writes as it scrapes — no separate cleaning step. Run `SELECT snapshot_daily_skills();` afterward to fold that run into the trend history — `run_daily_scrape.bat` does this automatically for the scheduled searches.

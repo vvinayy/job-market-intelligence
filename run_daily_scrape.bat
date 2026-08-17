@@ -32,12 +32,10 @@ python naukri_collector.py "https://www.naukri.com/data-engineer-jobs-in-hyderab
 python naukri_collector.py "https://www.naukri.com/full-stack-developer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
 
 
-REM Run the cleaning step so cleaned_postings stays in sync with the
-REM new raw rows, then freeze today's skill counts into the snapshot
-REM table. Order matters: the snapshot reads from cleaned_postings.
-REM Cleaning itself is Python now (cleaning.py) — clean_and_populate()
-REM is no longer a database function, snapshot_daily_skills() still is.
-python cleaning.py >> "%LOGFILE%" 2>&1
+REM Each naukri_collector.py call above already cleans and writes
+REM straight into cleaned_postings (job_database.py -> cleaning.py) —
+REM there is no separate batch cleaning step anymore. Only the daily
+REM snapshot still needs its own run, after all scraping is done.
 "C:\Program Files\PostgreSQL\18\bin\psql.exe" -U postgres -d jobmarket -c "SELECT snapshot_daily_skills();" >> "%LOGFILE%" 2>&1
 
 echo Run finished: %date% %time% >> "%LOGFILE%"

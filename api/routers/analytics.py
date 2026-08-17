@@ -49,8 +49,6 @@ def summary():
             COUNT(DISTINCT company)::int                           AS companies,
             COUNT(DISTINCT role_family)::int                       AS distinct_roles,
             COUNT(*) FILTER (WHERE salary_min IS NOT NULL)::int     AS postings_with_salary,
-            ROUND(AVG(COALESCE(array_length(skills, 1), 0)), 2)::float
-                                                                   AS avg_skills_per_posting,
             MIN(posted_date)                                       AS earliest_posting,
             MAX(posted_date)                                       AS latest_posting,
             MAX(openings)::int                                     AS max_openings
@@ -58,12 +56,18 @@ def summary():
     """) or {}
 
     row["distinct_skills"] = fetch_value(
-        "SELECT COUNT(DISTINCT s) FROM cleaned_postings, unnest(skills) s") or 0
+        "SELECT COUNT(DISTINCT skill) FROM posting_skills") or 0
     row["cities_covered"] = fetch_value(
         "SELECT COUNT(DISTINCT city_id) FROM posting_cities") or 0
     row["median_openings"] = fetch_value("""
         SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY openings)
         FROM cleaned_postings WHERE openings IS NOT NULL""")
+    # Total skill rows / total postings, not skill rows / postings-with-
+    # skills — a posting with zero skills still belongs in the average's
+    # denominator, same as before this was array_length(skills, 1).
+    row["avg_skills_per_posting"] = fetch_value("""
+        SELECT ROUND(COUNT(*)::numeric / NULLIF(%s, 0), 2)::float FROM posting_skills
+    """, (row.get("total_postings") or 0,)) or 0.0
 
     total = row.get("total_postings") or 1
     row["salary_disclosure_pct"] = round(
@@ -87,13 +91,14 @@ def skill_demand(
     w = scope(role_family, city, state, experience_min, experience_max,
               posted_after, company)
     if not include_blocked:
-        w.add_raw("skill NOT IN (SELECT skill FROM skill_blocklist)")
+        w.add_raw("ps.skill NOT IN (SELECT skill FROM skill_blocklist)")
 
     return fetch_all(f"""
-        SELECT skill AS name, COUNT(*)::int AS postings
-        FROM cleaned_postings c, unnest(c.skills) AS skill
+        SELECT ps.skill AS name, COUNT(*)::int AS postings
+        FROM cleaned_postings c
+        JOIN posting_skills ps ON ps.job_id = c.job_id
         {w.sql}
-        GROUP BY skill ORDER BY postings DESC LIMIT %s
+        GROUP BY ps.skill ORDER BY postings DESC LIMIT %s
     """, w.values + (limit,))
 
 
@@ -192,11 +197,13 @@ def co_occurrence(
     min_together: int = Query(1, ge=1),
 ):
     # a.skill < b.skill keeps one row per pair rather than both
-    # directions, and excludes a skill paired with itself.
+    # directions, and excludes a skill paired with itself. Joining
+    # posting_skills to itself on job_id replaces the old double-unnest
+    # cross product on the skills array.
     return fetch_all("""
         WITH ranked AS (
             SELECT skill, COUNT(*) AS n
-            FROM cleaned_postings, unnest(skills) AS skill
+            FROM posting_skills
             WHERE skill NOT IN (SELECT skill FROM skill_blocklist)
             GROUP BY skill ORDER BY n DESC LIMIT %s
         )
@@ -205,11 +212,9 @@ def co_occurrence(
                ROUND(100.0 * COUNT(*) /
                      (SELECT n FROM ranked WHERE skill = a.skill), 2)::float
                    AS pct_of_skill_a
-        FROM cleaned_postings c,
-             unnest(c.skills) AS a(skill),
-             unnest(c.skills) AS b(skill)
-        WHERE a.skill < b.skill
-          AND a.skill IN (SELECT skill FROM ranked)
+        FROM posting_skills a
+        JOIN posting_skills b ON a.job_id = b.job_id AND a.skill < b.skill
+        WHERE a.skill IN (SELECT skill FROM ranked)
           AND b.skill IN (SELECT skill FROM ranked)
         GROUP BY a.skill, b.skill
         HAVING COUNT(*) >= %s
@@ -225,7 +230,9 @@ def skill_suggestions(
     role_family: list[str] | None = Query(None),
 ):
     w = WhereBuilder()
-    w.add("c.skills && %s::text[]", list(skill))
+    w.add_raw("""EXISTS (SELECT 1 FROM posting_skills ps
+                 WHERE ps.job_id = c.job_id AND ps.skill = ANY(%s))""")
+    w.params.append(list(skill))
     if role_family:
         w.add("c.role_family = ANY(%s)", list(role_family))
 
@@ -235,11 +242,12 @@ def skill_suggestions(
         return []
 
     return fetch_all(f"""
-        SELECT s AS skill, COUNT(*)::int AS postings,
+        SELECT ps.skill AS skill, COUNT(*)::int AS postings,
                ROUND(100.0 * COUNT(*) / {base}, 2)::float AS share_pct
-        FROM cleaned_postings c, unnest(c.skills) AS s
+        FROM cleaned_postings c
+        JOIN posting_skills ps ON ps.job_id = c.job_id
         {w.sql}
-          AND NOT (s = ANY(%s))
-          AND s NOT IN (SELECT skill FROM skill_blocklist)
-        GROUP BY s ORDER BY postings DESC LIMIT %s
+          AND NOT (ps.skill = ANY(%s))
+          AND ps.skill NOT IN (SELECT skill FROM skill_blocklist)
+        GROUP BY ps.skill ORDER BY postings DESC LIMIT %s
     """, w.values + (list(skill), limit))

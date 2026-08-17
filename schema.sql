@@ -1,54 +1,19 @@
 -- =====================================================================
--- SCHEMA — every table in the pipeline: raw_postings, cities/states,
--- cleaned_postings, posting_cities.
+-- SCHEMA — every table in the pipeline: cities/states, cleaned_postings,
+-- posting_cities, posting_skills, posting_qualifications.
 --
 -- Run order: this file, THEN trends_setup.sql.
 --
--- The cleaning logic that used to live in separate SQL files
--- (clean_and_populate() and its helper functions, plus the
--- city_aliases/skill_aliases/role_patterns lookup tables that only
--- those functions used) now lives in cleaning.py. This file only
--- defines table shapes — raw data in, cleaned data out. The actual
--- transformation happens in Python, not in Postgres.
+-- There is deliberately no raw_postings table. The scraper cleans each
+-- posting in-process (job_database.py, calling into cleaning.py) and
+-- writes straight into cleaned_postings — nothing scraped is ever
+-- stored unprocessed. cleaning.py holds every transformation function;
+-- this file only defines table shapes.
 --
 -- Run once:
 --   psql -U postgres -d jobmarket -f schema.sql
 --   (or open in pgAdmin Query Tool and run the whole file)
---
--- Every CREATE is IF NOT EXISTS or preceded by its own DROP, so this
--- is safe to run against a database that already has some of these
--- tables — raw_postings is never dropped; cleaned_postings and
--- posting_cities are rebuilt, which is fine since everything in them
--- is reproducible from raw_postings by re-running `python cleaning.py`.
 -- =====================================================================
-
-
--- ---------------------------------------------------------------------
--- RAW_POSTINGS — one row per scraped job posting, exactly as read off
--- the page. Never transformed; cleaning.py reads from this, nothing
--- writes to it except the scraper (job_database.py).
--- ---------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS raw_postings (
-    job_id           BIGSERIAL PRIMARY KEY,
-    url              TEXT NOT NULL,
-    fingerprint      TEXT NOT NULL UNIQUE,
-    title            TEXT,
-    company          TEXT,
-    experience       TEXT,
-    location         TEXT,
-    key_skills       TEXT[],
-    tech_in_desc     TEXT[],
-    employment_type  TEXT,
-    working_type     TEXT,
-    salary           TEXT,
-    description      TEXT,
-    posted_date      DATE,
-    posted_raw       TEXT,
-    openings         INTEGER,
-    first_seen_date  DATE NOT NULL DEFAULT CURRENT_DATE,
-    last_seen_date   DATE NOT NULL DEFAULT CURRENT_DATE,
-    times_seen       INTEGER NOT NULL DEFAULT 1
-);
 
 
 -- ---------------------------------------------------------------------
@@ -117,39 +82,51 @@ ON CONFLICT (city_name) DO NOTHING;
 
 
 -- ---------------------------------------------------------------------
--- CLEANED POSTINGS — written by cleaning.py, read by the API.
---   * skills: ONE merged, deduplicated column
---   * working_type / employment_type / contract_type: three fields
---   * unmapped_locations: location text that matched no known city, so
---     gaps in the city-alias mapping (in cleaning.py) are visible
---     rather than silent
---   * role_family: the classify_role() output
+-- CLEANED POSTINGS — the only postings table. Written by cleaning.py
+-- (called in-process by the scraper right after each posting is
+-- scraped), read by the API.
+--
+-- fingerprint drives dedup directly on this table (company + title +
+-- location + experience, hashed) — a repeat sighting updates the row
+-- in place instead of inserting a duplicate; see job_database.py.
+--
+-- skills and qualifications live in their own tables (posting_skills,
+-- posting_qualifications) rather than array columns, since both need
+-- a second attribute per entry (category; level) that a bare array
+-- has nowhere to hold. city_ids stays an array here for an at-a-glance
+-- read — posting_cities holds the same links for joining/filtering.
 -- ---------------------------------------------------------------------
+DROP TABLE IF EXISTS posting_qualifications;
+DROP TABLE IF EXISTS posting_skills;
 DROP TABLE IF EXISTS posting_cities;
 DROP TABLE IF EXISTS cleaned_postings;
 
 CREATE TABLE cleaned_postings (
-    job_id             BIGINT PRIMARY KEY REFERENCES raw_postings(job_id),
-    url                TEXT,
+    job_id             BIGSERIAL PRIMARY KEY,
+    fingerprint        TEXT NOT NULL UNIQUE,
+    url                TEXT NOT NULL,
     title              TEXT,
     company            TEXT,
+    description        TEXT,
     experience_min     INT,
     experience_max     INT,
     salary_min         NUMERIC,
     salary_max         NUMERIC,
-    skills             TEXT[],
-    city_ids           INT[],           -- readable at a glance; posting_cities
-                                        -- holds the same links for joining
+    city_ids           INT[],
+    unmapped_locations TEXT[],
     working_type       TEXT,
     employment_type    TEXT,
     contract_type      TEXT,
-    unmapped_locations TEXT[],
+    role_family        TEXT,
+    role_category      TEXT,
+    department         TEXT,
+    industry_type      TEXT,
     posted_date        DATE,
+    posted_raw         TEXT,
     openings           INT,
-    first_seen_date    DATE,
-    last_seen_date     DATE,
-    times_seen         INT,
-    role_family        TEXT
+    first_seen_date    DATE NOT NULL DEFAULT CURRENT_DATE,
+    last_seen_date     DATE NOT NULL DEFAULT CURRENT_DATE,
+    times_seen         INT NOT NULL DEFAULT 1
 );
 
 
@@ -164,3 +141,37 @@ CREATE TABLE posting_cities (
 );
 
 CREATE INDEX IF NOT EXISTS idx_posting_cities_city ON posting_cities (city_id);
+
+
+-- ---------------------------------------------------------------------
+-- POSTING_SKILLS — one row per skill per posting, both sources merged
+-- (Naukri's own Key Skills chips and skills found by scanning the
+-- description) and deduplicated. category comes from a lookup dict in
+-- cleaning.py (Frontend / Backend / Database / Cloud-DevOps / Data-ML /
+-- etc.) — same role SKILL_ALIASES already plays for spelling, just one
+-- more attribute per skill, which is exactly what a bare array column
+-- had no room for.
+-- ---------------------------------------------------------------------
+CREATE TABLE posting_skills (
+    job_id    BIGINT NOT NULL REFERENCES cleaned_postings(job_id) ON DELETE CASCADE,
+    skill     TEXT   NOT NULL,
+    category  TEXT,
+    PRIMARY KEY (job_id, skill)
+);
+
+CREATE INDEX IF NOT EXISTS idx_posting_skills_skill ON posting_skills (skill);
+
+
+-- ---------------------------------------------------------------------
+-- POSTING_QUALIFICATIONS — one row per UG/PG/Doctorate entry actually
+-- present on a posting (a posting with no Doctorate row simply gets no
+-- row here for it, rather than a padded NULL). field_of_study holds
+-- the free text Naukri shows ("Any Graduate", "B.Tech/B.E. in Any
+-- Specialization").
+-- ---------------------------------------------------------------------
+CREATE TABLE posting_qualifications (
+    job_id          BIGINT NOT NULL REFERENCES cleaned_postings(job_id) ON DELETE CASCADE,
+    level           TEXT   NOT NULL,
+    field_of_study  TEXT,
+    PRIMARY KEY (job_id, level)
+);

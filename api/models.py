@@ -18,6 +18,9 @@ class PostingSummary(BaseModel):
     title: str | None = None
     company: str | None = None
     role_family: str | None = None
+    role_category: str | None = None
+    department: str | None = None
+    industry_type: str | None = None
     experience_min: int | None = None
     experience_max: int | None = None
     salary_min: float | None = None
@@ -32,13 +35,17 @@ class PostingSummary(BaseModel):
     url: str | None = None
 
 
+class Qualification(BaseModel):
+    level: str
+    field_of_study: str | None = None
+
+
 class PostingDetail(PostingSummary):
     """Everything in the summary plus the fields only worth fetching
     for a single record — the description is large enough that returning
     it in list responses would bloat every page."""
     description: str | None = None
-    key_skills: list[str] = []
-    tech_in_description: list[str] = []
+    qualifications: list[Qualification] = []
     first_seen_date: date | None = None
     last_seen_date: date | None = None
     times_seen: int | None = None

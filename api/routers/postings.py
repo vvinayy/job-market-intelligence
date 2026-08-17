@@ -12,7 +12,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query
 
 from ..database import fetch_all, fetch_one, fetch_value, WhereBuilder
-from ..models import PostingSummary, PostingDetail, PostingPage
+from ..models import PostingSummary, PostingDetail, PostingPage, Qualification
 
 router = APIRouter(prefix="/postings", tags=["postings"])
 
@@ -36,13 +36,19 @@ SORTABLE = {
 
 # Selected in both list and detail responses. The description is
 # deliberately excluded here — it's large, and returning it for 50 rows
-# would make every page response enormous.
+# would make every page response enormous. skills comes from
+# posting_skills now, not an array column.
 BASE_SELECT = """
     SELECT
         c.job_id, c.title, c.company, c.role_family,
+        c.role_category, c.department, c.industry_type,
         c.experience_min, c.experience_max,
         c.salary_min, c.salary_max,
-        COALESCE(c.skills, '{}') AS skills,
+        COALESCE(
+            (SELECT array_agg(ps.skill ORDER BY ps.skill)
+             FROM posting_skills ps WHERE ps.job_id = c.job_id),
+            '{}'
+        ) AS skills,
         COALESCE(
             (SELECT array_agg(ci.city_name ORDER BY ci.city_name)
              FROM posting_cities pc
@@ -65,12 +71,20 @@ def build_filters(
     """Turn optional query parameters into a parameterised WHERE clause."""
     w = WhereBuilder()
 
-    # Arrays: && means "overlaps" (any of these), @> means "contains
-    # all of these". Two different questions, so both are offered.
+    # "any of these" vs "all of these" — two different questions, so
+    # both are offered, same as before skills moved out of an array.
     if skill:
-        w.add("c.skills && %s::text[]", list(skill))
+        w.add_raw("""EXISTS (
+            SELECT 1 FROM posting_skills ps
+            WHERE ps.job_id = c.job_id AND ps.skill = ANY(%s))""")
+        w.params.append(list(skill))
     if skills_all:
-        w.add("c.skills @> %s::text[]", list(skills_all))
+        w.add_raw("""NOT EXISTS (
+            SELECT 1 FROM unnest(%s::text[]) req(skill)
+            WHERE NOT EXISTS (
+                SELECT 1 FROM posting_skills ps
+                WHERE ps.job_id = c.job_id AND ps.skill = req.skill))""")
+        w.params.append(list(skills_all))
 
     if role_family:
         w.add("c.role_family = ANY(%s)", list(role_family))
@@ -208,17 +222,18 @@ def get_posting(job_id: int):
     if not row:
         raise HTTPException(404, f"No posting with job_id {job_id}")
 
-    # The heavier fields come from raw_postings, which keeps the two
-    # skill sources separate — cleaned_postings merges them.
     extra = fetch_one("""
-        SELECT r.description,
-               COALESCE(r.key_skills, '{}')   AS key_skills,
-               COALESCE(r.tech_in_desc, '{}') AS tech_in_description,
-               c.first_seen_date, c.last_seen_date, c.times_seen,
+        SELECT c.description, c.first_seen_date, c.last_seen_date, c.times_seen,
                (c.last_seen_date - c.first_seen_date) AS days_listed
         FROM cleaned_postings c
-        JOIN raw_postings r ON r.job_id = c.job_id
         WHERE c.job_id = %s
     """, (job_id,)) or {}
 
-    return PostingDetail(**{**row, **extra})
+    qualifications = fetch_all("""
+        SELECT level, field_of_study FROM posting_qualifications WHERE job_id = %s ORDER BY level
+    """, (job_id,))
+
+    return PostingDetail(
+        **{**row, **extra},
+        qualifications=[Qualification(**q) for q in qualifications],
+    )
