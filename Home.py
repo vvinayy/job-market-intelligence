@@ -76,10 +76,10 @@ with s1:
     st.caption(f"{fresher} of {total} allow 0–1 years of experience.")
 
 with s2:
-    paid = int(facts.get("postings_with_salary") or 0)
-    st.markdown(f"### {one_in(paid, total)}")
-    st.markdown("**postings state a salary**")
-    st.caption(f"{paid} of {total} disclose a pay range. The rest say nothing.")
+    active = int(facts.get("active_last_7_days") or 0)
+    st.markdown(f"### {active} of {total}")
+    st.markdown("**postings still active this week**")
+    st.caption("Listed again in the last 7 days — the rest haven't reappeared since.")
 
 with s3:
     st.markdown(f"### {facts.get('avg_skills_per_posting')}")
