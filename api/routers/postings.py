@@ -45,8 +45,10 @@ BASE_SELECT = """
         c.experience_min, c.experience_max,
         c.salary_min, c.salary_max,
         COALESCE(
-            (SELECT array_agg(ps.skill ORDER BY ps.skill)
-             FROM posting_skills ps WHERE ps.job_id = c.job_id),
+            (SELECT array_agg(sk.skill_name ORDER BY sk.skill_name)
+             FROM posting_skills ps
+             JOIN skills sk ON sk.skill_id = ps.skill_id
+             WHERE ps.job_id = c.job_id),
             '{}'
         ) AS skills,
         COALESCE(
@@ -76,14 +78,16 @@ def build_filters(
     if skill:
         w.add_raw("""EXISTS (
             SELECT 1 FROM posting_skills ps
-            WHERE ps.job_id = c.job_id AND ps.skill = ANY(%s))""")
+            JOIN skills sk ON sk.skill_id = ps.skill_id
+            WHERE ps.job_id = c.job_id AND sk.skill_name = ANY(%s))""")
         w.params.append(list(skill))
     if skills_all:
         w.add_raw("""NOT EXISTS (
             SELECT 1 FROM unnest(%s::text[]) req(skill)
             WHERE NOT EXISTS (
                 SELECT 1 FROM posting_skills ps
-                WHERE ps.job_id = c.job_id AND ps.skill = req.skill))""")
+                JOIN skills sk ON sk.skill_id = ps.skill_id
+                WHERE ps.job_id = c.job_id AND sk.skill_name = req.skill))""")
         w.params.append(list(skills_all))
 
     if role_family:

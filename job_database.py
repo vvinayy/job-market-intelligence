@@ -22,7 +22,7 @@ import os
 import psycopg2
 from psycopg2.extras import execute_values, RealDictCursor
 
-from cleaning import clean_record
+from cleaning import clean_record, categorize_skill
 
 
 def get_connection():
@@ -110,6 +110,31 @@ def save_records(records: list[dict]) -> tuple[int, int]:
         if skipped_in_batch:
             print(f"  ({skipped_in_batch} duplicate posting(s) within this batch collapsed into one)")
 
+        # Resolve every skill name in this batch to a skill_id, auto-
+        # registering any name not already in the dictionary. Category is
+        # only set at registration time (an initial guess from cleaning.py's
+        # SKILL_CATEGORIES, or NULL if that dict doesn't know it) — once a
+        # skill exists, this never touches its category again, so a manual
+        # correction made directly in the skills table persists across
+        # future scrapes instead of being overwritten.
+        all_skill_names = sorted({s for c in deduped for s in c["skills"]})
+        skill_name_to_id = {}
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            if all_skill_names:
+                cur.execute("SELECT skill_id, skill_name FROM skills WHERE skill_name = ANY(%s)", (all_skill_names,))
+                skill_name_to_id = {row["skill_name"]: row["skill_id"] for row in cur.fetchall()}
+
+        new_skill_names = [s for s in all_skill_names if s not in skill_name_to_id]
+        if new_skill_names:
+            new_skill_rows = [(name, categorize_skill(name)) for name in new_skill_names]
+            with conn.cursor() as cur:
+                inserted = execute_values(
+                    cur,
+                    "INSERT INTO skills (skill_name, category) VALUES %s RETURNING skill_id, skill_name",
+                    new_skill_rows, fetch=True,
+                )
+            skill_name_to_id.update({name: skill_id for skill_id, name in inserted})
+
         rows = [
             (
                 c["posting"]["fingerprint"], c["posting"]["url"], c["posting"]["title"],
@@ -139,7 +164,7 @@ def save_records(records: list[dict]) -> tuple[int, int]:
             for c in deduped:
                 job_id = fingerprint_to_job_id[c["posting"]["fingerprint"]]
                 job_ids_touched.append(job_id)
-                skill_rows += [(job_id, s["skill"], s["category"]) for s in c["skills"]]
+                skill_rows += [(job_id, skill_name_to_id[s]) for s in c["skills"]]
                 qualification_rows += [(job_id, q["level"], q["field_of_study"]) for q in c["qualifications"]]
                 city_rows += [(job_id, city_id) for city_id in c["posting"]["city_ids"]]
 
@@ -152,7 +177,7 @@ def save_records(records: list[dict]) -> tuple[int, int]:
                 cur.execute("DELETE FROM posting_cities WHERE job_id = ANY(%s)", (job_ids_touched,))
 
             if skill_rows:
-                execute_values(cur, "INSERT INTO posting_skills (job_id, skill, category) VALUES %s", skill_rows)
+                execute_values(cur, "INSERT INTO posting_skills (job_id, skill_id) VALUES %s", skill_rows)
             if qualification_rows:
                 execute_values(cur, "INSERT INTO posting_qualifications (job_id, level, field_of_study) VALUES %s", qualification_rows)
             if city_rows:

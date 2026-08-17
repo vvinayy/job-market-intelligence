@@ -64,12 +64,13 @@ BEGIN
     INSERT INTO skill_daily_counts (snapshot_date, skill, posting_count)
     SELECT
         CURRENT_DATE,
-        ps.skill,
+        sk.skill_name,
         COUNT(DISTINCT c.job_id)
     FROM cleaned_postings c
     JOIN posting_skills ps ON ps.job_id = c.job_id
+    JOIN skills sk ON sk.skill_id = ps.skill_id
     WHERE c.last_seen_date = CURRENT_DATE
-    GROUP BY ps.skill
+    GROUP BY sk.skill_name
     ON CONFLICT (snapshot_date, skill) DO UPDATE
         SET posting_count = EXCLUDED.posting_count;
 

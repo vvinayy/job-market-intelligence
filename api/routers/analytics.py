@@ -56,7 +56,7 @@ def summary():
     """) or {}
 
     row["distinct_skills"] = fetch_value(
-        "SELECT COUNT(DISTINCT skill) FROM posting_skills") or 0
+        "SELECT COUNT(DISTINCT skill_id) FROM posting_skills") or 0
     row["cities_covered"] = fetch_value(
         "SELECT COUNT(DISTINCT city_id) FROM posting_cities") or 0
     row["postings_with_education"] = fetch_value(
@@ -93,14 +93,15 @@ def skill_demand(
     w = scope(role_family, city, state, experience_min, experience_max,
               posted_after, company)
     if not include_blocked:
-        w.add_raw("ps.skill NOT IN (SELECT skill FROM skill_blocklist)")
+        w.add_raw("sk.skill_name NOT IN (SELECT skill FROM skill_blocklist)")
 
     return fetch_all(f"""
-        SELECT ps.skill AS name, COUNT(*)::int AS postings
+        SELECT sk.skill_name AS name, COUNT(*)::int AS postings
         FROM cleaned_postings c
         JOIN posting_skills ps ON ps.job_id = c.job_id
+        JOIN skills sk ON sk.skill_id = ps.skill_id
         {w.sql}
-        GROUP BY ps.skill ORDER BY postings DESC LIMIT %s
+        GROUP BY sk.skill_name ORDER BY postings DESC LIMIT %s
     """, w.values + (limit,))
 
 
@@ -214,27 +215,33 @@ def co_occurrence(
     limit: int = Query(100, ge=1, le=1000),
     min_together: int = Query(1, ge=1),
 ):
-    # a.skill < b.skill keeps one row per pair rather than both
+    # a.skill_id < b.skill_id keeps one row per pair rather than both
     # directions, and excludes a skill paired with itself. Joining
     # posting_skills to itself on job_id replaces the old double-unnest
-    # cross product on the skills array.
+    # cross product on the skills array. skill_id and skill_name are both
+    # grouped by even though skill_name is functionally determined by
+    # skill_id, since Postgres won't infer that dependency across a
+    # joined table (skills) on its own.
     return fetch_all("""
         WITH ranked AS (
-            SELECT skill, COUNT(*) AS n
-            FROM posting_skills
-            WHERE skill NOT IN (SELECT skill FROM skill_blocklist)
-            GROUP BY skill ORDER BY n DESC LIMIT %s
+            SELECT ps.skill_id, COUNT(*) AS n
+            FROM posting_skills ps
+            JOIN skills sk ON sk.skill_id = ps.skill_id
+            WHERE sk.skill_name NOT IN (SELECT skill FROM skill_blocklist)
+            GROUP BY ps.skill_id ORDER BY n DESC LIMIT %s
         )
-        SELECT a.skill AS skill_a, b.skill AS skill_b,
+        SELECT sa.skill_name AS skill_a, sb.skill_name AS skill_b,
                COUNT(*)::int AS together,
                ROUND(100.0 * COUNT(*) /
-                     (SELECT n FROM ranked WHERE skill = a.skill), 2)::float
+                     (SELECT n FROM ranked WHERE skill_id = a.skill_id), 2)::float
                    AS pct_of_skill_a
         FROM posting_skills a
-        JOIN posting_skills b ON a.job_id = b.job_id AND a.skill < b.skill
-        WHERE a.skill IN (SELECT skill FROM ranked)
-          AND b.skill IN (SELECT skill FROM ranked)
-        GROUP BY a.skill, b.skill
+        JOIN posting_skills b ON a.job_id = b.job_id AND a.skill_id < b.skill_id
+        JOIN skills sa ON sa.skill_id = a.skill_id
+        JOIN skills sb ON sb.skill_id = b.skill_id
+        WHERE a.skill_id IN (SELECT skill_id FROM ranked)
+          AND b.skill_id IN (SELECT skill_id FROM ranked)
+        GROUP BY a.skill_id, b.skill_id, sa.skill_name, sb.skill_name
         HAVING COUNT(*) >= %s
         ORDER BY together DESC LIMIT %s
     """, (top_skills, min_together, limit))
@@ -249,7 +256,8 @@ def skill_suggestions(
 ):
     w = WhereBuilder()
     w.add_raw("""EXISTS (SELECT 1 FROM posting_skills ps
-                 WHERE ps.job_id = c.job_id AND ps.skill = ANY(%s))""")
+                 JOIN skills sk ON sk.skill_id = ps.skill_id
+                 WHERE ps.job_id = c.job_id AND sk.skill_name = ANY(%s))""")
     w.params.append(list(skill))
     if role_family:
         w.add("c.role_family = ANY(%s)", list(role_family))
@@ -260,12 +268,13 @@ def skill_suggestions(
         return []
 
     return fetch_all(f"""
-        SELECT ps.skill AS skill, COUNT(*)::int AS postings,
+        SELECT sk.skill_name AS skill, COUNT(*)::int AS postings,
                ROUND(100.0 * COUNT(*) / {base}, 2)::float AS share_pct
         FROM cleaned_postings c
         JOIN posting_skills ps ON ps.job_id = c.job_id
+        JOIN skills sk ON sk.skill_id = ps.skill_id
         {w.sql}
-          AND NOT (ps.skill = ANY(%s))
-          AND ps.skill NOT IN (SELECT skill FROM skill_blocklist)
-        GROUP BY ps.skill ORDER BY postings DESC LIMIT %s
+          AND NOT (sk.skill_name = ANY(%s))
+          AND sk.skill_name NOT IN (SELECT skill FROM skill_blocklist)
+        GROUP BY sk.skill_name ORDER BY postings DESC LIMIT %s
     """, w.values + (list(skill), limit))

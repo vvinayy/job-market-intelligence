@@ -89,23 +89,24 @@ def list_skills(
 
     clauses, params = [], []
     if not include_blocked:
-        clauses.append("skill NOT IN (SELECT skill FROM skill_blocklist)")
+        clauses.append("sk.skill_name NOT IN (SELECT skill FROM skill_blocklist)")
     if search:
-        clauses.append("skill ILIKE %s")
+        clauses.append("sk.skill_name ILIKE %s")
         params.append(f"%{search}%")
 
     where = " WHERE " + " AND ".join(clauses) if clauses else ""
     params.extend([min_postings, limit])
 
     return fetch_all(f"""
-        SELECT skill,
+        SELECT sk.skill_name AS skill,
                COUNT(*)::int AS postings,
                ROUND(100.0 * COUNT(*) / {total}, 2)::float AS share_pct
-        FROM posting_skills
+        FROM posting_skills ps
+        JOIN skills sk ON sk.skill_id = ps.skill_id
         {where}
-        GROUP BY skill
+        GROUP BY sk.skill_name
         HAVING COUNT(*) >= %s
-        ORDER BY postings DESC, skill
+        ORDER BY postings DESC, sk.skill_name
         LIMIT %s
     """, tuple(params))
 

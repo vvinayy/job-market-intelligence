@@ -7,7 +7,10 @@ posting is scraped — there is no raw_postings table and no separate
 batch step. clean_record() is the single entry point: it takes one
 record shaped like naukri_collector.py's scrape_job_detail() output
 and returns everything needed to write it — the cleaned_postings row,
-plus the derived skills (with categories) and qualifications.
+plus the derived (normalized) skill names and qualifications.
+job_database.py is responsible for turning skill names into skill_ids
+against the skills dictionary table, using categorize_skill() below
+only as the initial category guess for a skill it hasn't seen before.
 
 fingerprinting also lives here now (moved from job_database.py, which
 is now purely a database-I/O layer) since deciding "is this the same
@@ -512,6 +515,6 @@ def clean_record(raw: dict, city_name_to_id: dict[str, int]) -> dict:
 
     return {
         "posting": posting,
-        "skills": [{"skill": s, "category": categorize_skill(s)} for s in skills],
+        "skills": skills,
         "qualifications": parse_qualifications(raw.get("education")),
     }

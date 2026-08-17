@@ -98,6 +98,7 @@ ON CONFLICT (city_name) DO NOTHING;
 -- ---------------------------------------------------------------------
 DROP TABLE IF EXISTS posting_qualifications;
 DROP TABLE IF EXISTS posting_skills;
+DROP TABLE IF EXISTS skills;
 DROP TABLE IF EXISTS posting_cities;
 DROP TABLE IF EXISTS cleaned_postings;
 
@@ -142,22 +143,38 @@ CREATE INDEX IF NOT EXISTS idx_posting_cities_city ON posting_cities (city_id);
 
 
 -- ---------------------------------------------------------------------
+-- SKILLS — the dictionary. Each distinct skill name (after cleaning.py's
+-- alias normalization) exists exactly once here, with its own id, so
+-- posting_skills below can store a small integer instead of repeating
+-- the same text on every row a skill appears in.
+--
+-- category is nullable and lives here, not in cleaning.py, so fixing or
+-- adding a category is a data edit (UPDATE skills SET category = ...)
+-- rather than a code change. job_database.py seeds it with an initial
+-- guess from cleaning.py's SKILL_CATEGORIES when a skill is first seen
+-- (NULL if that dict doesn't know it yet) and never overwrites it again
+-- on later runs, so a manual correction here sticks.
+-- ---------------------------------------------------------------------
+CREATE TABLE skills (
+    skill_id    SERIAL PRIMARY KEY,
+    skill_name  TEXT NOT NULL UNIQUE,
+    category    TEXT
+);
+
+
+-- ---------------------------------------------------------------------
 -- POSTING_SKILLS — one row per skill per posting, both sources merged
 -- (Naukri's own Key Skills chips and skills found by scanning the
--- description) and deduplicated. category comes from a lookup dict in
--- cleaning.py (Frontend / Backend / Database / Cloud-DevOps / Data-ML /
--- etc.) — same role SKILL_ALIASES already plays for spelling, just one
--- more attribute per skill, which is exactly what a bare array column
--- had no room for.
+-- description) and deduplicated. References skills(skill_id) rather
+-- than storing the skill name directly.
 -- ---------------------------------------------------------------------
 CREATE TABLE posting_skills (
     job_id    BIGINT NOT NULL REFERENCES cleaned_postings(job_id) ON DELETE CASCADE,
-    skill     TEXT   NOT NULL,
-    category  TEXT,
-    PRIMARY KEY (job_id, skill)
+    skill_id  INT    NOT NULL REFERENCES skills(skill_id),
+    PRIMARY KEY (job_id, skill_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_posting_skills_skill ON posting_skills (skill);
+CREATE INDEX IF NOT EXISTS idx_posting_skills_skill_id ON posting_skills (skill_id);
 
 
 -- ---------------------------------------------------------------------
