@@ -22,6 +22,8 @@ import re
 import math
 import hashlib
 
+from skill_taxonomy import SKILL_ALIASES as _TAXONOMY_ALIASES
+
 
 NOT_FOUND = "not found"
 
@@ -112,7 +114,41 @@ SKILL_ALIASES = {
     "ts": "TypeScript", "typescript": "TypeScript",
     "ui": "UI",
     "ux": "UX",
+    "apis": "API",
+    "generative ai": "Generative AI",
 }
+
+
+def _build_taxonomy_alias_lookup() -> dict[str, str]:
+    """Flatten skill_taxonomy.py's canonical -> [spelling variants]
+    table into alias -> canonical, so key_skills (Naukri's own tags)
+    resolves to the same canonical spelling that tech_in_description
+    already gets via skill_taxonomy.extract_skills(). Without this, the
+    same tool could land in the skills table under two different
+    casings depending on which source mentioned it — "Fastapi" from a
+    Naukri tag, "FastAPI" from the mined description text — which is
+    why so many high-frequency skills were sitting uncategorized: the
+    category lookup is an exact-match dict, and neither spelling was
+    wrong exactly, they just didn't match SKILL_CATEGORIES' key.
+
+    A couple of skill_taxonomy aliases are genuine regex patterns, not
+    fixed spellings (e.g. "angular \\d+\\+?" matches any version
+    number) — those can't become a literal dict key, so they're
+    skipped. Everything else is just escaped punctuation (c\\+\\+,
+    \\.net) and is recovered by stripping the backslashes back out.
+    """
+    lookup = {}
+    for canonical, aliases in _TAXONOMY_ALIASES.items():
+        for alias in aliases:
+            if "\\d" in alias:
+                continue
+            lookup[alias.replace("\\", "").lower()] = canonical
+    return lookup
+
+
+# cleaning.py's own SKILL_ALIASES wins on any collision — it's the more
+# specific, more carefully-cased list for this project.
+_ALL_SKILL_ALIASES = {**_build_taxonomy_alias_lookup(), **SKILL_ALIASES}
 
 
 def normalize_skill(raw_skill: str) -> str:
@@ -120,7 +156,7 @@ def normalize_skill(raw_skill: str) -> str:
     fall through to a tidied version of themselves rather than being
     dropped, so nothing is silently lost."""
     key = raw_skill.strip().lower()
-    return SKILL_ALIASES.get(key, _initcap(raw_skill.strip()))
+    return _ALL_SKILL_ALIASES.get(key, _initcap(raw_skill.strip()))
 
 
 def merge_skills(key_skills: list[str] | None, tech_in_desc: list[str] | None) -> list[str]:
@@ -191,7 +227,9 @@ SKILL_CATEGORIES = {
     "ELT": "Data/ML", "Solr": "Data/ML", "OpenSearch": "Data/ML", "Lucene": "Data/ML",
     "Kafka": "Data/ML", "Airflow": "Data/ML", "Spark": "Data/ML", "Hadoop": "Data/ML",
     "Machine Learning": "Data/ML", "AI": "Data/ML", "NLP": "Data/ML", "LLM": "Data/ML",
-    "RAG": "Data/ML", "IoT": "Data/ML",
+    "RAG": "Data/ML", "IoT": "Data/ML", "Generative AI": "Data/ML", "Deep Learning": "Data/ML",
+    "Data Science": "Data/ML", "Data Engineering": "Data/ML", "Data Analytics": "Data/ML",
+    "Data Analysis": "Data/ML", "Data Modeling": "Data/ML", "Big Data": "Data/ML",
 
     # Testing
     "NUnit": "Testing", "JUnit": "Testing", "pytest": "Testing", "Selenium": "Testing",
@@ -507,7 +545,6 @@ def clean_record(raw: dict, city_name_to_id: dict[str, int]) -> dict:
         "employment_type": parse_employment_type(_clean(raw.get("employment_type"))),
         "contract_type": parse_contract_type(_clean(raw.get("employment_type"))),
         "role_family": classify_role(title),
-        "role_category": _clean(raw.get("role_category")),
         "posted_date": _clean(raw.get("posted_date")),
         "posted_raw": _clean(raw.get("posted_raw")),
         "openings": raw.get("openings") if isinstance(raw.get("openings"), int) else None,

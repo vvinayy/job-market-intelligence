@@ -139,9 +139,6 @@ if selected_rows:
         d3.metric("Times seen", detail.get("times_seen") or 1)
         d4.metric("Days listed", detail.get("days_listed") if detail.get("days_listed") is not None else "—")
 
-        if detail.get("role_category"):
-            st.caption(detail["role_category"])
-
         if detail.get("skills"):
             st.markdown("**Skills:** " + ", ".join(detail["skills"]))
 

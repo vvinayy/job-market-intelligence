@@ -173,18 +173,15 @@ def scrape_job_detail(page, url: str) -> dict | None:
     if not skills:
         skills = safe_texts(page, "div.styles_key-skill__GIPn_ span")
 
-    # --- Employment Type and Role Category: sibling rows in the same
+    # --- Employment Type: one of several sibling rows in the same
     # labelled "other details" block, same class, same nested-span
-    # markup — just different label text. (Department and Industry
-    # Type used to be scraped from this same pattern too, but their
-    # actual markup doesn't match it — it was capturing a stray comma
-    # instead of real text — and they weren't needed, so removed
-    # rather than chasing the right selector for them.) ---
+    # markup — just different label text. (Department, Industry Type,
+    # and Role Category used to be scraped from this same pattern too;
+    # Department/Industry Type never matched their actual markup and
+    # were removed rather than chasing the right selector for them.
+    # Role Category matched fine but was dropped anyway — not needed.) ---
     employment_type = safe_text(
         page, "div.styles_details__Y424J:has-text('Employment Type') span span"
-    )
-    role_category = safe_text(
-        page, "div.styles_details__Y424J:has-text('Role Category') span span"
     )
 
     # --- Education: UG/PG/Doctorate, wherever those rows actually appear ---
@@ -236,7 +233,6 @@ def scrape_job_detail(page, url: str) -> dict | None:
         "posted_raw": posted_raw or NOT_FOUND,
         "openings": openings if openings is not None else NOT_FOUND,
         "description": description or NOT_FOUND,
-        "role_category": role_category or NOT_FOUND,
     }
 
     # Only include these when something was actually found — an empty
@@ -253,7 +249,7 @@ def print_record(record: dict, index: int, total: int):
     print(f"\n--- Job {index}/{total} ---")
     for field in ["title", "company", "experience", "location",
                   "key_skills", "tech_in_description", "employment_type",
-                  "role_category", "education",
+                  "education",
                   "working_type", "salary", "posted_date", "openings"]:
         if field not in record:  # omitted fields stay omitted in the output too
             continue
