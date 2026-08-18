@@ -132,7 +132,16 @@ if selected_rows:
     detail = dc.posting_detail(job_id)
 
     with st.container(border=True):
-        st.subheader(f"{detail.get('title') or 'Untitled'} — {detail.get('company') or 'Unknown company'}")
+        company_line = detail.get("company") or "Unknown company"
+        if detail.get("company_rating") is not None:
+            reviews = detail.get("company_reviews")
+            reviews_text = f", {reviews:,} reviews" if reviews else ""
+            company_line += f" (★ {detail['company_rating']}{reviews_text})"
+        st.subheader(f"{detail.get('title') or 'Untitled'} — {company_line}")
+
+        if detail.get("company_badges"):
+            st.caption(" · ".join(detail["company_badges"]))
+
         d1, d2, d3, d4, d5 = st.columns(5)
         d1.metric("Experience", display.iloc[selected_rows[0]]["experience"])
         d2.metric("Salary", display.iloc[selected_rows[0]]["salary"])
@@ -145,7 +154,11 @@ if selected_rows:
             st.caption(" · ".join(extra_facts))
 
         if detail.get("skills"):
-            st.markdown("**Skills:** " + ", ".join(detail["skills"]))
+            preferred = set(detail.get("preferred_skills") or [])
+            formatted = [f"⭐ {s}" if s in preferred else s for s in detail["skills"]]
+            st.markdown("**Skills:** " + ", ".join(formatted))
+            if preferred:
+                st.caption("⭐ = marked as a preferred skill by the employer")
 
         if detail.get("certifications"):
             st.markdown("**Certifications mentioned:** " + ", ".join(detail["certifications"]))

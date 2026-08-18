@@ -34,6 +34,8 @@ class PostingSummary(BaseModel):
     posted_date: date | None = None
     openings: int | None = None
     applicant_count: int | None = None
+    company_rating: float | None = None
+    company_reviews: int | None = None
     url: str | None = None
 
 
@@ -50,6 +52,8 @@ class PostingDetail(PostingSummary):
     responsibilities_text: str | None = None
     requirements_text: str | None = None
     certifications: list[str] = []
+    preferred_skills: list[str] = []
+    company_badges: list[str] = []
     source_search: str | None = None
     qualifications: list[Qualification] = []
     first_seen_date: date | None = None

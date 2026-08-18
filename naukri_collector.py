@@ -11,8 +11,9 @@ labelled element on the page. If a label isn't there, the field reports
 
 Parameters collected:
     Job title, Company name, Experience, Location,
-    Key Skills, Employment Type, Role Category, Role, Industry Type,
-    Department, Applicant count, Description
+    Key Skills (with preferred/starred subset), Employment Type, Role Category,
+    Role, Industry Type, Department, Applicant count, Company rating/reviews,
+    Company badges, Description
 
 Naukri blocks headless browsers, so this runs with a visible window.
 ONE window is opened for the whole run and reused for every posting —
@@ -69,6 +70,19 @@ def parse_posted_date(raw: str | None) -> date | None:
         return date.today() - timedelta(days=int(match.group(1)) * 30)
 
     return None  # unrecognised phrasing — better than a wrong date
+
+
+def parse_count_with_suffix(raw: str | None) -> int | None:
+    """'50.5K Reviews' -> 50500, '1.2M' -> 1200000, '850' -> 850.
+    Approximate by nature — Naukri's own figure is already rounded, this
+    just expands the K/M shorthand rather than adding any real precision."""
+    if not raw:
+        return None
+    match = re.search(r"([\d.]+)\s*([KkMm]?)", raw)
+    if not match:
+        return None
+    multiplier = {"k": 1_000, "m": 1_000_000}.get(match.group(2).lower(), 1)
+    return int(float(match.group(1)) * multiplier)
 
 
 NOT_FOUND = "not found"
@@ -188,12 +202,39 @@ def scrape_job_detail(page, url: str, search_url: str | None = None) -> dict | N
         print(f"  [skip] Description never rendered — {url}")
         return None
 
-    # --- Key Skills: Naukri's own tagged chips ---
-    # Primary: the dedicated Key Skills section on the detail page.
-    skills = safe_texts(page, "div.styles_key-skill__GIPn_ a span")
-    # Fallback: some layouts render the chips without the anchor wrapper.
+    # --- Key Skills: Naukri's own tagged chips, some starred as
+    # "preferred" (confirmed from the page's own legend: "Skills
+    # highlighted with [star] are preferred keyskills" — the star is an
+    # <i class="ni-icon-jd-save"> inside the chip). Walking the chip
+    # elements directly, rather than safe_texts() on just the spans,
+    # since knowing which chip a name came from is what makes the
+    # preferred/not-preferred split possible. ---
+    skills = []
+    preferred_key_skills = []
+    for chip in page.query_selector_all("div.styles_key-skill__GIPn_ a"):
+        span = chip.query_selector("span")
+        text = (span.inner_text() if span else chip.inner_text()).strip()
+        if not text:
+            continue
+        skills.append(text)
+        if chip.query_selector("i.ni-icon-jd-save"):
+            preferred_key_skills.append(text)
+    # Fallback: some layouts render the chips without the anchor wrapper
+    # — preferred-skill info isn't recoverable in that shape.
     if not skills:
         skills = safe_texts(page, "div.styles_key-skill__GIPn_ span")
+
+    # --- Company rating/reviews: shown inline in the header, sourced
+    # from AmbitionBox — no separate company-page visit needed. ---
+    company_rating = safe_text(page, ".styles_amb-rating__4UyFL")
+    company_reviews_raw = safe_text(page, ".styles_amb-reviews__0J1e3")
+
+    # --- Company recognition badges: also inline, in the "About the
+    # company" block ("Fortune India 500 (2023)", "Highly Rated by
+    # Women", etc). A couple of these render as short, terse single
+    # words ("TOP") — confirmed from raw HTML that this is genuinely
+    # what Naukri shows, not a truncation artifact of the extraction. ---
+    company_badges = safe_texts(page, ".styles_company-info-tags__y6RDs .styles_chips__AKDM0")
 
     # --- Employment Type and Role Category: sibling rows in the same
     # labelled "other details" block. Their value sits directly in a
@@ -277,6 +318,8 @@ def scrape_job_detail(page, url: str, search_url: str | None = None) -> dict | N
         digits = re.search(r"\d+", applicants_raw)
         applicant_count = int(digits.group()) if digits else None
 
+    company_reviews = parse_count_with_suffix(company_reviews_raw)
+
     record = {
         "url": url,
         "title": safe_text(page, "h1.styles_jd-header-title__rZwM1") or NOT_FOUND,
@@ -295,6 +338,8 @@ def scrape_job_detail(page, url: str, search_url: str | None = None) -> dict | N
         "posted_raw": posted_raw or NOT_FOUND,
         "openings": openings if openings is not None else NOT_FOUND,
         "applicant_count": applicant_count if applicant_count is not None else NOT_FOUND,
+        "company_rating": company_rating or NOT_FOUND,
+        "company_reviews": company_reviews if company_reviews is not None else NOT_FOUND,
         "description": description or NOT_FOUND,
         "source_search": search_url or NOT_FOUND,
     }
@@ -305,6 +350,10 @@ def scrape_job_detail(page, url: str, search_url: str | None = None) -> dict | N
         record["tech_in_description"] = tech_in_description
     if education:
         record["education"] = education
+    if preferred_key_skills:
+        record["preferred_key_skills"] = preferred_key_skills
+    if company_badges:
+        record["company_badges"] = company_badges
 
     return record
 
@@ -312,9 +361,10 @@ def scrape_job_detail(page, url: str, search_url: str | None = None) -> dict | N
 def print_record(record: dict, index: int, total: int):
     print(f"\n--- Job {index}/{total} ---")
     for field in ["title", "company", "experience", "location",
-                  "key_skills", "tech_in_description", "employment_type",
+                  "key_skills", "preferred_key_skills", "tech_in_description", "employment_type",
                   "role_category", "naukri_role", "industry_type", "department", "education",
-                  "working_type", "salary", "posted_date", "openings", "applicant_count"]:
+                  "working_type", "salary", "posted_date", "openings", "applicant_count",
+                  "company_rating", "company_reviews", "company_badges"]:
         if field not in record:  # omitted fields stay omitted in the output too
             continue
         value = record[field]

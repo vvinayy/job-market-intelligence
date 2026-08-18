@@ -603,10 +603,21 @@ def clean_record(raw: dict, city_name_to_id: dict[str, int]) -> dict:
     tech_in_desc = raw.get("tech_in_description") if isinstance(raw.get("tech_in_description"), list) else None
     skills = merge_skills(key_skills, tech_in_desc)
 
+    # Preferred (starred) skills are a subset of key_skills by raw text —
+    # normalize the same way normalize_skill() normalizes everything
+    # else, then intersect with the final merged list, so a preferred
+    # skill here is always guaranteed to be a member of `skills` too.
+    preferred_raw = raw.get("preferred_key_skills") if isinstance(raw.get("preferred_key_skills"), list) else []
+    preferred_normalized = {normalize_skill(s) for s in preferred_raw if s.strip()}
+    preferred_skills = [s for s in skills if s in preferred_normalized]
+
     title = _clean(raw.get("title"))
     company = _clean(raw.get("company"))
     description = _clean(raw.get("description"))
     sections = split_description_sections(description)
+
+    company_rating_raw = _clean(raw.get("company_rating"))
+    company_rating = float(company_rating_raw) if company_rating_raw else None
 
     posting = {
         "fingerprint": make_fingerprint(company, title, _clean(raw.get("location")), experience),
@@ -635,6 +646,9 @@ def clean_record(raw: dict, city_name_to_id: dict[str, int]) -> dict:
         "posted_raw": _clean(raw.get("posted_raw")),
         "openings": raw.get("openings") if isinstance(raw.get("openings"), int) else None,
         "applicant_count": raw.get("applicant_count") if isinstance(raw.get("applicant_count"), int) else None,
+        "company_rating": company_rating,
+        "company_reviews": raw.get("company_reviews") if isinstance(raw.get("company_reviews"), int) else None,
+        "company_badges": raw.get("company_badges") if isinstance(raw.get("company_badges"), list) else [],
         "source_search": _clean(raw.get("source_search")),
         "certifications": extract_certifications(description) if description else [],
     }
@@ -642,5 +656,6 @@ def clean_record(raw: dict, city_name_to_id: dict[str, int]) -> dict:
     return {
         "posting": posting,
         "skills": skills,
+        "preferred_skills": preferred_skills,
         "qualifications": parse_qualifications(raw.get("education")),
     }

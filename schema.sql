@@ -143,6 +143,17 @@ CREATE TABLE cleaned_postings (
     -- Naukri shows this capped ("100+"), not exact past the threshold —
     -- stored as the floor, same honest-precision approach as posted_date.
     applicant_count           INT,
+    -- Shown inline in the posting header, sourced from AmbitionBox — no
+    -- separate company-profile page visit needed. company_reviews is
+    -- Naukri's own rounded figure ("50.5K Reviews") expanded from its
+    -- K/M shorthand, not a more precise count than the source has.
+    company_rating             NUMERIC,
+    company_reviews            INT,
+    -- Recognition badges from the inline "About the company" block
+    -- (e.g. "Fortune India 500 (2023)", "Highly Rated by Women").
+    -- Confirmed from raw HTML that short entries like "TOP" are
+    -- genuinely what Naukri shows, not a truncation artifact.
+    company_badges             TEXT[],
     -- Which run_daily_scrape.bat search URL surfaced this posting —
     -- lets a query answer "which searches are actually productive"
     -- instead of only ever seeing the merged result.
@@ -209,9 +220,16 @@ CREATE TABLE skills (
 -- the daily snapshot) unnest this array at query time instead of
 -- reading it pre-exploded.
 -- ---------------------------------------------------------------------
+-- preferred_skill_ids: whichever of skill_ids Naukri starred as
+-- "preferred" on the page (a real distinction, confirmed from the
+-- page's own legend and its <i class="ni-icon-jd-save"> marker) —
+-- always a subset of skill_ids, enforced by the CHECK below rather
+-- than just by convention in job_database.py.
 CREATE TABLE posting_skills (
-    job_id     BIGINT NOT NULL PRIMARY KEY REFERENCES cleaned_postings(job_id) ON DELETE CASCADE,
-    skill_ids  INT[]  NOT NULL DEFAULT '{}'
+    job_id                BIGINT NOT NULL PRIMARY KEY REFERENCES cleaned_postings(job_id) ON DELETE CASCADE,
+    skill_ids             INT[]  NOT NULL DEFAULT '{}',
+    preferred_skill_ids    INT[]  NOT NULL DEFAULT '{}',
+    CONSTRAINT preferred_skills_subset_of_skills CHECK (preferred_skill_ids <@ skill_ids)
 );
 
 CREATE INDEX IF NOT EXISTS idx_posting_skills_skill_ids ON posting_skills USING GIN (skill_ids);

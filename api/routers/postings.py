@@ -60,7 +60,8 @@ BASE_SELECT = """
             '{}'
         ) AS cities,
         c.working_type, c.employment_type, c.contract_type,
-        c.posted_date, c.openings, c.applicant_count, c.url
+        c.posted_date, c.openings, c.applicant_count,
+        c.company_rating, c.company_reviews, c.url
     FROM cleaned_postings c
 """
 
@@ -243,7 +244,16 @@ def get_posting(job_id: int):
 
     extra = fetch_one("""
         SELECT c.description, c.responsibilities_text, c.requirements_text,
-               COALESCE(c.certifications, '{}') AS certifications, c.source_search,
+               COALESCE(c.certifications, '{}') AS certifications,
+               COALESCE(c.company_badges, '{}') AS company_badges,
+               c.source_search,
+               COALESCE(
+                   (SELECT array_agg(sk.skill_name ORDER BY sk.skill_name)
+                    FROM posting_skills ps
+                    JOIN skills sk ON sk.skill_id = ANY(ps.preferred_skill_ids)
+                    WHERE ps.job_id = c.job_id),
+                   '{}'
+               ) AS preferred_skills,
                c.first_seen_date, c.last_seen_date, c.times_seen,
                (c.last_seen_date - c.first_seen_date) AS days_listed
         FROM cleaned_postings c

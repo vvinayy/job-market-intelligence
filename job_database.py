@@ -48,7 +48,8 @@ INSERT INTO cleaned_postings (
     experience_min, experience_max, salary_min, salary_max,
     city_ids, unmapped_locations, working_type, employment_type, contract_type,
     role_family, role_category, naukri_role, industry_type, department,
-    posted_date, posted_raw, openings, applicant_count, source_search, certifications
+    posted_date, posted_raw, openings, applicant_count,
+    company_rating, company_reviews, company_badges, source_search, certifications
 ) VALUES %s
 ON CONFLICT (fingerprint) DO UPDATE SET
     url                   = EXCLUDED.url,
@@ -76,6 +77,9 @@ ON CONFLICT (fingerprint) DO UPDATE SET
     posted_raw            = EXCLUDED.posted_raw,
     openings              = EXCLUDED.openings,
     applicant_count       = EXCLUDED.applicant_count,
+    company_rating        = EXCLUDED.company_rating,
+    company_reviews       = EXCLUDED.company_reviews,
+    company_badges        = EXCLUDED.company_badges,
     source_search         = EXCLUDED.source_search,
     certifications        = EXCLUDED.certifications,
     last_seen_date        = CURRENT_DATE,
@@ -159,7 +163,9 @@ def save_records(records: list[dict]) -> tuple[int, int]:
                 c["posting"]["industry_type"], c["posting"]["department"],
                 c["posting"]["posted_date"],
                 c["posting"]["posted_raw"], c["posting"]["openings"],
-                c["posting"]["applicant_count"], c["posting"]["source_search"],
+                c["posting"]["applicant_count"],
+                c["posting"]["company_rating"], c["posting"]["company_reviews"], c["posting"]["company_badges"],
+                c["posting"]["source_search"],
                 c["posting"]["certifications"],
             )
             for c in deduped
@@ -183,8 +189,12 @@ def save_records(records: list[dict]) -> tuple[int, int]:
                 # array), so every touched posting gets exactly one row here,
                 # even one with no skills — unlike qualifications/cities below,
                 # which stay one-row-per-entry and simply contribute zero rows
-                # when a posting has none.
-                skill_rows.append((job_id, sorted(skill_name_to_id[s] for s in c["skills"])))
+                # when a posting has none. preferred_skill_ids is always a
+                # subset of skill_ids (enforced by a CHECK constraint too) —
+                # cleaning.py already guarantees this by construction.
+                skill_ids = sorted(skill_name_to_id[s] for s in c["skills"])
+                preferred_skill_ids = sorted(skill_name_to_id[s] for s in c["preferred_skills"])
+                skill_rows.append((job_id, skill_ids, preferred_skill_ids))
                 qualification_rows += [(job_id, q["level"], q["field_of_study"]) for q in c["qualifications"]]
                 city_rows += [(job_id, city_id) for city_id in c["posting"]["city_ids"]]
 
@@ -197,7 +207,7 @@ def save_records(records: list[dict]) -> tuple[int, int]:
                 cur.execute("DELETE FROM posting_cities WHERE job_id = ANY(%s)", (job_ids_touched,))
 
             if skill_rows:
-                execute_values(cur, "INSERT INTO posting_skills (job_id, skill_ids) VALUES %s", skill_rows)
+                execute_values(cur, "INSERT INTO posting_skills (job_id, skill_ids, preferred_skill_ids) VALUES %s", skill_rows)
             if qualification_rows:
                 execute_values(cur, "INSERT INTO posting_qualifications (job_id, level, field_of_study) VALUES %s", qualification_rows)
             if city_rows:
