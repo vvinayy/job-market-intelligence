@@ -1,4 +1,4 @@
-"""Skills — demand, pairings, and seniority split."""
+"""Skills — demand, pairings, seniority split, and category mix."""
 
 import pandas as pd
 import streamlit as st
@@ -9,7 +9,7 @@ import dash_common as dc
 st.set_page_config(page_title="Skills", layout="wide", page_icon="◎")
 st.title("Skills")
 
-tab1, tab2, tab3 = st.tabs(["Demand", "Pairings", "By experience level"])
+tab1, tab2, tab3, tab4 = st.tabs(["Demand", "Pairings", "By experience level", "By category"])
 
 
 with tab1:
@@ -123,6 +123,38 @@ with tab3:
             "levels, so the biggest junior-vs-senior differences stand out first. "
             "Shown as a share within each level rather than raw counts, otherwise "
             "the level with the most postings would dominate every row."
+        )
+
+with tab4:
+    st.write("What share of a role's skill mentions fall into each technical category, and how that mix shifts from one role to another.")
+
+    role_options = ["All roles"] + dc.roles()
+    role_choice = st.selectbox("Role", role_options, key="cat_role")
+    filters = {} if role_choice == "All roles" else {"role_family": [role_choice]}
+
+    mix = dc.skill_category_mix(**filters)
+
+    if mix.empty:
+        st.info("No categorized skill data yet for this role.")
+    else:
+        fig = px.bar(
+            mix.sort_values("postings"), x="postings", y="bucket", orientation="h",
+            text="postings", color="postings", color_continuous_scale=dc.SCALE,
+        )
+        fig.update_traces(textposition="outside", cliponaxis=False)
+        fig.update_layout(
+            height=280, margin=dict(l=0, r=40, t=10, b=0),
+            coloraxis_showscale=False, xaxis_title=None, yaxis_title=None,
+            **dc.TRANSPARENT,
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption(
+            "Counts skill mentions, not postings — a posting with three Cloud/DevOps "
+            "skills contributes three, so shares reflect a real mix rather than an "
+            "overlap count. Only categorized skills are included; most of Naukri's own "
+            "tags ('Agile', 'Communication Skills', generic role titles like "
+            "'Full Stack Developer') aren't a specific enough technology to categorize, "
+            "so they're excluded rather than forced into a catch-all bucket."
         )
 
 dc.sampling_note()

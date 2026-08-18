@@ -123,6 +123,10 @@ def qualification_distribution() -> pd.DataFrame:
     return df("/analytics/qualifications")
 
 
+def skill_category_mix(**filters) -> pd.DataFrame:
+    return df("/analytics/skill-categories", tuple(_filter_params(filters)))
+
+
 def skill_suggestions(known: list[str], limit: int = 12) -> tuple[pd.DataFrame, int]:
     """Returns (suggestions, base_count) — base_count is how many postings
     matched at least one known skill, needed to show 'based on N postings'."""

@@ -197,6 +197,46 @@ def qualification_distribution():
     """)
 
 
+@router.get("/skill-categories", response_model=list[Bucket], summary="Skill category mix")
+def skill_category_mix(
+    role_family: list[str] | None = Query(None),
+    city: list[str] | None = Query(None),
+    state: list[str] | None = Query(None),
+    experience_min: int | None = Query(None, ge=0),
+    experience_max: int | None = Query(None, ge=0),
+):
+    # Counts skill MENTIONS, not postings — a posting with three
+    # Cloud/DevOps skills contributes three, so shares add up to a real
+    # composition ("this role's skill mix is 58% Cloud/DevOps") rather
+    # than an overlap count that wouldn't sum to 100%. Only categorized
+    # skills count towards the denominator: most of Naukri's own tags
+    # (Agile, Communication Skills, generic role titles) aren't specific
+    # enough to categorize, and folding them into a fake "Other" bucket
+    # would dilute the real signal rather than add to it.
+    w = scope(role_family, city, state, experience_min, experience_max, None, None)
+    w.add_raw("sk.category IS NOT NULL")
+
+    total = fetch_value(f"""
+        SELECT COUNT(*)
+        FROM cleaned_postings c
+        JOIN posting_skills ps ON ps.job_id = c.job_id
+        JOIN LATERAL unnest(ps.skill_ids) AS u(skill_id) ON true
+        JOIN skills sk ON sk.skill_id = u.skill_id
+        {w.sql}
+    """, w.values) or 1
+
+    return fetch_all(f"""
+        SELECT sk.category AS bucket, COUNT(*)::int AS postings,
+               ROUND(100.0 * COUNT(*) / {total}, 2)::float AS share_pct
+        FROM cleaned_postings c
+        JOIN posting_skills ps ON ps.job_id = c.job_id
+        JOIN LATERAL unnest(ps.skill_ids) AS u(skill_id) ON true
+        JOIN skills sk ON sk.skill_id = u.skill_id
+        {w.sql}
+        GROUP BY sk.category ORDER BY postings DESC
+    """, w.values)
+
+
 @router.get("/openings", response_model=list[Bucket], summary="Vacancies per posting")
 def openings_distribution():
     total = fetch_value(
