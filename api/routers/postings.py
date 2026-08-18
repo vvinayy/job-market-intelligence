@@ -60,7 +60,7 @@ BASE_SELECT = """
             '{}'
         ) AS cities,
         c.working_type, c.employment_type, c.contract_type,
-        c.posted_date, c.openings, c.applicant_count,
+        c.posted_date, c.openings, c.applicant_count, c.applicant_count_qualifier,
         c.company_rating, c.company_reviews, c.url
     FROM cleaned_postings c
 """

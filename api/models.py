@@ -34,6 +34,8 @@ class PostingSummary(BaseModel):
     posted_date: date | None = None
     openings: int | None = None
     applicant_count: int | None = None
+    applicant_count_qualifier: str | None = Field(
+        None, description="'at_least', 'less_than', or null if the count was exact")
     company_rating: float | None = None
     company_reviews: int | None = None
     url: str | None = None

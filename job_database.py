@@ -48,7 +48,7 @@ INSERT INTO cleaned_postings (
     experience_min, experience_max, salary_min, salary_max,
     city_ids, unmapped_locations, working_type, employment_type, contract_type,
     role_family, role_category, naukri_role, industry_type, department,
-    posted_date, posted_raw, openings, applicant_count,
+    posted_date, posted_raw, openings, applicant_count, applicant_count_qualifier,
     company_rating, company_reviews, company_badges, source_search, certifications
 ) VALUES %s
 ON CONFLICT (fingerprint) DO UPDATE SET
@@ -77,6 +77,7 @@ ON CONFLICT (fingerprint) DO UPDATE SET
     posted_raw            = EXCLUDED.posted_raw,
     openings              = EXCLUDED.openings,
     applicant_count       = EXCLUDED.applicant_count,
+    applicant_count_qualifier = EXCLUDED.applicant_count_qualifier,
     company_rating        = EXCLUDED.company_rating,
     company_reviews       = EXCLUDED.company_reviews,
     company_badges        = EXCLUDED.company_badges,
@@ -163,7 +164,7 @@ def save_records(records: list[dict]) -> tuple[int, int]:
                 c["posting"]["industry_type"], c["posting"]["department"],
                 c["posting"]["posted_date"],
                 c["posting"]["posted_raw"], c["posting"]["openings"],
-                c["posting"]["applicant_count"],
+                c["posting"]["applicant_count"], c["posting"]["applicant_count_qualifier"],
                 c["posting"]["company_rating"], c["posting"]["company_reviews"], c["posting"]["company_badges"],
                 c["posting"]["source_search"],
                 c["posting"]["certifications"],

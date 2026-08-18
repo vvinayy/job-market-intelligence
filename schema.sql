@@ -140,9 +140,17 @@ CREATE TABLE cleaned_postings (
     posted_date               DATE,
     posted_raw                TEXT,
     openings                  INT,
-    -- Naukri shows this capped ("100+"), not exact past the threshold —
-    -- stored as the floor, same honest-precision approach as posted_date.
+    -- Naukri shows this three ways: a plain exact number ("44"), a
+    -- floor once past some threshold ("100+"), or a ceiling for very
+    -- new postings ("Less than 10"). applicant_count is always the
+    -- digit found either way; applicant_count_qualifier records which
+    -- direction the ambiguity runs — NULL means the number was exact,
+    -- not that the qualifier is unknown. 'at_least'/'less_than' point
+    -- opposite directions, so collapsing both into a bare int the way
+    -- an earlier version of this column did would be actively wrong
+    -- for the 'less_than' case, not just imprecise.
     applicant_count           INT,
+    applicant_count_qualifier TEXT,
     -- Shown inline in the posting header, sourced from AmbitionBox — no
     -- separate company-profile page visit needed. company_reviews is
     -- Naukri's own rounded figure ("50.5K Reviews") expanded from its

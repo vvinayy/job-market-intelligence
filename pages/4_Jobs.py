@@ -142,10 +142,20 @@ if selected_rows:
         if detail.get("company_badges"):
             st.caption(" · ".join(detail["company_badges"]))
 
+        applicants_display = "—"
+        if detail.get("applicant_count") is not None:
+            qualifier = detail.get("applicant_count_qualifier")
+            if qualifier == "at_least":
+                applicants_display = f"{detail['applicant_count']}+"
+            elif qualifier == "less_than":
+                applicants_display = f"<{detail['applicant_count']}"
+            else:
+                applicants_display = str(detail["applicant_count"])
+
         d1, d2, d3, d4, d5 = st.columns(5)
         d1.metric("Experience", display.iloc[selected_rows[0]]["experience"])
         d2.metric("Salary", display.iloc[selected_rows[0]]["salary"])
-        d3.metric("Applicants", detail.get("applicant_count") if detail.get("applicant_count") is not None else "—")
+        d3.metric("Applicants", applicants_display)
         d4.metric("Times seen", detail.get("times_seen") or 1)
         d5.metric("Days listed", detail.get("days_listed") if detail.get("days_listed") is not None else "—")
 

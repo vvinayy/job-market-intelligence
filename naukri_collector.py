@@ -85,6 +85,32 @@ def parse_count_with_suffix(raw: str | None) -> int | None:
     return int(float(match.group(1)) * multiplier)
 
 
+def parse_applicant_count(raw: str | None) -> tuple[int | None, str | None]:
+    """Naukri shows this three different ways, confirmed by sampling
+    real postings: a plain exact number ('44'), a floor once past some
+    threshold ('100+', meaning at least that many), or a ceiling for
+    very new postings ('Less than 10'). A single digit-extraction regex
+    treats all three the same, which is actually wrong for the last
+    one — '10' extracted from 'Less than 10' means the true count is
+    BELOW 10, not at least 10, the opposite direction from the '+' case.
+
+    Returns (count, qualifier): qualifier is None for a plain exact
+    number, 'at_least' for the '+' case, 'less_than' for the ceiling
+    case — so the ambiguity direction is preserved instead of silently
+    collapsed into a bare int that looks exact either way."""
+    if not raw:
+        return None, None
+    match = re.search(r"\d+", raw)
+    if not match:
+        return None, None
+    count = int(match.group())
+    if "+" in raw:
+        return count, "at_least"
+    if "less than" in raw.lower():
+        return count, "less_than"
+    return count, None
+
+
 NOT_FOUND = "not found"
 
 # Seconds to pause between detail page loads. Randomised so the request
@@ -307,16 +333,11 @@ def scrape_job_detail(page, url: str, search_url: str | None = None) -> dict | N
         openings = int(digits.group()) if digits else None
 
     # --- Applicants ---
-    # Naukri shows this as a capped value ("100+"), not an exact count
-    # once it's past the threshold — stored as the floor (100), same
-    # honest-precision approach as posted_date, just with a narrower
-    # practical range than "30+ days" so the floor itself stays useful
-    # as a competitiveness signal rather than being thrown away.
+    # Naukri shows this three ways ("44", "100+", "Less than 10") —
+    # parse_applicant_count() keeps the direction of the ambiguity
+    # rather than collapsing all three into a bare number.
     applicants_raw = safe_text(page, "span.styles_jhc__stat__PgY67:has-text('Applicants') span")
-    applicant_count = None
-    if applicants_raw:
-        digits = re.search(r"\d+", applicants_raw)
-        applicant_count = int(digits.group()) if digits else None
+    applicant_count, applicant_count_qualifier = parse_applicant_count(applicants_raw)
 
     company_reviews = parse_count_with_suffix(company_reviews_raw)
 
@@ -354,6 +375,12 @@ def scrape_job_detail(page, url: str, search_url: str | None = None) -> dict | N
         record["preferred_key_skills"] = preferred_key_skills
     if company_badges:
         record["company_badges"] = company_badges
+    # None here is a real, meaningful value ("exact count, no qualifier
+    # needed") distinct from "not found" — so this key is only added at
+    # all when there's an actual qualifier to record, rather than using
+    # the NOT_FOUND-sentinel pattern above, which would conflate the two.
+    if applicant_count_qualifier:
+        record["applicant_count_qualifier"] = applicant_count_qualifier
 
     return record
 
@@ -363,7 +390,8 @@ def print_record(record: dict, index: int, total: int):
     for field in ["title", "company", "experience", "location",
                   "key_skills", "preferred_key_skills", "tech_in_description", "employment_type",
                   "role_category", "naukri_role", "industry_type", "department", "education",
-                  "working_type", "salary", "posted_date", "openings", "applicant_count",
+                  "working_type", "salary", "posted_date", "openings",
+                  "applicant_count", "applicant_count_qualifier",
                   "company_rating", "company_reviews", "company_badges"]:
         if field not in record:  # omitted fields stay omitted in the output too
             continue

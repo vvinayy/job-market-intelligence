@@ -646,6 +646,7 @@ def clean_record(raw: dict, city_name_to_id: dict[str, int]) -> dict:
         "posted_raw": _clean(raw.get("posted_raw")),
         "openings": raw.get("openings") if isinstance(raw.get("openings"), int) else None,
         "applicant_count": raw.get("applicant_count") if isinstance(raw.get("applicant_count"), int) else None,
+        "applicant_count_qualifier": _clean(raw.get("applicant_count_qualifier")),
         "company_rating": company_rating,
         "company_reviews": raw.get("company_reviews") if isinstance(raw.get("company_reviews"), int) else None,
         "company_badges": raw.get("company_badges") if isinstance(raw.get("company_badges"), list) else [],
