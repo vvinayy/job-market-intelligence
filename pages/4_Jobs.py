@@ -42,6 +42,12 @@ sort_by = f8.selectbox(
 )
 order = f9.radio("Order", ["desc", "asc"], horizontal=True, key="jobs_order")
 
+description_search = st.text_input(
+    "Search within job descriptions", key="jobs_desc_search",
+    help="Word-based, not exact substring — matches word roots (e.g. 'managing' matches a search for 'manage'). "
+         "Separate from the title/company search above, which is exact.",
+)
+
 page_size = st.select_slider("Results per page", [10, 25, 50, 100], value=25, key="jobs_page_size")
 
 st.divider()
@@ -58,6 +64,7 @@ filters = dict(
     working_type=working_type or None, has_salary=True if has_salary else None,
     qualification_level=qualification_level or None,
     search=search or None,
+    description_search=description_search or None,
 )
 signature = (tuple(sorted((k, tuple(v) if isinstance(v, list) else v) for k, v in filters.items())),
              sort_by, order, page_size)

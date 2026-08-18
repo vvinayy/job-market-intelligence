@@ -67,7 +67,7 @@ def build_filters(
     skill, skills_all, role_family, company, city, state,
     experience_min, experience_max, has_salary, salary_min, salary_max,
     working_type, employment_type, contract_type, qualification_level,
-    posted_after, posted_before, seen_after, search, min_openings,
+    posted_after, posted_before, seen_after, search, description_search, min_openings,
 ) -> WhereBuilder:
     """Turn optional query parameters into a parameterised WHERE clause."""
     w = WhereBuilder()
@@ -150,6 +150,14 @@ def build_filters(
     if search:
         w.add("(c.title ILIKE %s OR c.company ILIKE %s)", f"%{search}%", f"%{search}%")
 
+    # A separate filter from `search` on purpose — title/company matching
+    # above is exact substring, description matching here is word-based
+    # (stemmed) via websearch_to_tsquery, which also tolerates free-typed
+    # queries (quotes, "-exclude", OR) without erroring on odd input the
+    # way to_tsquery's strict operator syntax would.
+    if description_search:
+        w.add("c.description_tsv @@ websearch_to_tsquery('english', %s)", description_search)
+
     return w
 
 
@@ -161,6 +169,8 @@ def list_postings(
     role_family: list[str] | None = Query(None, description="e.g. 'Data Scientist', 'DevOps Engineer'"),
     company: str | None = Query(None, description="Partial, case-insensitive company match"),
     search: str | None = Query(None, description="Free text across title and company"),
+    description_search: str | None = Query(None,
+        description="Word-based search within the job description (stemmed, not exact substring)"),
 
     # --- location ---
     city: list[str] | None = Query(None, description="Canonical city names"),
@@ -204,7 +214,7 @@ def list_postings(
         skill, skills_all, role_family, company, city, state,
         experience_min, experience_max, has_salary, salary_min, salary_max,
         working_type, employment_type, contract_type, qualification_level,
-        posted_after, posted_before, seen_after, search, min_openings,
+        posted_after, posted_before, seen_after, search, description_search, min_openings,
     )
 
     total = fetch_value(

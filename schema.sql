@@ -124,8 +124,16 @@ CREATE TABLE cleaned_postings (
     openings           INT,
     first_seen_date    DATE NOT NULL DEFAULT CURRENT_DATE,
     last_seen_date     DATE NOT NULL DEFAULT CURRENT_DATE,
-    times_seen         INT NOT NULL DEFAULT 1
+    times_seen         INT NOT NULL DEFAULT 1,
+    -- Generated, not written by job_database.py — Postgres recomputes it
+    -- automatically whenever description changes (including on the
+    -- UPSERT's refresh), so there's nothing to keep in sync by hand.
+    description_tsv    tsvector GENERATED ALWAYS AS
+                            (to_tsvector('english', coalesce(description, ''))) STORED
 );
+
+CREATE INDEX IF NOT EXISTS idx_cleaned_postings_description_tsv
+    ON cleaned_postings USING GIN (description_tsv);
 
 
 -- ---------------------------------------------------------------------
