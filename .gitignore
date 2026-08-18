@@ -20,6 +20,11 @@ naukri_jobs.json
 .env.*
 *.pem
 
+# Saved browser session state (cookies/login) — e.g. Playwright's
+# storage_state output. This is live account credentials, not a fixture;
+# never belongs in git regardless of which site it's for.
+.auth/
+
 # Editor / tool-local config
 .vscode/
 .idea/

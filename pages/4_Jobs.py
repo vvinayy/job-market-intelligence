@@ -146,6 +146,10 @@ if selected_rows:
         d3.metric("Times seen", detail.get("times_seen") or 1)
         d4.metric("Days listed", detail.get("days_listed") if detail.get("days_listed") is not None else "—")
 
+        extra_facts = [detail.get(f) for f in ("role_category", "department", "industry_type") if detail.get(f)]
+        if extra_facts:
+            st.caption(" · ".join(extra_facts))
+
         if detail.get("skills"):
             st.markdown("**Skills:** " + ", ".join(detail["skills"]))
 

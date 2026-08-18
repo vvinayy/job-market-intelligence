@@ -11,7 +11,8 @@ labelled element on the page. If a label isn't there, the field reports
 
 Parameters collected:
     Job title, Company name, Experience, Location,
-    Key Skills, Employment Type, Description
+    Key Skills, Employment Type, Role Category, Industry Type, Department,
+    Description
 
 Naukri blocks headless browsers, so this runs with a visible window.
 ONE window is opened for the whole run and reused for every posting —
@@ -173,16 +174,31 @@ def scrape_job_detail(page, url: str) -> dict | None:
     if not skills:
         skills = safe_texts(page, "div.styles_key-skill__GIPn_ span")
 
-    # --- Employment Type: one of several sibling rows in the same
-    # labelled "other details" block, same class, same nested-span
-    # markup — just different label text. (Department, Industry Type,
-    # and Role Category used to be scraped from this same pattern too;
-    # Department/Industry Type never matched their actual markup and
-    # were removed rather than chasing the right selector for them.
-    # Role Category matched fine but was dropped anyway — not needed.) ---
+    # --- Employment Type and Role Category: sibling rows in the same
+    # labelled "other details" block. Their value sits directly in a
+    # nested span with no anchor tag, so span span reaches it. ---
     employment_type = safe_text(
         page, "div.styles_details__Y424J:has-text('Employment Type') span span"
     )
+    role_category = safe_text(
+        page, "div.styles_details__Y424J:has-text('Role Category') span span"
+    )
+
+    # --- Industry Type and Department: same "other details" block, but
+    # different internal markup from Employment Type/Role Category — the
+    # value sits inside an <a> tag, with a trailing decorative comma in
+    # its own sibling span (<a>value</a><span class="...comma...">,</span>).
+    # span span (the pattern that works above) matches that comma span
+    # instead of the anchor — confirmed from real page markup — which is
+    # exactly why these two were broken and removed earlier. Targeting
+    # the anchor directly instead, and reading all of them since the
+    # comma implies more than one value is possible.
+    industry_type = ", ".join(safe_texts(
+        page, "div.styles_details__Y424J:has-text('Industry Type') span a"
+    )) or None
+    department = ", ".join(safe_texts(
+        page, "div.styles_details__Y424J:has-text('Department') span a"
+    )) or None
 
     # --- Education: UG/PG/Doctorate, wherever those rows actually appear ---
     education = safe_education(page)
@@ -227,6 +243,9 @@ def scrape_job_detail(page, url: str) -> dict | None:
         "location": safe_text(page, ".styles_jhc__loc___Du2H .styles_jhc__location__W_pVs") or NOT_FOUND,
         "key_skills": skills or NOT_FOUND,
         "employment_type": employment_type or NOT_FOUND,
+        "role_category": role_category or NOT_FOUND,
+        "industry_type": industry_type or NOT_FOUND,
+        "department": department or NOT_FOUND,
         "working_type": working_type or NOT_FOUND,
         "salary": safe_text(page, ".styles_jhc__salary__jdfEC span") or NOT_FOUND,
         "posted_date": posted_date.isoformat() if posted_date else NOT_FOUND,
@@ -249,7 +268,7 @@ def print_record(record: dict, index: int, total: int):
     print(f"\n--- Job {index}/{total} ---")
     for field in ["title", "company", "experience", "location",
                   "key_skills", "tech_in_description", "employment_type",
-                  "education",
+                  "role_category", "industry_type", "department", "education",
                   "working_type", "salary", "posted_date", "openings"]:
         if field not in record:  # omitted fields stay omitted in the output too
             continue

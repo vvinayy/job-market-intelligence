@@ -18,6 +18,9 @@ class PostingSummary(BaseModel):
     title: str | None = None
     company: str | None = None
     role_family: str | None = None
+    role_category: str | None = None
+    industry_type: str | None = None
+    department: str | None = None
     experience_min: int | None = None
     experience_max: int | None = None
     salary_min: float | None = None
