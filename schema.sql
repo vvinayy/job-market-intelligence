@@ -103,32 +103,62 @@ DROP TABLE IF EXISTS posting_cities;
 DROP TABLE IF EXISTS cleaned_postings;
 
 CREATE TABLE cleaned_postings (
-    job_id             BIGSERIAL PRIMARY KEY,
-    fingerprint        TEXT NOT NULL UNIQUE,
-    url                TEXT NOT NULL,
-    title              TEXT,
-    company            TEXT,
-    description        TEXT,
-    experience_min     INT,
-    experience_max     INT,
-    salary_min         NUMERIC,
-    salary_max         NUMERIC,
-    city_ids           INT[],
-    unmapped_locations TEXT[],
-    working_type       TEXT,
-    employment_type    TEXT,
-    contract_type      TEXT,
-    role_family        TEXT,
-    role_category      TEXT,
-    industry_type      TEXT,
-    department         TEXT,
-    posted_date        DATE,
-    posted_raw         TEXT,
-    openings           INT,
-    first_seen_date    DATE NOT NULL DEFAULT CURRENT_DATE,
-    last_seen_date     DATE NOT NULL DEFAULT CURRENT_DATE,
-    times_seen         INT NOT NULL DEFAULT 1
+    job_id                 BIGSERIAL PRIMARY KEY,
+    fingerprint            TEXT NOT NULL UNIQUE,
+    url                    TEXT NOT NULL,
+    title                  TEXT,
+    company                TEXT,
+    description            TEXT,
+    -- Exact-match hash of the normalized description text — not fuzzy —
+    -- so postings sharing verbatim JD text (common when several
+    -- staffing agencies repost the same vacancy) can be grouped:
+    -- SELECT description_hash FROM cleaned_postings
+    --   GROUP BY description_hash HAVING COUNT(DISTINCT company) > 1
+    description_hash       TEXT,
+    -- Best-effort split of `description` by heading phrases
+    -- ("Roles and Responsibilities" / "Desired Candidate Profile" etc.)
+    -- — text heuristics, not guaranteed for every posting's phrasing.
+    responsibilities_text  TEXT,
+    requirements_text      TEXT,
+    experience_min         INT,
+    experience_max         INT,
+    salary_min              NUMERIC,
+    salary_max              NUMERIC,
+    city_ids                INT[],
+    unmapped_locations      TEXT[],
+    working_type            TEXT,
+    employment_type         TEXT,
+    contract_type           TEXT,
+    role_family             TEXT,
+    role_category           TEXT,
+    -- Naukri's own classification (e.g. "Back End Developer") — distinct
+    -- from role_category (e.g. "Software Development") and from
+    -- role_family (our own regex-derived classification of the title).
+    naukri_role              TEXT,
+    industry_type            TEXT,
+    department               TEXT,
+    posted_date               DATE,
+    posted_raw                TEXT,
+    openings                  INT,
+    -- Naukri shows this capped ("100+"), not exact past the threshold —
+    -- stored as the floor, same honest-precision approach as posted_date.
+    applicant_count           INT,
+    -- Which run_daily_scrape.bat search URL surfaced this posting —
+    -- lets a query answer "which searches are actually productive"
+    -- instead of only ever seeing the merged result.
+    source_search             TEXT,
+    -- Mined from description text via skill_taxonomy.extract_certifications()
+    -- — a credential someone holds, a different kind of signal from a
+    -- tool/language skill, kept separate from posting_skills rather
+    -- than folded in.
+    certifications            TEXT[],
+    first_seen_date          DATE NOT NULL DEFAULT CURRENT_DATE,
+    last_seen_date           DATE NOT NULL DEFAULT CURRENT_DATE,
+    times_seen                INT NOT NULL DEFAULT 1
 );
+
+CREATE INDEX IF NOT EXISTS idx_cleaned_postings_description_hash
+    ON cleaned_postings (description_hash);
 
 
 -- ---------------------------------------------------------------------

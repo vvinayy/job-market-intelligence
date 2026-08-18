@@ -19,6 +19,7 @@ class PostingSummary(BaseModel):
     company: str | None = None
     role_family: str | None = None
     role_category: str | None = None
+    naukri_role: str | None = None
     industry_type: str | None = None
     department: str | None = None
     experience_min: int | None = None
@@ -32,6 +33,7 @@ class PostingSummary(BaseModel):
     contract_type: str | None = None
     posted_date: date | None = None
     openings: int | None = None
+    applicant_count: int | None = None
     url: str | None = None
 
 
@@ -45,6 +47,10 @@ class PostingDetail(PostingSummary):
     for a single record — the description is large enough that returning
     it in list responses would bloat every page."""
     description: str | None = None
+    responsibilities_text: str | None = None
+    requirements_text: str | None = None
+    certifications: list[str] = []
+    source_search: str | None = None
     qualifications: list[Qualification] = []
     first_seen_date: date | None = None
     last_seen_date: date | None = None

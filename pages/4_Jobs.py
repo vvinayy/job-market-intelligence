@@ -37,7 +37,7 @@ f7, f8, f9 = st.columns(3)
 search = f7.text_input("Search title or company", key="jobs_search")
 sort_by = f8.selectbox(
     "Sort by",
-    ["posted_date", "experience_min", "salary_max", "openings", "times_seen", "company", "title"],
+    ["posted_date", "experience_min", "salary_max", "openings", "applicant_count", "times_seen", "company", "title"],
     key="jobs_sort",
 )
 order = f9.radio("Order", ["desc", "asc"], horizontal=True, key="jobs_order")
@@ -133,25 +133,39 @@ if selected_rows:
 
     with st.container(border=True):
         st.subheader(f"{detail.get('title') or 'Untitled'} — {detail.get('company') or 'Unknown company'}")
-        d1, d2, d3, d4 = st.columns(4)
+        d1, d2, d3, d4, d5 = st.columns(5)
         d1.metric("Experience", display.iloc[selected_rows[0]]["experience"])
         d2.metric("Salary", display.iloc[selected_rows[0]]["salary"])
-        d3.metric("Times seen", detail.get("times_seen") or 1)
-        d4.metric("Days listed", detail.get("days_listed") if detail.get("days_listed") is not None else "—")
+        d3.metric("Applicants", detail.get("applicant_count") if detail.get("applicant_count") is not None else "—")
+        d4.metric("Times seen", detail.get("times_seen") or 1)
+        d5.metric("Days listed", detail.get("days_listed") if detail.get("days_listed") is not None else "—")
 
-        extra_facts = [detail.get(f) for f in ("role_category", "department", "industry_type") if detail.get(f)]
+        extra_facts = [detail.get(f) for f in ("role_category", "naukri_role", "department", "industry_type") if detail.get(f)]
         if extra_facts:
             st.caption(" · ".join(extra_facts))
 
         if detail.get("skills"):
             st.markdown("**Skills:** " + ", ".join(detail["skills"]))
 
+        if detail.get("certifications"):
+            st.markdown("**Certifications mentioned:** " + ", ".join(detail["certifications"]))
+
         if detail.get("qualifications"):
             quals = ", ".join(f"{q['level']}: {q['field_of_study']}" for q in detail["qualifications"])
             st.markdown("**Education:** " + quals)
 
-        st.markdown("**Description**")
-        st.write(detail.get("description") or "No description available.")
+        # Responsibilities/Requirements are a best-effort split of the same
+        # description text below — shown when the split actually found
+        # something, since a posting phrased unusually just won't have it.
+        if detail.get("responsibilities_text"):
+            st.markdown("**Responsibilities**")
+            st.write(detail["responsibilities_text"])
+        if detail.get("requirements_text"):
+            st.markdown("**Requirements**")
+            st.write(detail["requirements_text"])
+
+        with st.expander("Full description"):
+            st.write(detail.get("description") or "No description available.")
 
         if detail.get("url"):
             st.link_button("Open on Naukri", detail["url"])

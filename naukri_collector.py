@@ -11,8 +11,8 @@ labelled element on the page. If a label isn't there, the field reports
 
 Parameters collected:
     Job title, Company name, Experience, Location,
-    Key Skills, Employment Type, Role Category, Industry Type, Department,
-    Description
+    Key Skills, Employment Type, Role Category, Role, Industry Type,
+    Department, Applicant count, Description
 
 Naukri blocks headless browsers, so this runs with a visible window.
 ONE window is opened for the whole run and reused for every posting —
@@ -98,6 +98,27 @@ def safe_texts(scope, selector: str) -> list[str]:
         return []
 
 
+def safe_text_by_exact_label(page, label: str) -> str | None:
+    """Like safe_text, but matches a details row by its <label>'s EXACT
+    text rather than has-text() substring matching. Needed because
+    Naukri has label pairs where one is a substring of the other —
+    "Role:" vs "Role Category:" — so :has-text('Role') would match
+    both rows and there'd be no way to tell them apart. Reads the
+    value from an <a> tag if there is one (Role, like Industry Type
+    and Department, wraps its value in a link), falling back to a
+    plain nested span otherwise."""
+    try:
+        for row in page.query_selector_all("div.styles_details__Y424J"):
+            label_el = row.query_selector("label")
+            if not label_el or label_el.inner_text().strip() != label:
+                continue
+            value_el = row.query_selector("span a") or row.query_selector("span span")
+            return value_el.inner_text().strip() if value_el else None
+    except Exception:
+        pass
+    return None
+
+
 def safe_education(page) -> dict[str, str]:
     """Naukri's Education block lists UG/PG/Doctorate as label:value rows
     under styles_education__KXFkO — but not every posting shows all
@@ -158,7 +179,7 @@ def discover_job_urls(page, search_url: str, limit: int | None = None) -> list[s
 # STAGE 2 — DETAIL
 # Visit one job page and read the required parameters off it.
 # ---------------------------------------------------------------------
-def scrape_job_detail(page, url: str) -> dict | None:
+def scrape_job_detail(page, url: str, search_url: str | None = None) -> dict | None:
     page.goto(url, wait_until="domcontentloaded", timeout=45000)
 
     try:
@@ -183,6 +204,15 @@ def scrape_job_detail(page, url: str) -> dict | None:
     role_category = safe_text(
         page, "div.styles_details__Y424J:has-text('Role Category') span span"
     )
+
+    # --- Role: Naukri's own classification (e.g. "Back End Developer"),
+    # distinct from Role Category (e.g. "Software Development") and from
+    # our own regex-derived role_family. :has-text('Role') would also
+    # match the "Role Category:" row since it contains "Role" as a
+    # substring, so this needs the exact-label helper instead. Same
+    # anchor-wrapped markup as Industry Type/Department (confirmed from
+    # real page HTML), which safe_text_by_exact_label already handles.
+    naukri_role = safe_text_by_exact_label(page, "Role:")
 
     # --- Industry Type and Department: same "other details" block, but
     # different internal markup from Employment Type/Role Category — the
@@ -235,6 +265,18 @@ def scrape_job_detail(page, url: str) -> dict | None:
         digits = re.search(r"\d+", openings_raw)
         openings = int(digits.group()) if digits else None
 
+    # --- Applicants ---
+    # Naukri shows this as a capped value ("100+"), not an exact count
+    # once it's past the threshold — stored as the floor (100), same
+    # honest-precision approach as posted_date, just with a narrower
+    # practical range than "30+ days" so the floor itself stays useful
+    # as a competitiveness signal rather than being thrown away.
+    applicants_raw = safe_text(page, "span.styles_jhc__stat__PgY67:has-text('Applicants') span")
+    applicant_count = None
+    if applicants_raw:
+        digits = re.search(r"\d+", applicants_raw)
+        applicant_count = int(digits.group()) if digits else None
+
     record = {
         "url": url,
         "title": safe_text(page, "h1.styles_jd-header-title__rZwM1") or NOT_FOUND,
@@ -244,6 +286,7 @@ def scrape_job_detail(page, url: str) -> dict | None:
         "key_skills": skills or NOT_FOUND,
         "employment_type": employment_type or NOT_FOUND,
         "role_category": role_category or NOT_FOUND,
+        "naukri_role": naukri_role or NOT_FOUND,
         "industry_type": industry_type or NOT_FOUND,
         "department": department or NOT_FOUND,
         "working_type": working_type or NOT_FOUND,
@@ -251,7 +294,9 @@ def scrape_job_detail(page, url: str) -> dict | None:
         "posted_date": posted_date.isoformat() if posted_date else NOT_FOUND,
         "posted_raw": posted_raw or NOT_FOUND,
         "openings": openings if openings is not None else NOT_FOUND,
+        "applicant_count": applicant_count if applicant_count is not None else NOT_FOUND,
         "description": description or NOT_FOUND,
+        "source_search": search_url or NOT_FOUND,
     }
 
     # Only include these when something was actually found — an empty
@@ -268,8 +313,8 @@ def print_record(record: dict, index: int, total: int):
     print(f"\n--- Job {index}/{total} ---")
     for field in ["title", "company", "experience", "location",
                   "key_skills", "tech_in_description", "employment_type",
-                  "role_category", "industry_type", "department", "education",
-                  "working_type", "salary", "posted_date", "openings"]:
+                  "role_category", "naukri_role", "industry_type", "department", "education",
+                  "working_type", "salary", "posted_date", "openings", "applicant_count"]:
         if field not in record:  # omitted fields stay omitted in the output too
             continue
         value = record[field]
@@ -295,7 +340,7 @@ def main(search_url: str, limit: int | None):
         records = []
         for i, url in enumerate(urls, start=1):
             print(f"\n[detail {i}/{len(urls)}] {url[:90]}...")
-            record = scrape_job_detail(page, url)
+            record = scrape_job_detail(page, url, search_url)
             if record:
                 records.append(record)
                 print_record(record, i, len(urls))

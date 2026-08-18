@@ -43,35 +43,43 @@ def get_connection():
 # narrower SET clause would silently go stale on every repeat sighting.
 UPSERT_SQL = """
 INSERT INTO cleaned_postings (
-    fingerprint, url, title, company, description,
+    fingerprint, url, title, company, description, description_hash,
+    responsibilities_text, requirements_text,
     experience_min, experience_max, salary_min, salary_max,
     city_ids, unmapped_locations, working_type, employment_type, contract_type,
-    role_family, role_category, industry_type, department,
-    posted_date, posted_raw, openings
+    role_family, role_category, naukri_role, industry_type, department,
+    posted_date, posted_raw, openings, applicant_count, source_search, certifications
 ) VALUES %s
 ON CONFLICT (fingerprint) DO UPDATE SET
-    url                = EXCLUDED.url,
-    title              = EXCLUDED.title,
-    company            = EXCLUDED.company,
-    description        = EXCLUDED.description,
-    experience_min     = EXCLUDED.experience_min,
-    experience_max     = EXCLUDED.experience_max,
-    salary_min         = EXCLUDED.salary_min,
-    salary_max         = EXCLUDED.salary_max,
-    city_ids           = EXCLUDED.city_ids,
-    unmapped_locations = EXCLUDED.unmapped_locations,
-    working_type       = EXCLUDED.working_type,
-    employment_type    = EXCLUDED.employment_type,
-    contract_type      = EXCLUDED.contract_type,
-    role_family        = EXCLUDED.role_family,
-    role_category      = EXCLUDED.role_category,
-    industry_type      = EXCLUDED.industry_type,
-    department         = EXCLUDED.department,
-    posted_date        = EXCLUDED.posted_date,
-    posted_raw         = EXCLUDED.posted_raw,
-    openings           = EXCLUDED.openings,
-    last_seen_date     = CURRENT_DATE,
-    times_seen         = cleaned_postings.times_seen + 1
+    url                   = EXCLUDED.url,
+    title                 = EXCLUDED.title,
+    company               = EXCLUDED.company,
+    description           = EXCLUDED.description,
+    description_hash      = EXCLUDED.description_hash,
+    responsibilities_text = EXCLUDED.responsibilities_text,
+    requirements_text     = EXCLUDED.requirements_text,
+    experience_min        = EXCLUDED.experience_min,
+    experience_max        = EXCLUDED.experience_max,
+    salary_min            = EXCLUDED.salary_min,
+    salary_max            = EXCLUDED.salary_max,
+    city_ids              = EXCLUDED.city_ids,
+    unmapped_locations    = EXCLUDED.unmapped_locations,
+    working_type          = EXCLUDED.working_type,
+    employment_type       = EXCLUDED.employment_type,
+    contract_type         = EXCLUDED.contract_type,
+    role_family           = EXCLUDED.role_family,
+    role_category         = EXCLUDED.role_category,
+    naukri_role           = EXCLUDED.naukri_role,
+    industry_type         = EXCLUDED.industry_type,
+    department            = EXCLUDED.department,
+    posted_date           = EXCLUDED.posted_date,
+    posted_raw            = EXCLUDED.posted_raw,
+    openings              = EXCLUDED.openings,
+    applicant_count       = EXCLUDED.applicant_count,
+    source_search         = EXCLUDED.source_search,
+    certifications        = EXCLUDED.certifications,
+    last_seen_date        = CURRENT_DATE,
+    times_seen            = cleaned_postings.times_seen + 1
 RETURNING job_id, fingerprint, (xmax = 0) AS was_inserted;
 """
 
@@ -140,15 +148,19 @@ def save_records(records: list[dict]) -> tuple[int, int]:
         rows = [
             (
                 c["posting"]["fingerprint"], c["posting"]["url"], c["posting"]["title"],
-                c["posting"]["company"], c["posting"]["description"],
+                c["posting"]["company"], c["posting"]["description"], c["posting"]["description_hash"],
+                c["posting"]["responsibilities_text"], c["posting"]["requirements_text"],
                 c["posting"]["experience_min"], c["posting"]["experience_max"],
                 c["posting"]["salary_min"], c["posting"]["salary_max"],
                 c["posting"]["city_ids"], c["posting"]["unmapped_locations"],
                 c["posting"]["working_type"], c["posting"]["employment_type"],
                 c["posting"]["contract_type"], c["posting"]["role_family"],
-                c["posting"]["role_category"], c["posting"]["industry_type"], c["posting"]["department"],
+                c["posting"]["role_category"], c["posting"]["naukri_role"],
+                c["posting"]["industry_type"], c["posting"]["department"],
                 c["posting"]["posted_date"],
                 c["posting"]["posted_raw"], c["posting"]["openings"],
+                c["posting"]["applicant_count"], c["posting"]["source_search"],
+                c["posting"]["certifications"],
             )
             for c in deduped
         ]

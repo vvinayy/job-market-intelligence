@@ -27,6 +27,7 @@ SORTABLE = {
     "salary_min": "c.salary_min",
     "salary_max": "c.salary_max",
     "openings": "c.openings",
+    "applicant_count": "c.applicant_count",
     "times_seen": "c.times_seen",
     "first_seen": "c.first_seen_date",
     "last_seen": "c.last_seen_date",
@@ -41,7 +42,7 @@ SORTABLE = {
 BASE_SELECT = """
     SELECT
         c.job_id, c.title, c.company, c.role_family,
-        c.role_category, c.industry_type, c.department,
+        c.role_category, c.naukri_role, c.industry_type, c.department,
         c.experience_min, c.experience_max,
         c.salary_min, c.salary_max,
         COALESCE(
@@ -59,7 +60,7 @@ BASE_SELECT = """
             '{}'
         ) AS cities,
         c.working_type, c.employment_type, c.contract_type,
-        c.posted_date, c.openings, c.url
+        c.posted_date, c.openings, c.applicant_count, c.url
     FROM cleaned_postings c
 """
 
@@ -241,7 +242,9 @@ def get_posting(job_id: int):
         raise HTTPException(404, f"No posting with job_id {job_id}")
 
     extra = fetch_one("""
-        SELECT c.description, c.first_seen_date, c.last_seen_date, c.times_seen,
+        SELECT c.description, c.responsibilities_text, c.requirements_text,
+               COALESCE(c.certifications, '{}') AS certifications, c.source_search,
+               c.first_seen_date, c.last_seen_date, c.times_seen,
                (c.last_seen_date - c.first_seen_date) AS days_listed
         FROM cleaned_postings c
         WHERE c.job_id = %s

@@ -187,6 +187,45 @@ def extract_skills(description: str) -> list[str]:
     return found
 
 
+# ---------------------------------------------------------------------
+# Certifications — a different kind of signal from a tool or language
+# (a credential someone holds, not something they use day to day), so
+# kept as its own vocabulary rather than folded into SKILL_ALIASES.
+# ---------------------------------------------------------------------
+CERTIFICATION_ALIASES = {
+    "AWS Certified": ["aws certified", "certified aws"],
+    "Azure Certified": ["azure certified", "microsoft certified: azure",
+                         "az-900", "az-104", "az-204", "az-305"],
+    "GCP Certified": ["gcp certified", "google cloud certified"],
+    "PMP": ["pmp", "project management professional"],
+    "CSM": ["csm", "certified scrummaster", "certified scrum master"],
+    "CKA": ["cka", "certified kubernetes administrator"],
+    "CISSP": ["cissp"],
+    "ITIL": ["itil"],
+    "Six Sigma": ["six sigma"],
+    "CompTIA Security+": [r"security\+", "comptia security"],
+    "SAFe": ["safe agilist", "scaled agile"],
+}
+
+_COMPILED_CERTS = [
+    (canonical, _build_pattern(alias))
+    for canonical, aliases in CERTIFICATION_ALIASES.items()
+    for alias in aliases
+]
+
+
+def extract_certifications(description: str) -> list[str]:
+    """Find every known certification mentioned in the text. Same
+    word-boundary matching as extract_skills(), separate vocabulary."""
+    if not description:
+        return []
+    found = []
+    for canonical, pattern in _COMPILED_CERTS:
+        if canonical not in found and pattern.search(description):
+            found.append(canonical)
+    return found
+
+
 def group_alternatives(skills: list[str]) -> list[str]:
     """Collapse known interchangeable skills into one 'A/B' entry.
 

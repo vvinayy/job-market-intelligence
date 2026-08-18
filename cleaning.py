@@ -22,7 +22,7 @@ import re
 import math
 import hashlib
 
-from skill_taxonomy import SKILL_ALIASES as _TAXONOMY_ALIASES
+from skill_taxonomy import SKILL_ALIASES as _TAXONOMY_ALIASES, extract_certifications
 
 
 NOT_FOUND = "not found"
@@ -69,6 +69,19 @@ def make_fingerprint(company: str | None, title: str | None,
         f"|{_normalize_for_fingerprint(location)}|{_normalize_for_fingerprint(experience)}"
     )
     return hashlib.sha256(combined.encode()).hexdigest()
+
+
+def make_description_hash(description: str | None) -> str | None:
+    """Groups postings that share the same underlying description text
+    even when posted under different companies/fingerprints — common on
+    Naukri when several staffing agencies repost the exact same vacancy.
+    Not fuzzy matching, just exact-text-after-normalizing — genuinely
+    reworded reposts won't be caught, only verbatim copies. Returns None
+    for an empty description rather than hashing an empty string, so
+    postings with no description don't all collide into one fake group."""
+    if not description:
+        return None
+    return hashlib.sha256(_normalize_for_fingerprint(description).encode()).hexdigest()
 
 
 # =====================================================================
@@ -523,6 +536,58 @@ def parse_qualifications(education: dict[str, str] | None) -> list[dict[str, str
 
 
 # =====================================================================
+# DESCRIPTION SECTIONS — best-effort split into Responsibilities and
+# Requirements, using common heading phrases. This is text heuristics,
+# not guaranteed: a posting phrased unusually, or with no headings at
+# all, just won't split — the full text still lives in `description`
+# either way, so nothing is lost if the heuristic misses.
+# =====================================================================
+_RESPONSIBILITY_HEADERS = [
+    "roles and responsibilities", "role and responsibilities",
+    "key responsibilities", "responsibilities", "job responsibilities",
+    "what you'll do", "what you will do",
+]
+_REQUIREMENT_HEADERS = [
+    "desired candidate profile", "required skills", "requirements",
+    "qualifications", "must have", "skills required", "who you are",
+    "what we're looking for", "what we are looking for",
+]
+# A short, mostly-alphabetic standalone line — the shape a heading takes
+# once HTML has been flattened to plain text (no more <h2>/<strong> tags
+# to lean on).
+_HEADER_LINE_RE = re.compile(r"^[A-Za-z][A-Za-z /&']{2,60}:?$")
+
+
+def split_description_sections(description: str | None) -> dict[str, str | None]:
+    if not description:
+        return {"responsibilities": None, "requirements": None}
+
+    buckets: dict[str, list[str]] = {"responsibilities": [], "requirements": []}
+    current = None
+    for raw_line in description.splitlines():
+        line = raw_line.strip()
+        if _HEADER_LINE_RE.match(line):
+            header = line.rstrip(":").strip().lower()
+            if any(h in header for h in _RESPONSIBILITY_HEADERS):
+                current = "responsibilities"
+                continue
+            if any(h in header for h in _REQUIREMENT_HEADERS):
+                current = "requirements"
+                continue
+            # An unrecognized heading (e.g. "About Company") ends
+            # whatever section was open, without starting a new one.
+            current = None
+            continue
+        if current and line:
+            buckets[current].append(line)
+
+    return {
+        "responsibilities": "\n".join(buckets["responsibilities"]) or None,
+        "requirements": "\n".join(buckets["requirements"]) or None,
+    }
+
+
+# =====================================================================
 # clean_record() — the single entry point. Takes one scraped record
 # (naukri_collector.py's scrape_job_detail() shape) plus a city-name ->
 # city_id lookup, returns everything needed to write it.
@@ -540,13 +605,18 @@ def clean_record(raw: dict, city_name_to_id: dict[str, int]) -> dict:
 
     title = _clean(raw.get("title"))
     company = _clean(raw.get("company"))
+    description = _clean(raw.get("description"))
+    sections = split_description_sections(description)
 
     posting = {
         "fingerprint": make_fingerprint(company, title, _clean(raw.get("location")), experience),
         "url": raw.get("url"),
         "title": title,
         "company": company,
-        "description": _clean(raw.get("description")),
+        "description": description,
+        "description_hash": make_description_hash(description),
+        "responsibilities_text": sections["responsibilities"],
+        "requirements_text": sections["requirements"],
         "experience_min": _round_half_up(exp_min) if exp_min is not None else None,
         "experience_max": _round_half_up(exp_max) if exp_max is not None else None,
         "salary_min": parse_range_min(salary),
@@ -558,11 +628,15 @@ def clean_record(raw: dict, city_name_to_id: dict[str, int]) -> dict:
         "contract_type": parse_contract_type(_clean(raw.get("employment_type"))),
         "role_family": classify_role(title),
         "role_category": _clean(raw.get("role_category")),
+        "naukri_role": _clean(raw.get("naukri_role")),
         "industry_type": _clean(raw.get("industry_type")),
         "department": _clean(raw.get("department")),
         "posted_date": _clean(raw.get("posted_date")),
         "posted_raw": _clean(raw.get("posted_raw")),
         "openings": raw.get("openings") if isinstance(raw.get("openings"), int) else None,
+        "applicant_count": raw.get("applicant_count") if isinstance(raw.get("applicant_count"), int) else None,
+        "source_search": _clean(raw.get("source_search")),
+        "certifications": extract_certifications(description) if description else [],
     }
 
     return {
