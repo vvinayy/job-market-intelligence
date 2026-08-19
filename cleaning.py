@@ -647,14 +647,24 @@ def _normalize_specialization(raw: str) -> str:
     return _SPECIALIZATION_ALIASES.get(text.lower(), text)
 
 
-def _parse_field_of_study(raw_text: str | None) -> list[dict]:
+def _parse_field_of_study(raw_text: str | None, fallback_level: str | None = None) -> list[dict]:
     """One level's flattened text in ('MCA in Any Specialization, M.Tech
     in Any Specialization'), one dict per atomic degree out. Each dict
     is {"degree": str, "level": "UG"/"PG"/"Doctorate",
-    "specializations": [str, ...]}. An unrecognized leading token (a
-    degree phrasing this taxonomy hasn't seen yet) is dropped rather
-    than guessed at — same "don't invent, report what's real" rule as
-    the rest of this file."""
+    "specializations": [str, ...]}.
+
+    A token matching no known degree is either a continuation
+    specialization for whichever degree came right before it, or — if
+    nothing came before it — a degree phrasing this taxonomy hasn't seen
+    yet. That second case is registered as a new degree rather than
+    dropped, same "fall through to a tidied version of itself instead of
+    being silently lost" rule normalize_skill() uses for an unrecognized
+    skill. fallback_level supplies its UG/PG/Doctorate classification —
+    Naukri's own label for this block, passed in by
+    parse_education_degrees() — since that's real signal even when the
+    degree name itself is new. Naukri's "<Degree> in <Specialization>"
+    phrasing is assumed to hold for an unrecognized token too, splitting
+    on the first " in "."""
     if not raw_text:
         return []
 
@@ -679,6 +689,16 @@ def _parse_field_of_study(raw_text: str | None) -> list[dict]:
             # Doesn't match any known degree -- another specialization
             # tacked onto whichever degree came right before it.
             groups[-1]["specializations"].append(_normalize_specialization(token))
+        elif fallback_level:
+            if " in " in token:
+                degree_part, spec_part = token.split(" in ", 1)
+                specializations = [_normalize_specialization(spec_part.strip())]
+            else:
+                degree_part, specializations = token, []
+            groups.append({"names": _split_degree_names(degree_part.strip()), "level": fallback_level,
+                            "specializations": specializations})
+        # else: no fallback_level available (a direct call with no block
+        # context) and nothing to attach to -- nothing safe to do.
 
     return [
         {"degree": name, "level": g["level"], "specializations": g["specializations"]}
@@ -689,12 +709,17 @@ def _parse_field_of_study(raw_text: str | None) -> list[dict]:
 def parse_education_degrees(education: dict[str, str] | None) -> list[dict]:
     """Same raw {"UG": "...", "PG": "...", ...} block parse_qualifications()
     reads, broken down further into individually referenceable degree
-    facts instead of one flat display string per level."""
+    facts instead of one flat display string per level. The dict's own
+    key (Naukri's UG/PG/Doctorate label) is passed through as
+    fallback_level so a degree name this taxonomy has never seen still
+    gets classified correctly instead of being dropped."""
     if not isinstance(education, dict):
         return []
     degrees = []
-    for text in education.values():
-        degrees += _parse_field_of_study(text)
+    for level, text in education.items():
+        level_key = level.strip().lower()
+        fallback_level = _QUALIFICATION_LEVEL_ALIASES.get(level_key, level.strip())
+        degrees += _parse_field_of_study(text, fallback_level=fallback_level)
     return degrees
 
 

@@ -140,11 +140,57 @@ def test_doctorate_slash_degree_and_standalones():
     assert by_degree["Ph.D"]["specializations"] == ["Any Specialization"]
 
 
-def test_unrecognized_leading_token_is_dropped_not_guessed():
-    # No known degree at all in the text -- nothing to anchor a
-    # specialization to, so this must come back empty rather than
-    # inventing a degree.
+def test_unrecognized_token_with_no_fallback_level_is_dropped():
+    # A direct call with no block context (no fallback_level) and
+    # nothing before it to attach to as a specialization -- there's
+    # nothing safe to do with it, so it's dropped, same as before.
     assert cleaning._parse_field_of_study("Something Naukri Has Never Shown Before") == []
+
+
+def test_unrecognized_leading_token_registers_as_new_degree_with_fallback_level():
+    # With a fallback_level supplied (the real production path, via
+    # parse_education_degrees passing Naukri's own UG/PG/Doctorate
+    # label), an unfamiliar degree name is preserved instead of dropped
+    # -- same "fall through to itself" rule as an unrecognized skill.
+    result = cleaning._parse_field_of_study("B.Pharm in Any Specialization", fallback_level="UG")
+    assert result == [{"degree": "B.Pharm", "level": "UG", "specializations": ["Any Specialization"]}]
+
+
+def test_unrecognized_token_with_fallback_level_and_no_specialization():
+    result = cleaning._parse_field_of_study("CA", fallback_level="PG")
+    assert result == [{"degree": "CA", "level": "PG", "specializations": []}]
+
+
+def test_unrecognized_slash_token_still_splits_into_alternatives():
+    # The slash-splitting rule applies even to a degree name this
+    # taxonomy has never seen before.
+    result = cleaning._parse_field_of_study("CA/ICWA in Any Specialization", fallback_level="PG")
+    by_degree = _by_degree(result)
+    assert set(by_degree) == {"CA", "ICWA"}
+    assert by_degree["CA"]["specializations"] == ["Any Specialization"]
+
+
+def test_unrecognized_token_after_a_known_group_is_still_a_specialization_not_a_new_degree():
+    # Order matters: an unfamiliar word right after a KNOWN degree is
+    # still treated as a continuation specialization for that degree,
+    # not registered as its own new degree -- the fallback path only
+    # fires when there's nothing before it to attach to.
+    result = cleaning._parse_field_of_study(
+        "B.Tech / B.E. in Robotics and Automation Engineering", fallback_level="UG"
+    )
+    by_degree = _by_degree(result)
+    assert by_degree["B.Tech"]["specializations"] == ["Robotics and Automation Engineering"]
+
+
+def test_parse_education_degrees_passes_level_through_for_unrecognized_degrees():
+    # education dict keys are Naukri's own UG/PG/Doctorate labels --
+    # confirms that context correctly reaches an unrecognized degree
+    # name, not just the known-vocabulary path.
+    education = {"UG": "B.Pharm in Any Specialization", "Doctorate": "MBBS"}
+    result = cleaning.parse_education_degrees(education)
+    by_degree = _by_degree(result)
+    assert by_degree["B.Pharm"]["level"] == "UG"
+    assert by_degree["MBBS"]["level"] == "Doctorate"
 
 
 def test_parse_education_degrees_combines_all_levels():
