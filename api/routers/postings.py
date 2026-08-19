@@ -42,7 +42,7 @@ SORTABLE = {
 BASE_SELECT = """
     SELECT
         c.job_id, c.title, c.company, c.role_family, c.seniority_level,
-        c.role_category, c.naukri_role, c.industry_type, c.department,
+        rc.name AS role_category, c.naukri_role, it.name AS industry_type, d.name AS department,
         c.experience_min, c.experience_max,
         c.salary_min, c.salary_max,
         COALESCE(
@@ -63,6 +63,9 @@ BASE_SELECT = """
         c.posted_date, c.openings, c.applicant_count, c.applicant_count_qualifier,
         c.company_rating, c.company_reviews, c.url
     FROM cleaned_postings c
+    LEFT JOIN role_categories rc ON rc.role_category_id = c.role_category_id
+    LEFT JOIN departments d ON d.department_id = c.department_id
+    LEFT JOIN industry_types it ON it.industry_type_id = c.industry_type_id
 """
 
 

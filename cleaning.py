@@ -578,6 +578,127 @@ def parse_qualifications(education: dict[str, str] | None) -> list[dict[str, str
 
 
 # =====================================================================
+# EDUCATION DEGREES / SPECIALIZATIONS — breaks parse_qualifications()'s
+# flat "field_of_study" display string into individually referenceable
+# facts: which degrees does a posting accept, and which specialization
+# for each. Confirmed from real HTML that Naukri renders this as ONE
+# flattened <span> per level (no separate chip per degree), e.g.
+#   "MCA in Any Specialization, MS/M.Sc(Science) in Any Specialization,
+#    M.Tech in Any Specialization"
+# so the comma is genuinely overloaded in the source text itself — it
+# separates a new degree from the one before it, AND separates two
+# specializations that both belong to the same degree ("B.Sc in
+# Computer Science and Technology, Information Technology (IT)" is ONE
+# degree with two acceptable specializations, not two degrees). There
+# is no punctuation that tells the two cases apart, so this walks the
+# comma-split tokens and treats anything that isn't a recognized degree
+# name as another specialization for whichever degree came right before
+# it. Naukri's degree vocabulary is small and fixed (confirmed against
+# every distinct field_of_study value seen in this project's data), so
+# this is a taxonomy lookup, same spirit as skill_taxonomy.py, not a
+# guess.
+#
+# A slash-joined entry ("B.Tech / B.E.", "MS/M.Sc(Science)", "MBA/PGDM",
+# "Ph.D/Doctorate") is Naukri listing two alternative credentials, not
+# one combined one — split into separate atomic degree references.
+# =====================================================================
+_DEGREE_VOCABULARY = [
+    # (raw prefix exactly as Naukri renders it, level)
+    ("B.Tech / B.E.", "UG"),
+    ("B.C.A.", "UG"),
+    ("B.Sc", "UG"),
+    ("B.A - Bachelor of Arts", "UG"),
+    ("Any Graduate", "UG"),
+    ("Other Graduate", "UG"),
+    ("Graduation Not Required", "UG"),
+    ("MS/M.Sc(Science)", "PG"),
+    ("MBA/PGDM", "PG"),
+    ("M.Tech", "PG"),
+    ("MCA", "PG"),
+    ("MCM", "PG"),
+    ("LLM", "PG"),
+    ("Any Postgraduate", "PG"),
+    ("Ph.D/Doctorate", "Doctorate"),
+    ("Any Doctorate", "Doctorate"),
+    ("Doctorate Not Required", "Doctorate"),
+]
+# Longest prefix first, so a shorter entry can never shadow a longer
+# one that starts the same way.
+_DEGREE_VOCABULARY.sort(key=lambda row: -len(row[0]))
+
+_SPECIALIZATION_ALIASES = {
+    "information technology (it)": "Information Technology",
+}
+
+
+def _split_degree_names(prefix: str) -> list[str]:
+    """'B.Tech / B.E.' -> ['B.Tech', 'B.E.'] (two alternative degrees).
+    'B.A - Bachelor of Arts' -> ['B.A'] (one degree, drop the redundant
+    expansion). Everything else is already atomic."""
+    if "/" in prefix:
+        return [p.strip() for p in prefix.split("/")]
+    if " - " in prefix:
+        return [prefix.split(" - ")[0].strip()]
+    return [prefix]
+
+
+def _normalize_specialization(raw: str) -> str:
+    text = re.sub(r"\bAnd\b", "and", raw.strip())
+    return _SPECIALIZATION_ALIASES.get(text.lower(), text)
+
+
+def _parse_field_of_study(raw_text: str | None) -> list[dict]:
+    """One level's flattened text in ('MCA in Any Specialization, M.Tech
+    in Any Specialization'), one dict per atomic degree out. Each dict
+    is {"degree": str, "level": "UG"/"PG"/"Doctorate",
+    "specializations": [str, ...]}. An unrecognized leading token (a
+    degree phrasing this taxonomy hasn't seen yet) is dropped rather
+    than guessed at — same "don't invent, report what's real" rule as
+    the rest of this file."""
+    if not raw_text:
+        return []
+
+    tokens = [t.strip() for t in raw_text.split(",") if t.strip()]
+    groups: list[dict] = []  # [{"names": [...], "level": ..., "specializations": [...]}]
+
+    for token in tokens:
+        matched = next(
+            ((prefix, level) for prefix, level in _DEGREE_VOCABULARY
+             if token == prefix or token.startswith(prefix + " in ")),
+            None,
+        )
+        if matched:
+            prefix, level = matched
+            spec_text = token[len(prefix):].strip()
+            if spec_text.startswith("in "):
+                spec_text = spec_text[3:].strip()
+            specializations = [_normalize_specialization(spec_text)] if spec_text else []
+            groups.append({"names": _split_degree_names(prefix), "level": level,
+                            "specializations": specializations})
+        elif groups:
+            # Doesn't match any known degree -- another specialization
+            # tacked onto whichever degree came right before it.
+            groups[-1]["specializations"].append(_normalize_specialization(token))
+
+    return [
+        {"degree": name, "level": g["level"], "specializations": g["specializations"]}
+        for g in groups for name in g["names"]
+    ]
+
+
+def parse_education_degrees(education: dict[str, str] | None) -> list[dict]:
+    """Same raw {"UG": "...", "PG": "...", ...} block parse_qualifications()
+    reads, broken down further into individually referenceable degree
+    facts instead of one flat display string per level."""
+    if not isinstance(education, dict):
+        return []
+    degrees = []
+    for text in education.values():
+        degrees += _parse_field_of_study(text)
+    return degrees
+
+
+# =====================================================================
 # DESCRIPTION SECTIONS — best-effort split into Responsibilities and
 # Requirements, using common heading phrases. This is text heuristics,
 # not guaranteed: a posting phrased unusually, or with no headings at
@@ -702,4 +823,5 @@ def clean_record(raw: dict, city_name_to_id: dict[str, int]) -> dict:
         "skills": skills,
         "preferred_skills": preferred_skills,
         "qualifications": parse_qualifications(raw.get("education")),
+        "qualification_degrees": parse_education_degrees(raw.get("education")),
     }

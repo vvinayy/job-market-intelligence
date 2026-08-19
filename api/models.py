@@ -96,6 +96,12 @@ class NamedCount(BaseModel):
     postings: int
 
 
+class DegreeCount(BaseModel):
+    name: str
+    level: str = Field(description="'UG', 'PG', or 'Doctorate'")
+    postings: int
+
+
 class SkillInfo(BaseModel):
     skill: str
     postings: int

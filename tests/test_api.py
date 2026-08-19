@@ -55,6 +55,8 @@ REFERENCE_ENDPOINTS = [
     "/reference/cities", "/reference/states", "/reference/roles",
     "/reference/companies", "/reference/skills", "/reference/working-types",
     "/reference/employment-types", "/reference/contract-types",
+    "/reference/role-categories", "/reference/departments", "/reference/industry-types",
+    "/reference/education-degrees", "/reference/education-specializations",
 ]
 
 

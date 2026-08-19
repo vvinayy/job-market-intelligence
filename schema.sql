@@ -97,10 +97,37 @@ ON CONFLICT (city_name) DO NOTHING;
 -- read — posting_cities holds the same links for joining/filtering.
 -- ---------------------------------------------------------------------
 DROP TABLE IF EXISTS posting_qualifications;
+DROP TABLE IF EXISTS posting_qualification_specializations;
+DROP TABLE IF EXISTS posting_qualification_degrees;
+DROP TABLE IF EXISTS education_specializations;
+DROP TABLE IF EXISTS education_degrees;
 DROP TABLE IF EXISTS posting_skills;
 DROP TABLE IF EXISTS skills;
 DROP TABLE IF EXISTS posting_cities;
 DROP TABLE IF EXISTS cleaned_postings;
+DROP TABLE IF EXISTS role_categories CASCADE;
+DROP TABLE IF EXISTS departments CASCADE;
+DROP TABLE IF EXISTS industry_types CASCADE;
+
+-- role_category/department/industry_type are single-valued per posting
+-- (unlike skills/cities, which can be several per posting), so each just
+-- gets a small dictionary table plus one FK column on cleaned_postings —
+-- no junction table needed. job_database.py registers a name here the
+-- first time it's seen, same get-or-create pattern as the skills table.
+CREATE TABLE role_categories (
+    role_category_id  SERIAL PRIMARY KEY,
+    name               TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE departments (
+    department_id  SERIAL PRIMARY KEY,
+    name            TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE industry_types (
+    industry_type_id  SERIAL PRIMARY KEY,
+    name               TEXT NOT NULL UNIQUE
+);
 
 CREATE TABLE cleaned_postings (
     job_id                 BIGSERIAL PRIMARY KEY,
@@ -134,13 +161,13 @@ CREATE TABLE cleaned_postings (
     -- different, often-absent signal. NULL means the title carried no
     -- seniority marker at all (the common case), not "mid-level".
     seniority_level          TEXT,
-    role_category           TEXT,
+    role_category_id        INT REFERENCES role_categories(role_category_id),
     -- Naukri's own classification (e.g. "Back End Developer") — distinct
     -- from role_category (e.g. "Software Development") and from
     -- role_family (our own regex-derived classification of the title).
     naukri_role              TEXT,
-    industry_type            TEXT,
-    department               TEXT,
+    industry_type_id         INT REFERENCES industry_types(industry_type_id),
+    department_id            INT REFERENCES departments(department_id),
     posted_date               DATE,
     posted_raw                TEXT,
     openings                  INT,
@@ -259,6 +286,55 @@ CREATE TABLE posting_qualifications (
     level           TEXT   NOT NULL,
     field_of_study  TEXT,
     PRIMARY KEY (job_id, level)
+);
+
+
+-- ---------------------------------------------------------------------
+-- EDUCATION_DEGREES / EDUCATION_SPECIALIZATIONS — posting_qualifications
+-- above keeps Naukri's flattened display string per level; these break
+-- it down further into individually referenceable facts, the same way
+-- skills got their own dictionary table instead of staying free text.
+--
+-- Naukri renders each level as ONE flattened <span> (confirmed from raw
+-- HTML), e.g. "MCA in Any Specialization, MS/M.Sc(Science) in Any
+-- Specialization" — the comma separates either a new degree or another
+-- specialization for the degree just before it, with no punctuation
+-- telling the two cases apart. cleaning.py's _parse_field_of_study()
+-- resolves that ambiguity against a small fixed vocabulary of known
+-- degree names (verified against every distinct value seen in this
+-- project's data). A slash-joined entry ("B.Tech / B.E.",
+-- "MS/M.Sc(Science)") is Naukri listing two alternative credentials,
+-- split into two separate degree rows rather than kept as one combined
+-- string.
+--
+-- posting_qualification_degrees: which degrees a posting accepts.
+-- posting_qualification_specializations: for a given accepted degree,
+-- which specializations are acceptable — kept as a separate table
+-- (rather than a nullable third PK column above) since not every degree
+-- entry has one ("Any Graduate" has no specialization to attach).
+-- ---------------------------------------------------------------------
+CREATE TABLE education_degrees (
+    degree_id    SERIAL PRIMARY KEY,
+    degree_name  TEXT NOT NULL UNIQUE,
+    level        TEXT NOT NULL
+);
+
+CREATE TABLE education_specializations (
+    specialization_id    SERIAL PRIMARY KEY,
+    specialization_name  TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE posting_qualification_degrees (
+    job_id     BIGINT NOT NULL REFERENCES cleaned_postings(job_id) ON DELETE CASCADE,
+    degree_id  INT    NOT NULL REFERENCES education_degrees(degree_id),
+    PRIMARY KEY (job_id, degree_id)
+);
+
+CREATE TABLE posting_qualification_specializations (
+    job_id             BIGINT NOT NULL REFERENCES cleaned_postings(job_id) ON DELETE CASCADE,
+    degree_id          INT    NOT NULL REFERENCES education_degrees(degree_id),
+    specialization_id  INT    NOT NULL REFERENCES education_specializations(specialization_id),
+    PRIMARY KEY (job_id, degree_id, specialization_id)
 );
 
 

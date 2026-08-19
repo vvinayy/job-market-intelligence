@@ -9,7 +9,7 @@ out of sync with the database; these endpoints keep one source of truth.
 from fastapi import APIRouter, Query
 
 from ..database import fetch_all, fetch_value
-from ..models import City, State, NamedCount, SkillInfo
+from ..models import City, State, NamedCount, DegreeCount, SkillInfo
 
 router = APIRouter(prefix="/reference", tags=["reference"])
 
@@ -49,6 +49,56 @@ def list_roles():
         SELECT COALESCE(role_family, 'Other') AS name, COUNT(*)::int AS postings
         FROM cleaned_postings
         GROUP BY name ORDER BY postings DESC
+    """)
+
+
+@router.get("/role-categories", response_model=list[NamedCount], summary="Naukri's Role Category tag")
+def list_role_categories():
+    return fetch_all("""
+        SELECT rc.name, COUNT(c.job_id)::int AS postings
+        FROM role_categories rc
+        LEFT JOIN cleaned_postings c ON c.role_category_id = rc.role_category_id
+        GROUP BY rc.name ORDER BY postings DESC, rc.name
+    """)
+
+
+@router.get("/departments", response_model=list[NamedCount], summary="Department")
+def list_departments():
+    return fetch_all("""
+        SELECT d.name, COUNT(c.job_id)::int AS postings
+        FROM departments d
+        LEFT JOIN cleaned_postings c ON c.department_id = d.department_id
+        GROUP BY d.name ORDER BY postings DESC, d.name
+    """)
+
+
+@router.get("/industry-types", response_model=list[NamedCount], summary="Industry Type")
+def list_industry_types():
+    return fetch_all("""
+        SELECT it.name, COUNT(c.job_id)::int AS postings
+        FROM industry_types it
+        LEFT JOIN cleaned_postings c ON c.industry_type_id = it.industry_type_id
+        GROUP BY it.name ORDER BY postings DESC, it.name
+    """)
+
+
+@router.get("/education-degrees", response_model=list[DegreeCount], summary="Accepted degrees, broken out individually")
+def list_education_degrees():
+    return fetch_all("""
+        SELECT ed.degree_name AS name, ed.level, COUNT(pqd.job_id)::int AS postings
+        FROM education_degrees ed
+        LEFT JOIN posting_qualification_degrees pqd ON pqd.degree_id = ed.degree_id
+        GROUP BY ed.degree_name, ed.level ORDER BY postings DESC, ed.degree_name
+    """)
+
+
+@router.get("/education-specializations", response_model=list[NamedCount], summary="Accepted specializations")
+def list_education_specializations():
+    return fetch_all("""
+        SELECT es.specialization_name AS name, COUNT(pqs.job_id)::int AS postings
+        FROM education_specializations es
+        LEFT JOIN posting_qualification_specializations pqs ON pqs.specialization_id = es.specialization_id
+        GROUP BY es.specialization_name ORDER BY postings DESC, es.specialization_name
     """)
 
 

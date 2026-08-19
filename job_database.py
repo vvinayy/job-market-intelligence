@@ -25,6 +25,55 @@ from psycopg2.extras import execute_values, RealDictCursor, Json
 from cleaning import clean_record, categorize_skill
 
 
+def _resolve_reference_ids(conn, table: str, id_col: str, name_col: str, names: set[str]) -> dict[str, int]:
+    """Get-or-create ids for a small single-valued reference table
+    (role_categories, departments, industry_types) -- same
+    register-if-new pattern as skill_id resolution below, just for a
+    fixed-column FK instead of an array. table/id_col/name_col are
+    always one of this module's own hardcoded literals, never caller
+    input, so building the SQL with an f-string here carries the same
+    safety as the rest of this file's parameterised queries."""
+    names = {n for n in names if n}
+    if not names:
+        return {}
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(f"SELECT {id_col}, {name_col} FROM {table} WHERE {name_col} = ANY(%s)", (list(names),))
+        mapping = {row[name_col]: row[id_col] for row in cur.fetchall()}
+    missing = [n for n in names if n not in mapping]
+    if missing:
+        with conn.cursor() as cur:
+            inserted = execute_values(
+                cur, f"INSERT INTO {table} ({name_col}) VALUES %s RETURNING {id_col}, {name_col}",
+                [(n,) for n in missing], fetch=True,
+            )
+        mapping.update({name: ref_id for ref_id, name in inserted})
+    return mapping
+
+
+def _resolve_degree_ids(conn, degree_keys: set[tuple[str, str]]) -> dict[tuple[str, str], int]:
+    """Get-or-create ids for education_degrees, keyed by (degree_name,
+    level) since the same degree_name can't collide across levels in
+    practice but the table is still looked up on both."""
+    degree_keys = {k for k in degree_keys if k[0]}
+    if not degree_keys:
+        return {}
+    names = [name for name, _ in degree_keys]
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("SELECT degree_id, degree_name, level FROM education_degrees WHERE degree_name = ANY(%s)", (names,))
+        mapping = {(row["degree_name"], row["level"]): row["degree_id"] for row in cur.fetchall()}
+    missing = [k for k in degree_keys if k not in mapping]
+    if missing:
+        with conn.cursor() as cur:
+            inserted = execute_values(
+                cur,
+                "INSERT INTO education_degrees (degree_name, level) VALUES %s "
+                "RETURNING degree_id, degree_name, level",
+                missing, fetch=True,
+            )
+        mapping.update({(name, level): degree_id for degree_id, name, level in inserted})
+    return mapping
+
+
 def get_connection():
     return psycopg2.connect(
         dbname=os.environ.get("PGDATABASE", "jobmarket"),
@@ -47,7 +96,7 @@ INSERT INTO cleaned_postings (
     responsibilities_text, requirements_text,
     experience_min, experience_max, salary_min, salary_max,
     city_ids, unmapped_locations, working_type, employment_type, contract_type,
-    role_family, seniority_level, role_category, naukri_role, industry_type, department,
+    role_family, seniority_level, role_category_id, naukri_role, industry_type_id, department_id,
     posted_date, posted_raw, openings, applicant_count, applicant_count_qualifier,
     company_rating, company_reviews, company_badges, source_search, certifications
 ) VALUES %s
@@ -70,10 +119,10 @@ ON CONFLICT (fingerprint) DO UPDATE SET
     contract_type         = EXCLUDED.contract_type,
     role_family           = EXCLUDED.role_family,
     seniority_level       = EXCLUDED.seniority_level,
-    role_category         = EXCLUDED.role_category,
+    role_category_id      = EXCLUDED.role_category_id,
     naukri_role           = EXCLUDED.naukri_role,
-    industry_type         = EXCLUDED.industry_type,
-    department            = EXCLUDED.department,
+    industry_type_id      = EXCLUDED.industry_type_id,
+    department_id         = EXCLUDED.department_id,
     posted_date           = EXCLUDED.posted_date,
     posted_raw            = EXCLUDED.posted_raw,
     openings              = EXCLUDED.openings,
@@ -151,6 +200,20 @@ def save_records(records: list[dict]) -> tuple[int, int]:
                 )
             skill_name_to_id.update({name: skill_id for skill_id, name in inserted})
 
+        # role_category/department/industry_type are single-valued per
+        # posting (unlike skills), so each just needs a get-or-create id
+        # lookup against its own small reference table -- no array, no
+        # join table, same registration pattern otherwise.
+        role_category_to_id = _resolve_reference_ids(
+            conn, "role_categories", "role_category_id", "name",
+            {c["posting"]["role_category"] for c in deduped})
+        department_to_id = _resolve_reference_ids(
+            conn, "departments", "department_id", "name",
+            {c["posting"]["department"] for c in deduped})
+        industry_type_to_id = _resolve_reference_ids(
+            conn, "industry_types", "industry_type_id", "name",
+            {c["posting"]["industry_type"] for c in deduped})
+
         rows = [
             (
                 c["posting"]["fingerprint"], c["posting"]["url"], c["posting"]["title"],
@@ -161,8 +224,8 @@ def save_records(records: list[dict]) -> tuple[int, int]:
                 c["posting"]["city_ids"], c["posting"]["unmapped_locations"],
                 c["posting"]["working_type"], c["posting"]["employment_type"],
                 c["posting"]["contract_type"], c["posting"]["role_family"], c["posting"]["seniority_level"],
-                c["posting"]["role_category"], c["posting"]["naukri_role"],
-                c["posting"]["industry_type"], c["posting"]["department"],
+                role_category_to_id.get(c["posting"]["role_category"]), c["posting"]["naukri_role"],
+                industry_type_to_id.get(c["posting"]["industry_type"]), department_to_id.get(c["posting"]["department"]),
                 c["posting"]["posted_date"],
                 c["posting"]["posted_raw"], c["posting"]["openings"],
                 c["posting"]["applicant_count"], c["posting"]["applicant_count_qualifier"],
@@ -182,7 +245,22 @@ def save_records(records: list[dict]) -> tuple[int, int]:
             new_count = sum(1 for row in results if row[2])
             repeat_count = len(results) - new_count
 
+            # education_degrees/education_specializations need their ids
+            # resolved once across the whole batch, same reason skills do —
+            # cheaper than a lookup per posting, and get-or-create still
+            # works correctly when two postings in one batch share a degree
+            # neither has been seen with before.
+            degree_to_id = _resolve_degree_ids(
+                conn,
+                {(d["degree"], d["level"]) for c in deduped for d in c["qualification_degrees"]},
+            )
+            specialization_to_id = _resolve_reference_ids(
+                conn, "education_specializations", "specialization_id", "specialization_name",
+                {spec for c in deduped for d in c["qualification_degrees"] for spec in d["specializations"]},
+            )
+
             skill_rows, qualification_rows, city_rows, job_ids_touched = [], [], [], []
+            degree_link_rows, specialization_link_rows = [], []
 
             for c in deduped:
                 job_id = fingerprint_to_job_id[c["posting"]["fingerprint"]]
@@ -200,13 +278,22 @@ def save_records(records: list[dict]) -> tuple[int, int]:
                 qualification_rows += [(job_id, q["level"], q["field_of_study"]) for q in c["qualifications"]]
                 city_rows += [(job_id, city_id) for city_id in c["posting"]["city_ids"]]
 
-            # Rebuild each touched posting's skills/qualifications/cities —
-            # cheap at this scale, and avoids stale rows when a posting's
-            # skills or location change between scrapes.
+                for d in c["qualification_degrees"]:
+                    degree_id = degree_to_id[(d["degree"], d["level"])]
+                    degree_link_rows.append((job_id, degree_id))
+                    specialization_link_rows += [
+                        (job_id, degree_id, specialization_to_id[spec]) for spec in d["specializations"]
+                    ]
+
+            # Rebuild each touched posting's skills/qualifications/cities/
+            # degrees — cheap at this scale, and avoids stale rows when a
+            # posting's skills or location change between scrapes.
             if job_ids_touched:
                 cur.execute("DELETE FROM posting_skills WHERE job_id = ANY(%s)", (job_ids_touched,))
                 cur.execute("DELETE FROM posting_qualifications WHERE job_id = ANY(%s)", (job_ids_touched,))
                 cur.execute("DELETE FROM posting_cities WHERE job_id = ANY(%s)", (job_ids_touched,))
+                cur.execute("DELETE FROM posting_qualification_specializations WHERE job_id = ANY(%s)", (job_ids_touched,))
+                cur.execute("DELETE FROM posting_qualification_degrees WHERE job_id = ANY(%s)", (job_ids_touched,))
 
             if skill_rows:
                 execute_values(cur, "INSERT INTO posting_skills (job_id, skill_ids, preferred_skill_ids) VALUES %s", skill_rows)
@@ -214,6 +301,10 @@ def save_records(records: list[dict]) -> tuple[int, int]:
                 execute_values(cur, "INSERT INTO posting_qualifications (job_id, level, field_of_study) VALUES %s", qualification_rows)
             if city_rows:
                 execute_values(cur, "INSERT INTO posting_cities (job_id, city_id) VALUES %s ON CONFLICT DO NOTHING", city_rows)
+            if degree_link_rows:
+                execute_values(cur, "INSERT INTO posting_qualification_degrees (job_id, degree_id) VALUES %s ON CONFLICT DO NOTHING", degree_link_rows)
+            if specialization_link_rows:
+                execute_values(cur, "INSERT INTO posting_qualification_specializations (job_id, degree_id, specialization_id) VALUES %s ON CONFLICT DO NOTHING", specialization_link_rows)
 
         conn.commit()
         return new_count, repeat_count
