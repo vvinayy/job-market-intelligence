@@ -25,6 +25,13 @@ role_family = f2.multiselect("Role", dc.roles(), key="jobs_role")
 cities_df = dc.cities_reference()
 city = f3.multiselect("City", cities_df["city_name"].tolist() if not cities_df.empty else [], key="jobs_city")
 
+seniority_level = st.multiselect(
+    "Seniority (inferred from title)",
+    ["Intern/Trainee", "Junior", "Associate", "Senior", "Lead/Principal", "Manager/Leadership"],
+    key="jobs_seniority",
+    help="Most titles carry no seniority word at all — leaving this empty includes those too.",
+)
+
 f4, f5, f6, f10 = st.columns(4)
 exp = f4.slider("Experience range required (years)", 0, 20, (0, 20), key="jobs_exp",
                  help="Matches postings whose minimum requirement falls in this range.")
@@ -53,7 +60,8 @@ st.divider()
 # page 3 of the NEW result set.
 # =====================================================================
 filters = dict(
-    skill=skill or None, role_family=role_family or None, city=city or None,
+    skill=skill or None, role_family=role_family or None, seniority_level=seniority_level or None,
+    city=city or None,
     experience_min=exp[0], experience_max=exp[1],
     working_type=working_type or None, has_salary=True if has_salary else None,
     qualification_level=qualification_level or None,
@@ -159,7 +167,7 @@ if selected_rows:
         d4.metric("Times seen", detail.get("times_seen") or 1)
         d5.metric("Days listed", detail.get("days_listed") if detail.get("days_listed") is not None else "—")
 
-        extra_facts = [detail.get(f) for f in ("role_category", "naukri_role", "department", "industry_type") if detail.get(f)]
+        extra_facts = [detail.get(f) for f in ("seniority_level", "role_category", "naukri_role", "department", "industry_type") if detail.get(f)]
         if extra_facts:
             st.caption(" · ".join(extra_facts))
 

@@ -41,7 +41,7 @@ SORTABLE = {
 # posting_skills now, not an array column.
 BASE_SELECT = """
     SELECT
-        c.job_id, c.title, c.company, c.role_family,
+        c.job_id, c.title, c.company, c.role_family, c.seniority_level,
         c.role_category, c.naukri_role, c.industry_type, c.department,
         c.experience_min, c.experience_max,
         c.salary_min, c.salary_max,
@@ -67,7 +67,7 @@ BASE_SELECT = """
 
 
 def build_filters(
-    skill, skills_all, role_family, company, city, state,
+    skill, skills_all, role_family, seniority_level, company, city, state,
     experience_min, experience_max, has_salary, salary_min, salary_max,
     working_type, employment_type, contract_type, qualification_level,
     posted_after, posted_before, seen_after, search, min_openings,
@@ -101,6 +101,8 @@ def build_filters(
 
     if role_family:
         w.add("c.role_family = ANY(%s)", list(role_family))
+    if seniority_level:
+        w.add("c.seniority_level = ANY(%s)", list(seniority_level))
     if company:
         w.add("c.company ILIKE %s", f"%{company}%")
 
@@ -162,6 +164,7 @@ def list_postings(
     skill: list[str] | None = Query(None, description="Match postings with ANY of these skills"),
     skills_all: list[str] | None = Query(None, description="Match postings with ALL of these skills"),
     role_family: list[str] | None = Query(None, description="e.g. 'Data Scientist', 'DevOps Engineer'"),
+    seniority_level: list[str] | None = Query(None, description="Inferred from title: Intern/Trainee, Junior, Associate, Senior, Lead/Principal, Manager/Leadership"),
     company: str | None = Query(None, description="Partial, case-insensitive company match"),
     search: str | None = Query(None, description="Free text across title and company"),
 
@@ -204,7 +207,7 @@ def list_postings(
         raise HTTPException(400, f"sort_by must be one of: {', '.join(SORTABLE)}")
 
     w = build_filters(
-        skill, skills_all, role_family, company, city, state,
+        skill, skills_all, role_family, seniority_level, company, city, state,
         experience_min, experience_max, has_salary, salary_min, salary_max,
         working_type, employment_type, contract_type, qualification_level,
         posted_after, posted_before, seen_after, search, min_openings,

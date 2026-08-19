@@ -6,7 +6,7 @@ client knows what fields come back and what type each is, and FastAPI
 generates interactive docs from them automatically.
 """
 
-from datetime import date
+from datetime import date, datetime
 from pydantic import BaseModel, Field
 
 
@@ -18,6 +18,7 @@ class PostingSummary(BaseModel):
     title: str | None = None
     company: str | None = None
     role_family: str | None = None
+    seniority_level: str | None = None
     role_category: str | None = None
     naukri_role: str | None = None
     industry_type: str | None = None
@@ -107,6 +108,7 @@ class SkillInfo(BaseModel):
 class Summary(BaseModel):
     total_postings: int
     active_last_7_days: int
+    new_postings_7d: int
     companies: int
     distinct_skills: int
     distinct_roles: int
@@ -172,3 +174,31 @@ class FirstAppearance(BaseModel):
     skill: str
     first_seen: date
     days_present: int
+
+
+# ---------------------------------------------------------------------
+# Scrape health — not job data, observability on the pipeline itself
+# ---------------------------------------------------------------------
+class ScrapeRunSummary(BaseModel):
+    run_id: int
+    search_url: str
+    started_at: datetime
+    finished_at: datetime | None = None
+    postings_found: int | None = None
+    postings_scraped: int | None = None
+    postings_written: int | None = None
+    storage_ok: bool
+    error_message: str | None = None
+    duration_seconds: float | None = None
+
+
+class FieldHealthWarning(BaseModel):
+    field: str
+    current_rate: float
+    historical_avg_rate: float = Field(description="Average found-rate over the lookback window, excluding this run")
+
+
+class ScrapeHealthReport(BaseModel):
+    latest_run: ScrapeRunSummary | None = None
+    warnings: list[FieldHealthWarning] = []
+    recent_runs: list[ScrapeRunSummary] = []

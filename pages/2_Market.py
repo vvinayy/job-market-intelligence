@@ -59,6 +59,31 @@ with tab1:
         st.plotly_chart(fig, use_container_width=True)
 
     st.divider()
+    st.subheader("Seniority mix")
+    seniority = dc.seniority_distribution()
+
+    if seniority.empty:
+        st.info("No titles with a seniority marker yet.")
+    else:
+        order = ["Intern/Trainee", "Junior", "Associate", "Senior", "Lead/Principal", "Manager/Leadership"]
+        seniority["bucket"] = seniority["bucket"].astype("category").cat.set_categories(order, ordered=True)
+        seniority = seniority.sort_values("bucket", ascending=False)
+
+        base = int(seniority["postings"].sum())
+        fig = px.bar(seniority, x="postings", y="bucket", orientation="h",
+                     text="postings", color="postings", color_continuous_scale=dc.SCALE)
+        fig.update_traces(textposition="outside", cliponaxis=False)
+        fig.update_layout(height=280, margin=dict(l=0, r=40, t=10, b=0),
+                          coloraxis_showscale=False, xaxis_title=None, yaxis_title=None,
+                          **dc.TRANSPARENT)
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption(
+            f"Based on the {base} postings whose title actually carried a seniority word "
+            "(\"Senior\", \"Lead\", \"Manager\", ...) — most titles don't, so this is a much "
+            "smaller base than the total postings count, not a full breakdown of every posting."
+        )
+
+    st.divider()
     st.subheader("Work arrangement")
     wt = dc.working_types()
 
@@ -133,13 +158,31 @@ with tab2:
 
 
 with tab3:
-    st.subheader("Postings by city")
+    st.subheader("Where the postings are")
     cities = dc.cities_reference(with_postings_only=True)
 
     if cities.empty:
         st.info("No location data yet.")
     else:
         cities = cities.rename(columns={"city_name": "city"})
+        mapped = cities[cities["city"].isin(dc.CITY_COORDINATES)].copy()
+        mapped["lat"] = mapped["city"].map(lambda c: dc.CITY_COORDINATES[c][0])
+        mapped["lon"] = mapped["city"].map(lambda c: dc.CITY_COORDINATES[c][1])
+
+        if not mapped.empty:
+            fig = px.scatter_map(
+                mapped, lat="lat", lon="lon", size="postings", color="postings",
+                color_continuous_scale=dc.SCALE, size_max=45, zoom=3.6,
+                center=dict(lat=22.5, lon=79.0), hover_name="city",
+                hover_data={"lat": False, "lon": False, "postings": True},
+            )
+            fig.update_layout(
+                map_style="open-street-map", height=480,
+                margin=dict(l=0, r=0, t=0, b=0), coloraxis_showscale=False,
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        st.subheader("Postings by city")
         st.plotly_chart(ranked_bar(cities, "postings", "city"), use_container_width=True)
         st.caption(
             "Reflects which cities the scraper searches. Searching only Hyderabad "

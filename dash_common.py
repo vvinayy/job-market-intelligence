@@ -26,6 +26,26 @@ PALETTE = ["#00b4c8", "#c8d400", "#6b7280", "#0891a5", "#9aa300", "#4b5563"]
 SCALE = ["#6b7280", "#00b4c8", "#c8d400"]
 TRANSPARENT = dict(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
 
+# Static, real coordinates for every city in the `cities` reference
+# table — a display-only lookup, not scraped or derived data, so it
+# lives here rather than in the schema. Matches CITY_ALIASES in
+# cleaning.py in spirit: hardcoded reference facts, not a guess.
+CITY_COORDINATES = {
+    "Bengaluru": (12.9716, 77.5946), "Hyderabad": (17.3850, 78.4867),
+    "Secunderabad": (17.4399, 78.4983), "Nizamabad": (18.6725, 78.0941),
+    "Warangal": (17.9689, 79.5941), "Pune": (18.5204, 73.8567),
+    "Mumbai": (19.0760, 72.8777), "Chennai": (13.0827, 80.2707),
+    "Coimbatore": (11.0168, 76.9558), "Delhi": (28.7041, 77.1025),
+    "Delhi / NCR": (28.4595, 77.0266), "Gurugram": (28.4595, 77.0266),
+    "Faridabad": (28.4089, 77.3178), "Noida": (28.5355, 77.3910),
+    "Greater Noida": (28.4744, 77.5040), "Ghaziabad": (28.6692, 77.4538),
+    "Kolkata": (22.5726, 88.3639), "Ahmedabad": (23.0225, 72.5714),
+    "Kochi": (9.9312, 76.2673), "Thiruvananthapuram": (8.5241, 76.9366),
+    "Jaipur": (26.9124, 75.7873), "Indore": (22.7196, 75.8577),
+    "Chandigarh": (30.7333, 76.7794), "Bhubaneswar": (20.2961, 85.8245),
+    "Visakhapatnam": (17.6868, 83.2185),
+}
+
 
 @st.cache_data(ttl=300)
 def api_get(path: str, params: tuple = ()) -> list[dict]:
@@ -85,6 +105,10 @@ def summary() -> dict:
     return one("/analytics/summary")
 
 
+def scrape_health(lookback: int = 20) -> dict:
+    return one("/analytics/scrape-health", (("lookback", lookback),))
+
+
 def skill_demand(limit: int = 25, **filters) -> pd.DataFrame:
     params = [("limit", limit)] + _filter_params(filters)
     data = df("/analytics/skills", tuple(params))
@@ -108,6 +132,10 @@ def role_distribution(**filters) -> pd.DataFrame:
 
 def experience_distribution(**filters) -> pd.DataFrame:
     return df("/analytics/experience", tuple(_filter_params(filters)))
+
+
+def seniority_distribution(**filters) -> pd.DataFrame:
+    return df("/analytics/seniority", tuple(_filter_params(filters)))
 
 
 def location_distribution(by: str = "city", limit: int = 30, **filters) -> pd.DataFrame:

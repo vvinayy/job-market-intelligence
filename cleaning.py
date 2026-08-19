@@ -508,6 +508,48 @@ def classify_role(raw_title: str | None) -> str:
 
 
 # =====================================================================
+# SENIORITY — inferred from the title only, a different (and often
+# absent) signal from role_family. Most Indian IT titles carry no
+# seniority marker at all ("Python Developer", not "Senior Python
+# Developer") — that's the honest, common case, so this returns None
+# rather than guessing a default the way classify_role() falls back to
+# "Other". A title with no marker means "not stated", not "mid-level".
+# =====================================================================
+_SENIORITY_PATTERNS_SOURCE = [
+    ("intern", "Intern/Trainee", 10),
+    ("internship", "Intern/Trainee", 10),
+    ("trainee", "Intern/Trainee", 10),
+    ("fresher", "Intern/Trainee", 10),
+    ("principal", "Lead/Principal", 10),
+    ("staff engineer", "Lead/Principal", 10),
+    ("tech lead", "Lead/Principal", 10),
+    ("technical lead", "Lead/Principal", 10),
+    ("director", "Manager/Leadership", 10),
+    ("vice president", "Manager/Leadership", 10),
+    ("head of", "Manager/Leadership", 10),
+    ("engineering manager", "Manager/Leadership", 10),
+    ("project manager", "Manager/Leadership", 11),
+    ("manager", "Manager/Leadership", 15),
+    ("lead", "Lead/Principal", 20),
+    ("senior", "Senior", 25),
+    ("sr.", "Senior", 25),
+    ("junior", "Junior", 25),
+    ("jr.", "Junior", 25),
+    ("associate", "Associate", 30),
+]
+
+SENIORITY_PATTERNS = sorted(_SENIORITY_PATTERNS_SOURCE, key=lambda row: row[2])
+
+
+def classify_seniority(raw_title: str | None) -> str | None:
+    title = (raw_title or "").lower()
+    for pattern, level, _priority in SENIORITY_PATTERNS:
+        if pattern in title:
+            return level
+    return None
+
+
+# =====================================================================
 # QUALIFICATIONS — Naukri's Education block, read by the scraper as
 # {"UG": "Any Graduate", "PG": "Any Postgraduate", ...}. Not every
 # posting shows all three levels (a posting with no doctorate
@@ -638,6 +680,7 @@ def clean_record(raw: dict, city_name_to_id: dict[str, int]) -> dict:
         "employment_type": parse_employment_type(_clean(raw.get("employment_type"))),
         "contract_type": parse_contract_type(_clean(raw.get("employment_type"))),
         "role_family": classify_role(title),
+        "seniority_level": classify_seniority(title),
         "role_category": _clean(raw.get("role_category")),
         "naukri_role": _clean(raw.get("naukri_role")),
         "industry_type": _clean(raw.get("industry_type")),

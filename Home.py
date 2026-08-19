@@ -11,6 +11,7 @@ knowledge of table or column names, only of what the API returns.
 
 import time
 import math
+import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
@@ -201,5 +202,35 @@ if known:
         )
 
 st.divider()
+
+with st.expander("System health"):
+    health = dc.scrape_health()
+    latest = health.get("latest_run")
+
+    if not latest:
+        st.info("No scrape runs logged yet.")
+    else:
+        for w in health.get("warnings") or []:
+            st.warning(
+                f"**{w['field']}** dropped to {w['current_rate']:.0%} of postings this run "
+                f"(usually {w['historical_avg_rate']:.0%}) — a selector may be broken."
+            )
+        if not latest.get("storage_ok"):
+            st.error(f"Last run's database write failed: {latest.get('error_message')}")
+        if not health.get("warnings") and latest.get("storage_ok"):
+            st.success("No issues detected in the most recent run.")
+
+        h1, h2, h3, h4 = st.columns(4)
+        h1.metric("Last run", latest["started_at"][:16].replace("T", " "))
+        h2.metric("Postings written", latest.get("postings_written") or 0)
+        duration = latest.get("duration_seconds")
+        h3.metric("Duration", f"{duration:.0f}s" if duration is not None else "—")
+        h4.metric("Storage OK", "Yes" if latest.get("storage_ok") else "No")
+
+        runs = health.get("recent_runs") or []
+        if len(runs) > 1:
+            recent_df = pd.DataFrame(runs)[["started_at", "search_url", "postings_written", "duration_seconds", "storage_ok"]]
+            st.dataframe(recent_df, use_container_width=True, hide_index=True)
+
 st.write("**More:** the sidebar has skill pairings, market composition, and trends.")
 dc.sampling_note()

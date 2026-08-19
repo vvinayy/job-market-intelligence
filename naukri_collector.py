@@ -33,10 +33,11 @@ import sys
 import time
 import json
 import random
-from datetime import date, timedelta
+import shutil
+from datetime import date, datetime, timedelta
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 from skill_taxonomy import extract_skills
-from job_database import save_records
+from job_database import save_records, record_scrape_run, check_field_health
 
 
 def parse_posted_date(raw: str | None) -> date | None:
@@ -403,7 +404,40 @@ def print_record(record: dict, index: int, total: int):
         print(f"{field}: {value}")
 
 
+# =====================================================================
+# HEALTH TRACKING — makes a broken selector, a slow run, or a storage
+# failure show up in the run's own log instead of only being caught
+# later by someone happening to notice, which is how Department/
+# Industry Type and the applicant-count bug were actually found.
+# =====================================================================
+def compute_field_found_counts(records: list[dict]) -> dict[str, int]:
+    """How many records actually found each field (not NOT_FOUND, not
+    empty) — the basis for check_field_health()'s per-field rate."""
+    counts: dict[str, int] = {}
+    for record in records:
+        for key, value in record.items():
+            if value in (NOT_FOUND, None) or value in ([], {}):
+                continue
+            counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def check_disk_space(path: str = ".", min_free_gb: float = 1.0) -> str | None:
+    """A warning string if free space is critically low, else None —
+    catches 'storage is full' before it causes a write to fail
+    partway through a run rather than after."""
+    free_gb = shutil.disk_usage(path).free / (1024 ** 3)
+    if free_gb < min_free_gb:
+        return f"Low disk space: {free_gb:.2f} GB free (threshold {min_free_gb} GB)"
+    return None
+
+
 def main(search_url: str, limit: int | None):
+    started_at = datetime.now()
+    disk_warning = check_disk_space()
+    if disk_warning:
+        print(f"  [WARNING] {disk_warning}")
+
     with sync_playwright() as p:
         # ONE visible browser for the entire run — Naukri blocks headless.
         # Every job below reuses this same window; it is not reopened.
@@ -413,6 +447,11 @@ def main(search_url: str, limit: int | None):
         urls = discover_job_urls(page, search_url, limit)
         if not urls:
             browser.close()
+            # Zero URLs from discovery is itself a real health signal —
+            # could mean the search layout changed or got blocked, not
+            # necessarily that there's nothing to find. Logged the same
+            # as any other run rather than silently returning.
+            _log_run(search_url, started_at, datetime.now(), 0, 0, 0, {}, True, None, disk_warning)
             return
 
         records = []
@@ -434,16 +473,49 @@ def main(search_url: str, limit: int | None):
 
         # Write to Postgres. Postings already in the table are not
         # duplicated — their last_seen_date is refreshed instead.
+        storage_ok, error_message = True, None
+        new_count = repeat_count = 0
         try:
             new_count, repeat_count = save_records(records)
             print(f"\nDatabase: {new_count} new, {repeat_count} already known.")
         except Exception as e:
+            storage_ok, error_message = False, str(e)
             print(f"\nDatabase write failed: {e}")
             print("Falling back to JSON so this run isn't lost.")
             with open("naukri_jobs.json", "w", encoding="utf-8") as f:
                 json.dump(records, f, indent=2, ensure_ascii=False)
 
-        print(f"Scraped {len(records)} of {len(urls)} jobs.")
+        finished_at = datetime.now()
+        field_counts = compute_field_found_counts(records)
+        _log_run(search_url, started_at, finished_at, len(urls), len(records),
+                  new_count + repeat_count, field_counts, storage_ok, error_message, disk_warning)
+
+        duration = (finished_at - started_at).total_seconds()
+        print(f"\nRun took {duration:.0f}s. Scraped {len(records)} of {len(urls)} jobs.")
+
+
+def _log_run(search_url, started_at, finished_at, postings_found, postings_scraped,
+             postings_written, field_counts, storage_ok, error_message, disk_warning):
+    """Records this run and prints anything that looks wrong. Health
+    tracking failing is never allowed to make an otherwise-successful
+    scrape look like it failed — caught and reported, not raised."""
+    try:
+        run_id = record_scrape_run(
+            search_url, started_at, finished_at, postings_found,
+            postings_scraped, postings_written, field_counts, storage_ok, error_message,
+        )
+        warnings = check_field_health(run_id)
+        if warnings:
+            print("\n[HEALTH WARNING] These fields dropped sharply vs recent runs — a selector may be broken:")
+            for w in warnings:
+                print(f"  - {w['field']}: {w['current_rate']:.0%} this run vs "
+                      f"{w['historical_avg_rate']:.0%} historical average")
+        if disk_warning:
+            print(f"\n[HEALTH WARNING] {disk_warning}")
+        if not storage_ok:
+            print(f"\n[HEALTH WARNING] Storage failure this run: {error_message}")
+    except Exception as e:
+        print(f"\n[health tracking failed, not fatal] {e}")
 
 
 if __name__ == "__main__":

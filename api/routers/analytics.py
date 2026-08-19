@@ -9,7 +9,11 @@ stuck with global totals.
 from fastapi import APIRouter, Query
 
 from ..database import fetch_all, fetch_one, fetch_value, WhereBuilder
-from ..models import Summary, Bucket, SkillPair, SkillSuggestion, NamedCount
+from ..models import (
+    Summary, Bucket, SkillPair, SkillSuggestion, NamedCount,
+    ScrapeHealthReport, ScrapeRunSummary, FieldHealthWarning,
+)
+from job_database import check_field_health
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -46,6 +50,8 @@ def summary():
             COUNT(*)::int                                          AS total_postings,
             COUNT(*) FILTER (WHERE last_seen_date >= CURRENT_DATE - 7)::int
                                                                    AS active_last_7_days,
+            COUNT(*) FILTER (WHERE first_seen_date >= CURRENT_DATE - 7)::int
+                                                                   AS new_postings_7d,
             COUNT(DISTINCT company)::int                           AS companies,
             COUNT(DISTINCT role_family)::int                       AS distinct_roles,
             COUNT(*) FILTER (WHERE salary_min IS NOT NULL)::int     AS postings_with_salary,
@@ -121,6 +127,30 @@ def role_distribution(
 
     return fetch_all(f"""
         SELECT COALESCE(c.role_family, 'Other') AS bucket,
+               COUNT(*)::int AS postings,
+               ROUND(100.0 * COUNT(*) / {total}, 2)::float AS share_pct
+        FROM cleaned_postings c {w.sql}
+        GROUP BY bucket ORDER BY postings DESC
+    """, w.values)
+
+
+@router.get("/seniority", response_model=list[Bucket], summary="Seniority mix, inferred from title")
+def seniority_distribution(
+    city: list[str] | None = Query(None),
+    state: list[str] | None = Query(None),
+):
+    # Denominator is postings where the title actually carried a
+    # seniority marker, not every posting — most Naukri titles carry
+    # none at all, so dividing by the full total would understate every
+    # bucket for a reason that has nothing to do with real seniority
+    # mix. Same reasoning as qualification_distribution().
+    w = scope(None, city, state, None, None, None, None)
+    w.add_raw("c.seniority_level IS NOT NULL")
+    total = fetch_value(
+        f"SELECT COUNT(*) FROM cleaned_postings c {w.sql}", w.values) or 1
+
+    return fetch_all(f"""
+        SELECT c.seniority_level AS bucket,
                COUNT(*)::int AS postings,
                ROUND(100.0 * COUNT(*) / {total}, 2)::float AS share_pct
         FROM cleaned_postings c {w.sql}
@@ -325,3 +355,30 @@ def skill_suggestions(
           AND sk.skill_name NOT IN (SELECT skill FROM skill_blocklist)
         GROUP BY sk.skill_name ORDER BY postings DESC LIMIT %s
     """, w.values + (list(skill), limit))
+
+
+@router.get("/scrape-health", response_model=ScrapeHealthReport, summary="Scraper pipeline health")
+def scrape_health(lookback: int = Query(20, ge=1, le=100)):
+    # check_field_health() reuses job_database.py's own connection
+    # rather than this file's pooled one — a deliberate, small
+    # architectural bend: the anomaly-detection logic already lives
+    # there (it runs during every scrape too, for the in-run log
+    # warning), and duplicating it here in SQL would risk the two
+    # drifting out of sync with each other over time.
+    runs = fetch_all("""
+        SELECT run_id, search_url, started_at, finished_at, postings_found,
+               postings_scraped, postings_written, storage_ok, error_message,
+               EXTRACT(EPOCH FROM (finished_at - started_at)) AS duration_seconds
+        FROM scrape_runs
+        ORDER BY started_at DESC LIMIT %s
+    """, (lookback,))
+
+    if not runs:
+        return ScrapeHealthReport()
+
+    warnings = check_field_health(runs[0]["run_id"])
+    return ScrapeHealthReport(
+        latest_run=ScrapeRunSummary(**runs[0]),
+        warnings=[FieldHealthWarning(**w) for w in warnings],
+        recent_runs=[ScrapeRunSummary(**r) for r in runs],
+    )

@@ -130,6 +130,10 @@ CREATE TABLE cleaned_postings (
     employment_type         TEXT,
     contract_type           TEXT,
     role_family             TEXT,
+    -- Inferred from the title alone, not experience_min/max — a
+    -- different, often-absent signal. NULL means the title carried no
+    -- seniority marker at all (the common case), not "mid-level".
+    seniority_level          TEXT,
     role_category           TEXT,
     -- Naukri's own classification (e.g. "Back End Developer") — distinct
     -- from role_category (e.g. "Software Development") and from
@@ -256,3 +260,33 @@ CREATE TABLE posting_qualifications (
     field_of_study  TEXT,
     PRIMARY KEY (job_id, level)
 );
+
+
+-- ---------------------------------------------------------------------
+-- SCRAPE_RUNS — one row per naukri_collector.py invocation. Not job
+-- data — this is what makes a broken selector visible instead of
+-- silent. field_found_counts is JSONB (not a fixed set of columns)
+-- because the set of scraped fields changes as the pipeline grows;
+-- job_database.py's check_field_health() unpivots it against recent
+-- runs to catch a field whose found-rate suddenly drops, which is
+-- exactly what happened with Department/Industry Type and the
+-- applicant-count bug earlier in this project — both would have shown
+-- up here immediately instead of being caught by hand.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS scrape_runs (
+    run_id              BIGSERIAL PRIMARY KEY,
+    search_url          TEXT NOT NULL,
+    started_at          TIMESTAMP NOT NULL,
+    finished_at         TIMESTAMP,
+    postings_found      INT,
+    postings_scraped    INT,
+    postings_written    INT,
+    field_found_counts  JSONB,
+    -- False when save_records() raised and the run fell back to the
+    -- JSON dump — a real "storage isn't working" signal, not just a
+    -- slow/missing-field one.
+    storage_ok          BOOLEAN NOT NULL DEFAULT true,
+    error_message       TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_scrape_runs_started_at ON scrape_runs (started_at);

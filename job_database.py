@@ -20,7 +20,7 @@ up committed in a file:
 
 import os
 import psycopg2
-from psycopg2.extras import execute_values, RealDictCursor
+from psycopg2.extras import execute_values, RealDictCursor, Json
 
 from cleaning import clean_record, categorize_skill
 
@@ -47,7 +47,7 @@ INSERT INTO cleaned_postings (
     responsibilities_text, requirements_text,
     experience_min, experience_max, salary_min, salary_max,
     city_ids, unmapped_locations, working_type, employment_type, contract_type,
-    role_family, role_category, naukri_role, industry_type, department,
+    role_family, seniority_level, role_category, naukri_role, industry_type, department,
     posted_date, posted_raw, openings, applicant_count, applicant_count_qualifier,
     company_rating, company_reviews, company_badges, source_search, certifications
 ) VALUES %s
@@ -69,6 +69,7 @@ ON CONFLICT (fingerprint) DO UPDATE SET
     employment_type       = EXCLUDED.employment_type,
     contract_type         = EXCLUDED.contract_type,
     role_family           = EXCLUDED.role_family,
+    seniority_level       = EXCLUDED.seniority_level,
     role_category         = EXCLUDED.role_category,
     naukri_role           = EXCLUDED.naukri_role,
     industry_type         = EXCLUDED.industry_type,
@@ -159,7 +160,7 @@ def save_records(records: list[dict]) -> tuple[int, int]:
                 c["posting"]["salary_min"], c["posting"]["salary_max"],
                 c["posting"]["city_ids"], c["posting"]["unmapped_locations"],
                 c["posting"]["working_type"], c["posting"]["employment_type"],
-                c["posting"]["contract_type"], c["posting"]["role_family"],
+                c["posting"]["contract_type"], c["posting"]["role_family"], c["posting"]["seniority_level"],
                 c["posting"]["role_category"], c["posting"]["naukri_role"],
                 c["posting"]["industry_type"], c["posting"]["department"],
                 c["posting"]["posted_date"],
@@ -218,3 +219,90 @@ def save_records(records: list[dict]) -> tuple[int, int]:
         return new_count, repeat_count
     finally:
         conn.close()
+
+
+# =====================================================================
+# SCRAPE HEALTH — makes a broken selector or a storage failure visible
+# in the run's own log output, instead of only showing up later as a
+# gap someone happens to notice by hand (how Department/Industry Type
+# and the applicant-count bug were actually found, both times).
+# =====================================================================
+def record_scrape_run(
+    search_url: str, started_at, finished_at,
+    postings_found: int, postings_scraped: int, postings_written: int,
+    field_found_counts: dict[str, int], storage_ok: bool, error_message: str | None,
+) -> int:
+    """Logs one naukri_collector.py run. Returns the new run_id so the
+    caller can immediately check it against recent history."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO scrape_runs (
+                    search_url, started_at, finished_at, postings_found,
+                    postings_scraped, postings_written, field_found_counts,
+                    storage_ok, error_message
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING run_id
+            """, (search_url, started_at, finished_at, postings_found,
+                  postings_scraped, postings_written, Json(field_found_counts),
+                  storage_ok, error_message))
+            run_id = cur.fetchone()[0]
+        conn.commit()
+        return run_id
+    finally:
+        conn.close()
+
+
+def check_field_health(current_run_id: int, lookback_runs: int = 10) -> list[dict]:
+    """Compares this run's per-field found-rate against the average of
+    the last `lookback_runs` completed runs. Flags a field only when it
+    historically had a real presence (avg_rate > 30% — otherwise a
+    naturally-sparse field like salary would flag on every run) AND
+    this run's rate fell to under half that average — a real drop, not
+    ordinary day-to-day noise.
+
+    Returns a list of {field, current_rate, historical_avg_rate} dicts,
+    empty when nothing looks wrong."""
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT field_found_counts, postings_scraped
+                FROM scrape_runs
+                WHERE run_id != %s AND field_found_counts IS NOT NULL AND postings_scraped > 0
+                ORDER BY started_at DESC LIMIT %s
+            """, (current_run_id, lookback_runs))
+            history = cur.fetchall()
+
+            cur.execute("""
+                SELECT field_found_counts, postings_scraped
+                FROM scrape_runs WHERE run_id = %s
+            """, (current_run_id,))
+            current = cur.fetchone()
+    finally:
+        conn.close()
+
+    if not history or not current or not current["postings_scraped"]:
+        return []
+
+    historical_rates: dict[str, list[float]] = {}
+    for row in history:
+        scraped = row["postings_scraped"] or 0
+        if not scraped:
+            continue
+        for field, count in (row["field_found_counts"] or {}).items():
+            historical_rates.setdefault(field, []).append(count / scraped)
+
+    current_scraped = current["postings_scraped"]
+    warnings = []
+    for field, count in (current["field_found_counts"] or {}).items():
+        rates = historical_rates.get(field)
+        if not rates:
+            continue
+        avg_rate = sum(rates) / len(rates)
+        current_rate = count / current_scraped
+        if avg_rate > 0.3 and current_rate < avg_rate * 0.5:
+            warnings.append({"field": field, "current_rate": round(current_rate, 3),
+                              "historical_avg_rate": round(avg_rate, 3)})
+    return warnings

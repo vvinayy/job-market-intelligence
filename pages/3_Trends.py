@@ -27,7 +27,48 @@ if days < 2:
     st.stop()
 
 
-tab1, tab2, tab3 = st.tabs(["Demand over time", "Recent movers", "New arrivals"])
+tab0, tab1, tab2, tab3 = st.tabs(["Weekly digest", "Demand over time", "Recent movers", "New arrivals"])
+
+
+with tab0:
+    st.write("A templated summary of the last 7 days — not AI-written prose, just the same numbers the other tabs show, composed into sentences.")
+
+    facts = dc.summary()
+    new_postings = int(facts.get("new_postings_7d") or 0)
+    active = int(facts.get("active_last_7_days") or 0)
+
+    movers, mode = dc.movers(limit=3)
+    fresh = dc.new_skills(limit=40)
+    new_this_week = fresh[fresh["days_present"] <= 7] if not fresh.empty else fresh
+    top_skill = dc.skill_demand(limit=1)
+
+    d1, d2, d3 = st.columns(3)
+    d1.metric("New postings", new_postings, help="First seen in the last 7 days")
+    d2.metric("Still active", active, help="Seen again in the last 7 days")
+    d3.metric("New skills spotted", len(new_this_week))
+
+    st.markdown("#### This week, in sentences")
+    lines = [f"**{new_postings} new postings** were collected this week, of which **{active}** are still showing up in the latest scrape."]
+
+    if not movers.empty:
+        biggest = movers.sort_values("change", key=abs, ascending=False).iloc[0]
+        direction = "up" if biggest["change"] > 0 else "down"
+        comparison = "vs. its 7-day average" if mode == "rolling_7d" else "vs. yesterday"
+        lines.append(f"The biggest mover was **{biggest['skill']}**, {direction} {abs(biggest['change']):.0f} postings {comparison}.")
+
+    if not new_this_week.empty:
+        names = ", ".join(new_this_week["skill"].head(5).tolist())
+        more = len(new_this_week) - 5
+        suffix = f", and {more} more" if more > 0 else ""
+        lines.append(f"**{len(new_this_week)} skill(s)** were recorded for the first time this week: {names}{suffix}.")
+
+    if not top_skill.empty:
+        lines.append(f"Overall, **{top_skill.iloc[0]['skill']}** remains the single most requested skill across every posting collected so far.")
+
+    for line in lines:
+        st.markdown(f"- {line}")
+
+    st.caption("Composed from the same figures as the other tabs on this page and the Skills page — nothing here is computed specially for this view.")
 
 
 with tab1:
