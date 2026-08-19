@@ -181,7 +181,23 @@ if selected_rows:
         if detail.get("certifications"):
             st.markdown("**Certifications mentioned:** " + ", ".join(detail["certifications"]))
 
-        if detail.get("qualifications"):
+        if detail.get("qualification_degrees"):
+            # Grouped by level, one degree per entry -- e.g. Naukri's
+            # "B.Tech / B.E." shows as two separate degrees here, each
+            # only with the specializations that actually pair with it.
+            by_level: dict[str, list[str]] = {}
+            for d in detail["qualification_degrees"]:
+                label = d["degree"]
+                if d["specializations"]:
+                    label += f" ({', '.join(d['specializations'])})"
+                by_level.setdefault(d["level"], []).append(label)
+            level_order = ["UG", "PG", "Doctorate"]
+            parts = [
+                f"{level}: {', '.join(by_level[level])}"
+                for level in level_order if level in by_level
+            ]
+            st.markdown("**Education:** " + " · ".join(parts))
+        elif detail.get("qualifications"):
             quals = ", ".join(f"{q['level']}: {q['field_of_study']}" for q in detail["qualifications"])
             st.markdown("**Education:** " + quals)
 

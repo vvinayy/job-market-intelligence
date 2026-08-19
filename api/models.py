@@ -47,6 +47,16 @@ class Qualification(BaseModel):
     field_of_study: str | None = None
 
 
+class QualificationDegree(BaseModel):
+    """One accepted degree, broken out individually rather than as
+    Naukri's flattened field_of_study string -- e.g. 'B.Tech / B.E.' in
+    the raw text becomes two separate entries here, one for B.Tech and
+    one for B.E., each with its own specializations."""
+    degree: str
+    level: str = Field(description="'UG', 'PG', or 'Doctorate'")
+    specializations: list[str] = []
+
+
 class PostingDetail(PostingSummary):
     """Everything in the summary plus the fields only worth fetching
     for a single record — the description is large enough that returning
@@ -59,6 +69,7 @@ class PostingDetail(PostingSummary):
     company_badges: list[str] = []
     source_search: str | None = None
     qualifications: list[Qualification] = []
+    qualification_degrees: list[QualificationDegree] = []
     first_seen_date: date | None = None
     last_seen_date: date | None = None
     times_seen: int | None = None

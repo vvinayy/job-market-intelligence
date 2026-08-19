@@ -270,7 +270,41 @@ def get_posting(job_id: int):
         SELECT level, field_of_study FROM posting_qualifications WHERE job_id = %s ORDER BY level
     """, (job_id,))
 
+    # Same facts as `qualifications` above, but broken out to individual
+    # degrees via the reference tables instead of Naukri's flattened
+    # display string -- e.g. "B.Tech / B.E." becomes two separate
+    # entries here, each with only the specializations that actually
+    # pair with it. Two CTEs unnest this posting's degree_ids and
+    # degree_specialization_ids arrays; education_degree_specializations
+    # is the global dictionary of every (degree, specialization) pairing
+    # ever seen, filtered down to just the ones this posting actually
+    # has via the IN clause.
+    qualification_degrees = fetch_all("""
+        WITH pqd AS (
+            SELECT unnest(degree_ids) AS degree_id
+            FROM posting_qualification_degrees WHERE job_id = %s
+        ),
+        pqs AS (
+            SELECT unnest(degree_specialization_ids) AS degree_specialization_id
+            FROM posting_qualification_specializations WHERE job_id = %s
+        )
+        SELECT ed.degree_name AS degree, ed.level,
+               COALESCE(
+                   array_agg(es.specialization_name ORDER BY es.specialization_name)
+                       FILTER (WHERE es.specialization_name IS NOT NULL),
+                   '{}'
+               ) AS specializations
+        FROM pqd
+        JOIN education_degrees ed ON ed.degree_id = pqd.degree_id
+        LEFT JOIN education_degree_specializations eds ON eds.degree_id = ed.degree_id
+            AND eds.degree_specialization_id IN (SELECT degree_specialization_id FROM pqs)
+        LEFT JOIN education_specializations es ON es.specialization_id = eds.specialization_id
+        GROUP BY ed.degree_id, ed.degree_name, ed.level
+        ORDER BY ed.level, ed.degree_name
+    """, (job_id, job_id))
+
     return PostingDetail(
         **{**row, **extra},
         qualifications=[Qualification(**q) for q in qualifications],
+        qualification_degrees=qualification_degrees,
     )

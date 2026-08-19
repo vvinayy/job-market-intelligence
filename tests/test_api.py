@@ -179,3 +179,19 @@ def test_postings_seniority_filter_accepts_known_value(client):
     assert r.status_code == 200
     for item in r.json()["items"]:
         assert item["seniority_level"] == "Senior"
+
+
+def test_posting_detail_qualification_degrees_shape(client):
+    # Find a posting that actually has degree data rather than assuming
+    # job_id 15 specifically -- keeps this test valid as the dataset grows.
+    listing = client.get("/postings", params={"qualification_level": "UG", "page_size": 1}).json()
+    if not listing["items"]:
+        pytest.skip("no postings with UG qualifications yet")
+    job_id = listing["items"][0]["job_id"]
+
+    detail = client.get(f"/postings/{job_id}").json()
+    assert "qualification_degrees" in detail
+    for entry in detail["qualification_degrees"]:
+        assert entry["degree"]
+        assert entry["level"] in ("UG", "PG", "Doctorate")
+        assert isinstance(entry["specializations"], list)
