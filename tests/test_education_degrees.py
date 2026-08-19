@@ -203,3 +203,53 @@ def test_parse_education_degrees_combines_all_levels():
 def test_parse_education_degrees_non_dict_input():
     assert cleaning.parse_education_degrees(None) == []
     assert cleaning.parse_education_degrees("not a dict") == []
+
+
+# ---------------------------------------------------------------------
+# Vocabulary added from Naukri's own site-wide Education filter panel,
+# cross-checked for IT relevance rather than pulled from our own sample.
+# ---------------------------------------------------------------------
+def test_ca_is_first_class_pg_level():
+    # Confirmed via a live Naukri posting during this project's own
+    # research ("PG: CA in CA") -- now a named vocabulary entry instead
+    # of relying on the auto-registration fallback to catch it.
+    result = cleaning._parse_field_of_study("CA in CA")
+    assert result == [{"degree": "CA", "level": "PG", "specializations": ["CA"]}]
+
+
+def test_post_graduation_not_required_is_distinct_from_ug_version():
+    assert cleaning._parse_field_of_study("Post Graduation Not Required") == [
+        {"degree": "Post Graduation Not Required", "level": "PG", "specializations": []}
+    ]
+    assert cleaning._parse_field_of_study("Graduation Not Required") == [
+        {"degree": "Graduation Not Required", "level": "UG", "specializations": []}
+    ]
+
+
+def test_pg_diploma():
+    result = cleaning._parse_field_of_study("PG Diploma in Any Specialization")
+    assert result == [{"degree": "PG Diploma", "level": "PG", "specializations": ["Any Specialization"]}]
+
+
+def test_bba_bms_splits_into_two_alternatives():
+    result = cleaning._parse_field_of_study("B.B.A. / B.M.S. in Any Specialization")
+    by_degree = _by_degree(result)
+    assert set(by_degree) == {"B.B.A.", "B.M.S."}
+    for degree in by_degree.values():
+        assert degree["level"] == "UG"
+        assert degree["specializations"] == ["Any Specialization"]
+
+
+def test_commerce_degrees():
+    assert cleaning._parse_field_of_study("B.Com in Any Specialization")[0]["level"] == "UG"
+    assert cleaning._parse_field_of_study("M.Com in Any Specialization")[0]["level"] == "PG"
+
+
+def test_ma_does_not_collide_with_mba():
+    # "M.A" and "MBA/PGDM" share a leading "M" but must never cross-match.
+    ma_result = cleaning._parse_field_of_study("M.A in Any Specialization")
+    assert ma_result == [{"degree": "M.A", "level": "PG", "specializations": ["Any Specialization"]}]
+
+    mba_result = cleaning._parse_field_of_study("MBA/PGDM in Any Specialization")
+    by_degree = _by_degree(mba_result)
+    assert set(by_degree) == {"MBA", "PGDM"}

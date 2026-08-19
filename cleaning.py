@@ -593,14 +593,24 @@ def parse_qualifications(education: dict[str, str] | None) -> list[dict[str, str
 # is no punctuation that tells the two cases apart, so this walks the
 # comma-split tokens and treats anything that isn't a recognized degree
 # name as another specialization for whichever degree came right before
-# it. Naukri's degree vocabulary is small and fixed (confirmed against
-# every distinct field_of_study value seen in this project's data), so
-# this is a taxonomy lookup, same spirit as skill_taxonomy.py, not a
-# guess.
+# it. The base vocabulary came from every distinct field_of_study value
+# in this project's own data; it was later cross-checked against
+# Naukri's own site-wide Education filter panel (the full checkbox list
+# on a search results page) and extended with entries confirmed IT-
+# relevant there but not yet seen in our own sample (CA, PG Diploma,
+# Post Graduation Not Required, B.B.A./B.M.S., M.Com/B.Com, M.A) —
+# Naukri's own vocabulary, not a guess, just not something our own
+# scrapes had produced yet. Entries with no realistic path into an IT
+# search (Medical-MS/MD, M.B.B.S., B.Ed, B.Arch, LLB) were deliberately
+# left out; "Diploma" was also left out despite appearing on Naukri's
+# list, since it carries no clear UG/PG signal there — better caught by
+# parse_education_degrees()'s auto-registration fallback with real
+# context than assigned a guessed level here.
 #
 # A slash-joined entry ("B.Tech / B.E.", "MS/M.Sc(Science)", "MBA/PGDM",
-# "Ph.D/Doctorate") is Naukri listing two alternative credentials, not
-# one combined one — split into separate atomic degree references.
+# "Ph.D/Doctorate", "B.B.A. / B.M.S.") is Naukri listing two alternative
+# credentials, not one combined one — split into separate atomic degree
+# references.
 # =====================================================================
 _DEGREE_VOCABULARY = [
     # (raw prefix exactly as Naukri renders it, level)
@@ -608,6 +618,8 @@ _DEGREE_VOCABULARY = [
     ("B.C.A.", "UG"),
     ("B.Sc", "UG"),
     ("B.A - Bachelor of Arts", "UG"),
+    ("B.B.A. / B.M.S.", "UG"),
+    ("B.Com", "UG"),
     ("Any Graduate", "UG"),
     ("Other Graduate", "UG"),
     ("Graduation Not Required", "UG"),
@@ -617,7 +629,12 @@ _DEGREE_VOCABULARY = [
     ("MCA", "PG"),
     ("MCM", "PG"),
     ("LLM", "PG"),
+    ("M.Com", "PG"),
+    ("M.A", "PG"),
+    ("CA", "PG"),
+    ("PG Diploma", "PG"),
     ("Any Postgraduate", "PG"),
+    ("Post Graduation Not Required", "PG"),
     ("Ph.D/Doctorate", "Doctorate"),
     ("Any Doctorate", "Doctorate"),
     ("Doctorate Not Required", "Doctorate"),
