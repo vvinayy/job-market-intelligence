@@ -99,6 +99,7 @@ ON CONFLICT (city_name) DO NOTHING;
 DROP TABLE IF EXISTS posting_qualifications;
 DROP TABLE IF EXISTS posting_qualification_specializations;
 DROP TABLE IF EXISTS posting_qualification_degrees;
+DROP TABLE IF EXISTS education_degree_specializations;
 DROP TABLE IF EXISTS education_specializations;
 DROP TABLE IF EXISTS education_degrees;
 DROP TABLE IF EXISTS posting_skills;
@@ -307,11 +308,23 @@ CREATE TABLE posting_qualifications (
 -- split into two separate degree rows rather than kept as one combined
 -- string.
 --
--- posting_qualification_degrees: which degrees a posting accepts.
--- posting_qualification_specializations: for a given accepted degree,
--- which specializations are acceptable — kept as a separate table
--- (rather than a nullable third PK column above) since not every degree
--- entry has one ("Any Graduate" has no specialization to attach).
+-- education_degree_specializations: every distinct (degree, specialization)
+-- pairing actually seen, each with its own id — the same "assign an id,
+-- reference it from an array" treatment as skills, applied one level
+-- deeper. Without this, posting_qualification_specializations would need
+-- either one row per posting-degree-specialization triple (exploded, the
+-- same repeated-row problem skills solved by becoming a dictionary) or a
+-- flat per-posting array that loses which specialization belongs to
+-- which degree. Going through this dictionary keeps it one row per
+-- posting AND keeps the pairing fully recoverable by joining through it.
+--
+-- posting_qualification_degrees: one row per posting, degree_ids array —
+-- exactly mirrors posting_skills' shape (no per-degree extra attribute
+-- needed here, unlike specializations below).
+-- posting_qualification_specializations: one row per posting,
+-- degree_specialization_ids array referencing the dictionary above.
+-- Omitted entirely for a posting whose accepted degrees carry no
+-- specialization info at all (e.g. "Any Graduate").
 -- ---------------------------------------------------------------------
 CREATE TABLE education_degrees (
     degree_id    SERIAL PRIMARY KEY,
@@ -324,18 +337,28 @@ CREATE TABLE education_specializations (
     specialization_name  TEXT NOT NULL UNIQUE
 );
 
-CREATE TABLE posting_qualification_degrees (
-    job_id     BIGINT NOT NULL REFERENCES cleaned_postings(job_id) ON DELETE CASCADE,
-    degree_id  INT    NOT NULL REFERENCES education_degrees(degree_id),
-    PRIMARY KEY (job_id, degree_id)
+CREATE TABLE education_degree_specializations (
+    degree_specialization_id  SERIAL PRIMARY KEY,
+    degree_id                 INT NOT NULL REFERENCES education_degrees(degree_id),
+    specialization_id         INT NOT NULL REFERENCES education_specializations(specialization_id),
+    UNIQUE (degree_id, specialization_id)
 );
 
-CREATE TABLE posting_qualification_specializations (
-    job_id             BIGINT NOT NULL REFERENCES cleaned_postings(job_id) ON DELETE CASCADE,
-    degree_id          INT    NOT NULL REFERENCES education_degrees(degree_id),
-    specialization_id  INT    NOT NULL REFERENCES education_specializations(specialization_id),
-    PRIMARY KEY (job_id, degree_id, specialization_id)
+CREATE TABLE posting_qualification_degrees (
+    job_id      BIGINT NOT NULL PRIMARY KEY REFERENCES cleaned_postings(job_id) ON DELETE CASCADE,
+    degree_ids  INT[]  NOT NULL DEFAULT '{}'
 );
+
+CREATE INDEX IF NOT EXISTS idx_posting_qualification_degrees_ids
+    ON posting_qualification_degrees USING GIN (degree_ids);
+
+CREATE TABLE posting_qualification_specializations (
+    job_id                      BIGINT NOT NULL PRIMARY KEY REFERENCES cleaned_postings(job_id) ON DELETE CASCADE,
+    degree_specialization_ids  INT[]  NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_posting_qualification_specializations_ids
+    ON posting_qualification_specializations USING GIN (degree_specialization_ids);
 
 
 -- ---------------------------------------------------------------------

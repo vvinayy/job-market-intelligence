@@ -84,20 +84,28 @@ def list_industry_types():
 
 @router.get("/education-degrees", response_model=list[DegreeCount], summary="Accepted degrees, broken out individually")
 def list_education_degrees():
+    # posting_qualification_degrees is one row per posting with an array
+    # of degree_ids (mirrors posting_skills) -- unnest to count postings
+    # per degree instead of joining on a column that no longer exists.
     return fetch_all("""
         SELECT ed.degree_name AS name, ed.level, COUNT(pqd.job_id)::int AS postings
         FROM education_degrees ed
-        LEFT JOIN posting_qualification_degrees pqd ON pqd.degree_id = ed.degree_id
+        LEFT JOIN posting_qualification_degrees pqd ON ed.degree_id = ANY(pqd.degree_ids)
         GROUP BY ed.degree_name, ed.level ORDER BY postings DESC, ed.degree_name
     """)
 
 
 @router.get("/education-specializations", response_model=list[NamedCount], summary="Accepted specializations")
 def list_education_specializations():
+    # DISTINCT job_id -- a posting reaching the same specialization
+    # through two different degrees (e.g. "B.Tech in CSE" and "MCA in
+    # CSE") must still only count once, not once per degree pairing.
     return fetch_all("""
-        SELECT es.specialization_name AS name, COUNT(pqs.job_id)::int AS postings
+        SELECT es.specialization_name AS name, COUNT(DISTINCT pqs.job_id)::int AS postings
         FROM education_specializations es
-        LEFT JOIN posting_qualification_specializations pqs ON pqs.specialization_id = es.specialization_id
+        LEFT JOIN education_degree_specializations eds ON eds.specialization_id = es.specialization_id
+        LEFT JOIN posting_qualification_specializations pqs
+            ON eds.degree_specialization_id = ANY(pqs.degree_specialization_ids)
         GROUP BY es.specialization_name ORDER BY postings DESC, es.specialization_name
     """)
 

@@ -74,6 +74,46 @@ def _resolve_degree_ids(conn, degree_keys: set[tuple[str, str]]) -> dict[tuple[s
     return mapping
 
 
+def _resolve_degree_specialization_ids(conn, pairs: set[tuple[int, int]]) -> dict[tuple[int, int], int]:
+    """Get-or-create ids for education_degree_specializations, keyed by
+    (degree_id, specialization_id). This is what lets
+    posting_qualification_specializations stay one row per posting like
+    posting_skills: each posting just stores an array of ids into this
+    dictionary instead of one row per (degree, specialization) pair, and
+    the pairing itself is still fully recoverable by joining through it."""
+    pairs = {p for p in pairs if None not in p}
+    if not pairs:
+        return {}
+    degree_ids = list({d for d, _ in pairs})
+    specialization_ids = list({s for _, s in pairs})
+    with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        # Filtered by both columns separately (Postgres arrays can't hold
+        # composite row values through a plain %s parameter) then
+        # intersected with `pairs` in Python -- exact, just not a single
+        # round-trip filter. Fine at this table's size.
+        cur.execute("""
+            SELECT degree_specialization_id, degree_id, specialization_id
+            FROM education_degree_specializations
+            WHERE degree_id = ANY(%s) AND specialization_id = ANY(%s)
+        """, (degree_ids, specialization_ids))
+        mapping = {
+            (row["degree_id"], row["specialization_id"]): row["degree_specialization_id"]
+            for row in cur.fetchall()
+            if (row["degree_id"], row["specialization_id"]) in pairs
+        }
+    missing = [p for p in pairs if p not in mapping]
+    if missing:
+        with conn.cursor() as cur:
+            inserted = execute_values(
+                cur,
+                "INSERT INTO education_degree_specializations (degree_id, specialization_id) VALUES %s "
+                "RETURNING degree_specialization_id, degree_id, specialization_id",
+                missing, fetch=True,
+            )
+        mapping.update({(degree_id, spec_id): combo_id for combo_id, degree_id, spec_id in inserted})
+    return mapping
+
+
 def get_connection():
     return psycopg2.connect(
         dbname=os.environ.get("PGDATABASE", "jobmarket"),
@@ -258,32 +298,48 @@ def save_records(records: list[dict]) -> tuple[int, int]:
                 conn, "education_specializations", "specialization_id", "specialization_name",
                 {spec for c in deduped for d in c["qualification_degrees"] for spec in d["specializations"]},
             )
+            # Every (degree, specialization) pairing this batch touches
+            # gets its own id too — posting_qualification_specializations
+            # below stores an array of THESE ids, one row per posting,
+            # rather than one row per pairing, mirroring posting_skills.
+            degree_spec_to_id = _resolve_degree_specialization_ids(
+                conn,
+                {
+                    (degree_to_id[(d["degree"], d["level"])], specialization_to_id[spec])
+                    for c in deduped for d in c["qualification_degrees"] for spec in d["specializations"]
+                },
+            )
 
             skill_rows, qualification_rows, city_rows, job_ids_touched = [], [], [], []
-            degree_link_rows, specialization_link_rows = [], []
+            degree_rows, specialization_link_rows = [], []
 
             for c in deduped:
                 job_id = fingerprint_to_job_id[c["posting"]["fingerprint"]]
                 job_ids_touched.append(job_id)
-                # posting_skills is one row per posting now (skill_ids is an
+                # posting_skills is one row per posting (skill_ids is an
                 # array), so every touched posting gets exactly one row here,
-                # even one with no skills — unlike qualifications/cities below,
-                # which stay one-row-per-entry and simply contribute zero rows
-                # when a posting has none. preferred_skill_ids is always a
-                # subset of skill_ids (enforced by a CHECK constraint too) —
-                # cleaning.py already guarantees this by construction.
+                # even one with no skills — unlike qualifications below,
+                # which stays one-row-per-entry and simply contributes zero
+                # rows when a posting has none. preferred_skill_ids is
+                # always a subset of skill_ids (enforced by a CHECK
+                # constraint too) — cleaning.py already guarantees this by
+                # construction.
                 skill_ids = sorted(skill_name_to_id[s] for s in c["skills"])
                 preferred_skill_ids = sorted(skill_name_to_id[s] for s in c["preferred_skills"])
                 skill_rows.append((job_id, skill_ids, preferred_skill_ids))
                 qualification_rows += [(job_id, q["level"], q["field_of_study"]) for q in c["qualifications"]]
                 city_rows += [(job_id, city_id) for city_id in c["posting"]["city_ids"]]
 
-                for d in c["qualification_degrees"]:
-                    degree_id = degree_to_id[(d["degree"], d["level"])]
-                    degree_link_rows.append((job_id, degree_id))
-                    specialization_link_rows += [
-                        (job_id, degree_id, specialization_to_id[spec]) for spec in d["specializations"]
-                    ]
+                degrees = c["qualification_degrees"]
+                if degrees:
+                    degree_ids = sorted({degree_to_id[(d["degree"], d["level"])] for d in degrees})
+                    degree_rows.append((job_id, degree_ids))
+                    spec_ids = sorted({
+                        degree_spec_to_id[(degree_to_id[(d["degree"], d["level"])], specialization_to_id[spec])]
+                        for d in degrees for spec in d["specializations"]
+                    })
+                    if spec_ids:
+                        specialization_link_rows.append((job_id, spec_ids))
 
             # Rebuild each touched posting's skills/qualifications/cities/
             # degrees — cheap at this scale, and avoids stale rows when a
@@ -301,10 +357,10 @@ def save_records(records: list[dict]) -> tuple[int, int]:
                 execute_values(cur, "INSERT INTO posting_qualifications (job_id, level, field_of_study) VALUES %s", qualification_rows)
             if city_rows:
                 execute_values(cur, "INSERT INTO posting_cities (job_id, city_id) VALUES %s ON CONFLICT DO NOTHING", city_rows)
-            if degree_link_rows:
-                execute_values(cur, "INSERT INTO posting_qualification_degrees (job_id, degree_id) VALUES %s ON CONFLICT DO NOTHING", degree_link_rows)
+            if degree_rows:
+                execute_values(cur, "INSERT INTO posting_qualification_degrees (job_id, degree_ids) VALUES %s", degree_rows)
             if specialization_link_rows:
-                execute_values(cur, "INSERT INTO posting_qualification_specializations (job_id, degree_id, specialization_id) VALUES %s ON CONFLICT DO NOTHING", specialization_link_rows)
+                execute_values(cur, "INSERT INTO posting_qualification_specializations (job_id, degree_specialization_ids) VALUES %s", specialization_link_rows)
 
         conn.commit()
         return new_count, repeat_count
