@@ -596,16 +596,21 @@ def parse_qualifications(education: dict[str, str] | None) -> list[dict[str, str
 # it. The base vocabulary came from every distinct field_of_study value
 # in this project's own data; it was later cross-checked against
 # Naukri's own site-wide Education filter panel (the full checkbox list
-# on a search results page) and extended with entries confirmed IT-
-# relevant there but not yet seen in our own sample (CA, PG Diploma,
-# Post Graduation Not Required, B.B.A./B.M.S., M.Com/B.Com, M.A) —
-# Naukri's own vocabulary, not a guess, just not something our own
-# scrapes had produced yet. Entries with no realistic path into an IT
-# search (Medical-MS/MD, M.B.B.S., B.Ed, B.Arch, LLB) were deliberately
-# left out; "Diploma" was also left out despite appearing on Naukri's
-# list, since it carries no clear UG/PG signal there — better caught by
+# on a search results page) and extended with entries confirmed real
+# there but not yet seen in our own sample (CA, PG Diploma, Post
+# Graduation Not Required, B.B.A./B.M.S., M.Com/B.Com, M.A, and later
+# LLB - Bachelor of Laws, B.Ed, M.B.B.S. — non-tech UG/PG degrees added
+# deliberately broad, not filtered to IT relevance, so a new combo this
+# taxonomy hasn't seen doesn't need a code change to register cleanly).
+# Every entry's exact text was confirmed against a real live posting
+# first, not typed in from the (partially cut-off) filter screenshot —
+# e.g. it reads "LLB - Bachelor of Laws", not a guessed abbreviation.
+# Medical-MS/MD and B.Arch appear on Naukri's own filter list too but
+# were left out for now since neither actually turned up on a live
+# posting during this project's checks — better caught by
 # parse_education_degrees()'s auto-registration fallback with real
-# context than assigned a guessed level here.
+# context than added here on guessed phrasing. Same reasoning kept
+# "Diploma" out earlier: it has no clear UG/PG signal on Naukri's list.
 #
 # A slash-joined entry ("B.Tech / B.E.", "MS/M.Sc(Science)", "MBA/PGDM",
 # "Ph.D/Doctorate", "B.B.A. / B.M.S.") is Naukri listing two alternative
@@ -620,6 +625,9 @@ _DEGREE_VOCABULARY = [
     ("B.A - Bachelor of Arts", "UG"),
     ("B.B.A. / B.M.S.", "UG"),
     ("B.Com", "UG"),
+    ("LLB - Bachelor of Laws", "UG"),
+    ("B.Ed", "UG"),
+    ("M.B.B.S.", "UG"),
     ("Any Graduate", "UG"),
     ("Other Graduate", "UG"),
     ("Graduation Not Required", "UG"),

@@ -253,3 +253,24 @@ def test_ma_does_not_collide_with_mba():
     mba_result = cleaning._parse_field_of_study("MBA/PGDM in Any Specialization")
     by_degree = _by_degree(mba_result)
     assert set(by_degree) == {"MBA", "PGDM"}
+
+
+# ---------------------------------------------------------------------
+# Non-tech UG degrees, added deliberately broad (not IT-filtered) so a
+# new combo registers cleanly without a code change. Exact text
+# confirmed against real live postings, not typed in from a screenshot.
+# ---------------------------------------------------------------------
+def test_llb_canonicalizes_to_short_form():
+    # "LLB - Bachelor of Laws" -> "LLB", same drop-the-expansion rule
+    # as "B.A - Bachelor of Arts" -> "B.A".
+    result = cleaning._parse_field_of_study("LLB - Bachelor of Laws in Any Specialization")
+    assert result == [{"degree": "LLB", "level": "UG", "specializations": ["Any Specialization"]}]
+
+
+def test_bed_and_mbbs():
+    assert cleaning._parse_field_of_study("B.Ed in Education") == [
+        {"degree": "B.Ed", "level": "UG", "specializations": ["Education"]}
+    ]
+    assert cleaning._parse_field_of_study("M.B.B.S. in Any Specialization") == [
+        {"degree": "M.B.B.S.", "level": "UG", "specializations": ["Any Specialization"]}
+    ]
