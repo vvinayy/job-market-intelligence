@@ -274,18 +274,18 @@ def get_posting(job_id: int):
     # degrees via the reference tables instead of Naukri's flattened
     # display string -- e.g. "B.Tech / B.E." becomes two separate
     # entries here, each with only the specializations that actually
-    # pair with it. Two CTEs unnest this posting's degree_ids and
-    # degree_specialization_ids arrays; education_degree_specializations
-    # is the global dictionary of every (degree, specialization) pairing
-    # ever seen, filtered down to just the ones this posting actually
-    # has via the IN clause.
+    # pair with it. Two CTEs unnest this posting's accepted_degree_ids
+    # and accepted_degree_specialization_ids arrays; education_degree_
+    # specializations is the global dictionary of every (degree,
+    # specialization) pairing ever seen, filtered down to just the ones
+    # this posting actually has via the IN clause.
     qualification_degrees = fetch_all("""
         WITH pqd AS (
-            SELECT unnest(degree_ids) AS degree_id
+            SELECT unnest(accepted_degree_ids) AS degree_id
             FROM posting_qualification_degrees WHERE job_id = %s
         ),
         pqs AS (
-            SELECT unnest(degree_specialization_ids) AS degree_specialization_id
+            SELECT unnest(accepted_degree_specialization_ids) AS degree_specialization_id
             FROM posting_qualification_specializations WHERE job_id = %s
         )
         SELECT ed.degree_name AS degree, ed.level,

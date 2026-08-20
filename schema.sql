@@ -210,9 +210,13 @@ CREATE TABLE cleaned_postings (
     -- duplicated onto this table alongside posting_cities. No FK here
     -- (Postgres can't constrain individual array elements), same
     -- application-level guarantee as every other array column on this
-    -- table.
-    degree_ids                 INT[],
-    degree_specialization_ids  INT[],
+    -- table. Named accepted_* rather than a bare noun: multiple ids
+    -- here mean "any one of these satisfies the posting" (OR), the
+    -- opposite of skill_ids below where multiple ids are genuinely all
+    -- wanted together — the name has to carry that distinction since
+    -- both are plain INT[] columns and look identical otherwise.
+    accepted_degree_ids                 INT[],
+    accepted_degree_specialization_ids  INT[],
     -- Same facts as posting_skills below, duplicated here for the same
     -- at-a-glance reason. Production computation runs off this table
     -- directly, so every attribute that exists anywhere in this schema
@@ -227,10 +231,10 @@ CREATE TABLE cleaned_postings (
 
 CREATE INDEX IF NOT EXISTS idx_cleaned_postings_description_hash
     ON cleaned_postings (description_hash);
-CREATE INDEX IF NOT EXISTS idx_cleaned_postings_degree_ids
-    ON cleaned_postings USING GIN (degree_ids);
-CREATE INDEX IF NOT EXISTS idx_cleaned_postings_degree_specialization_ids
-    ON cleaned_postings USING GIN (degree_specialization_ids);
+CREATE INDEX IF NOT EXISTS idx_cleaned_postings_accepted_degree_ids
+    ON cleaned_postings USING GIN (accepted_degree_ids);
+CREATE INDEX IF NOT EXISTS idx_cleaned_postings_accepted_degree_specialization_ids
+    ON cleaned_postings USING GIN (accepted_degree_specialization_ids);
 CREATE INDEX IF NOT EXISTS idx_cleaned_postings_skill_ids
     ON cleaned_postings USING GIN (skill_ids);
 
@@ -341,13 +345,18 @@ CREATE TABLE posting_qualifications (
 -- which degree. Going through this dictionary keeps it one row per
 -- posting AND keeps the pairing fully recoverable by joining through it.
 --
--- posting_qualification_degrees: one row per posting, degree_ids array —
--- exactly mirrors posting_skills' shape (no per-degree extra attribute
--- needed here, unlike specializations below).
+-- posting_qualification_degrees: one row per posting, accepted_degree_ids
+-- array — exactly mirrors posting_skills' shape (no per-degree extra
+-- attribute needed here, unlike specializations below).
 -- posting_qualification_specializations: one row per posting,
--- degree_specialization_ids array referencing the dictionary above.
--- Omitted entirely for a posting whose accepted degrees carry no
--- specialization info at all (e.g. "Any Graduate").
+-- accepted_degree_specialization_ids array referencing the dictionary
+-- above. Omitted entirely for a posting whose accepted degrees carry no
+-- specialization info at all (e.g. "Any Graduate"). Both arrays are
+-- named accepted_* rather than a bare noun, since multiple ids here
+-- mean "any one satisfies the posting" (OR) -- unlike posting_skills'
+-- skill_ids, where multiple ids are genuinely all wanted together, not
+-- alternatives. Same INT[] type either way, so the name has to carry
+-- the distinction.
 -- ---------------------------------------------------------------------
 CREATE TABLE education_degrees (
     degree_id    SERIAL PRIMARY KEY,
@@ -368,20 +377,20 @@ CREATE TABLE education_degree_specializations (
 );
 
 CREATE TABLE posting_qualification_degrees (
-    job_id      BIGINT NOT NULL PRIMARY KEY REFERENCES cleaned_postings(job_id) ON DELETE CASCADE,
-    degree_ids  INT[]  NOT NULL DEFAULT '{}'
+    job_id                BIGINT NOT NULL PRIMARY KEY REFERENCES cleaned_postings(job_id) ON DELETE CASCADE,
+    accepted_degree_ids  INT[]  NOT NULL DEFAULT '{}'
 );
 
-CREATE INDEX IF NOT EXISTS idx_posting_qualification_degrees_ids
-    ON posting_qualification_degrees USING GIN (degree_ids);
+CREATE INDEX IF NOT EXISTS idx_posting_qualification_degrees_accepted_ids
+    ON posting_qualification_degrees USING GIN (accepted_degree_ids);
 
 CREATE TABLE posting_qualification_specializations (
-    job_id                      BIGINT NOT NULL PRIMARY KEY REFERENCES cleaned_postings(job_id) ON DELETE CASCADE,
-    degree_specialization_ids  INT[]  NOT NULL DEFAULT '{}'
+    job_id                               BIGINT NOT NULL PRIMARY KEY REFERENCES cleaned_postings(job_id) ON DELETE CASCADE,
+    accepted_degree_specialization_ids  INT[]  NOT NULL DEFAULT '{}'
 );
 
-CREATE INDEX IF NOT EXISTS idx_posting_qualification_specializations_ids
-    ON posting_qualification_specializations USING GIN (degree_specialization_ids);
+CREATE INDEX IF NOT EXISTS idx_posting_qualification_specializations_accepted_ids
+    ON posting_qualification_specializations USING GIN (accepted_degree_specialization_ids);
 
 
 -- ---------------------------------------------------------------------

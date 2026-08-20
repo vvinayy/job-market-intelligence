@@ -85,12 +85,13 @@ def list_industry_types():
 @router.get("/education-degrees", response_model=list[DegreeCount], summary="Accepted degrees, broken out individually")
 def list_education_degrees():
     # posting_qualification_degrees is one row per posting with an array
-    # of degree_ids (mirrors posting_skills) -- unnest to count postings
-    # per degree instead of joining on a column that no longer exists.
+    # of accepted_degree_ids (mirrors posting_skills) -- unnest to count
+    # postings per degree instead of joining on a column that no longer
+    # exists.
     return fetch_all("""
         SELECT ed.degree_name AS name, ed.level, COUNT(pqd.job_id)::int AS postings
         FROM education_degrees ed
-        LEFT JOIN posting_qualification_degrees pqd ON ed.degree_id = ANY(pqd.degree_ids)
+        LEFT JOIN posting_qualification_degrees pqd ON ed.degree_id = ANY(pqd.accepted_degree_ids)
         GROUP BY ed.degree_name, ed.level ORDER BY postings DESC, ed.degree_name
     """)
 
@@ -105,7 +106,7 @@ def list_education_specializations():
         FROM education_specializations es
         LEFT JOIN education_degree_specializations eds ON eds.specialization_id = es.specialization_id
         LEFT JOIN posting_qualification_specializations pqs
-            ON eds.degree_specialization_id = ANY(pqs.degree_specialization_ids)
+            ON eds.degree_specialization_id = ANY(pqs.accepted_degree_specialization_ids)
         GROUP BY es.specialization_name ORDER BY postings DESC, es.specialization_name
     """)
 

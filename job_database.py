@@ -139,7 +139,7 @@ INSERT INTO cleaned_postings (
     role_family, seniority_level, role_category_id, naukri_role, industry_type_id, department_id,
     posted_date, posted_raw, openings, applicant_count, applicant_count_qualifier,
     company_rating, company_reviews, company_badges, source_search, certifications,
-    degree_ids, degree_specialization_ids, skill_ids, preferred_skill_ids
+    accepted_degree_ids, accepted_degree_specialization_ids, skill_ids, preferred_skill_ids
 ) VALUES %s
 ON CONFLICT (fingerprint) DO UPDATE SET
     url                   = EXCLUDED.url,
@@ -174,8 +174,8 @@ ON CONFLICT (fingerprint) DO UPDATE SET
     company_badges        = EXCLUDED.company_badges,
     source_search         = EXCLUDED.source_search,
     certifications        = EXCLUDED.certifications,
-    degree_ids            = EXCLUDED.degree_ids,
-    degree_specialization_ids = EXCLUDED.degree_specialization_ids,
+    accepted_degree_ids   = EXCLUDED.accepted_degree_ids,
+    accepted_degree_specialization_ids = EXCLUDED.accepted_degree_specialization_ids,
     skill_ids             = EXCLUDED.skill_ids,
     preferred_skill_ids   = EXCLUDED.preferred_skill_ids,
     last_seen_date        = CURRENT_DATE,
@@ -264,13 +264,17 @@ def save_records(records: list[dict]) -> tuple[int, int]:
         # cheaper than a lookup per posting, and get-or-create still
         # works correctly when two postings in one batch share a degree
         # neither has been seen with before. Resolved before the main
-        # UPSERT (unlike before) so cleaned_postings.degree_ids and
-        # .degree_specialization_ids can be written in the same INSERT —
-        # a convenience duplicate of the same fact posting_qualification_
-        # degrees/specializations hold, same reason city_ids is
-        # duplicated onto cleaned_postings alongside posting_cities: an
-        # at-a-glance read without a join, for a table someone might
-        # browse directly.
+        # UPSERT (unlike before) so cleaned_postings.accepted_degree_ids
+        # and .accepted_degree_specialization_ids can be written in the
+        # same INSERT — a convenience duplicate of the same fact
+        # posting_qualification_degrees/specializations hold, same
+        # reason city_ids is duplicated onto cleaned_postings alongside
+        # posting_cities: an at-a-glance read without a join, for a
+        # table someone might browse directly. Named "accepted_" rather
+        # than a bare noun so the array reads unambiguously as "any one
+        # of these satisfies the posting" (OR) and can't be misread the
+        # way a plain skill_ids-style array might be — skills genuinely
+        # are all wanted together, degrees are alternatives.
         degree_to_id = _resolve_degree_ids(
             conn,
             {(d["degree"], d["level"]) for c in deduped for d in c["qualification_degrees"]},
@@ -281,9 +285,9 @@ def save_records(records: list[dict]) -> tuple[int, int]:
         )
         # Every (degree, specialization) pairing this batch touches gets
         # its own id too — posting_qualification_specializations and
-        # cleaned_postings.degree_specialization_ids both store an array
-        # of THESE ids, one row per posting, rather than one row per
-        # pairing, mirroring posting_skills.
+        # cleaned_postings.accepted_degree_specialization_ids both store
+        # an array of THESE ids, one row per posting, rather than one
+        # row per pairing, mirroring posting_skills.
         degree_spec_to_id = _resolve_degree_specialization_ids(
             conn,
             {
@@ -388,9 +392,9 @@ def save_records(records: list[dict]) -> tuple[int, int]:
             if city_rows:
                 execute_values(cur, "INSERT INTO posting_cities (job_id, city_id) VALUES %s ON CONFLICT DO NOTHING", city_rows)
             if degree_rows:
-                execute_values(cur, "INSERT INTO posting_qualification_degrees (job_id, degree_ids) VALUES %s", degree_rows)
+                execute_values(cur, "INSERT INTO posting_qualification_degrees (job_id, accepted_degree_ids) VALUES %s", degree_rows)
             if specialization_link_rows:
-                execute_values(cur, "INSERT INTO posting_qualification_specializations (job_id, degree_specialization_ids) VALUES %s", specialization_link_rows)
+                execute_values(cur, "INSERT INTO posting_qualification_specializations (job_id, accepted_degree_specialization_ids) VALUES %s", specialization_link_rows)
 
         conn.commit()
         return new_count, repeat_count
