@@ -139,7 +139,7 @@ INSERT INTO cleaned_postings (
     role_family, seniority_level, role_category_id, naukri_role, industry_type_id, department_id,
     posted_date, posted_raw, openings, applicant_count, applicant_count_qualifier,
     company_rating, company_reviews, company_badges, source_search, certifications,
-    degree_ids, degree_specialization_ids
+    degree_ids, degree_specialization_ids, skill_ids, preferred_skill_ids
 ) VALUES %s
 ON CONFLICT (fingerprint) DO UPDATE SET
     url                   = EXCLUDED.url,
@@ -176,6 +176,8 @@ ON CONFLICT (fingerprint) DO UPDATE SET
     certifications        = EXCLUDED.certifications,
     degree_ids            = EXCLUDED.degree_ids,
     degree_specialization_ids = EXCLUDED.degree_specialization_ids,
+    skill_ids             = EXCLUDED.skill_ids,
+    preferred_skill_ids   = EXCLUDED.preferred_skill_ids,
     last_seen_date        = CURRENT_DATE,
     times_seen            = cleaned_postings.times_seen + 1
 RETURNING job_id, fingerprint, (xmax = 0) AS was_inserted;
@@ -295,6 +297,8 @@ def save_records(records: list[dict]) -> tuple[int, int]:
         # per-posting loop further down instead of recomputing.
         fingerprint_to_degree_ids = {}
         fingerprint_to_spec_ids = {}
+        fingerprint_to_skill_ids = {}
+        fingerprint_to_preferred_skill_ids = {}
         for c in deduped:
             degrees = c["qualification_degrees"]
             degree_ids = sorted({degree_to_id[(d["degree"], d["level"])] for d in degrees})
@@ -304,6 +308,9 @@ def save_records(records: list[dict]) -> tuple[int, int]:
             })
             fingerprint_to_degree_ids[c["posting"]["fingerprint"]] = degree_ids
             fingerprint_to_spec_ids[c["posting"]["fingerprint"]] = spec_ids
+            fingerprint_to_skill_ids[c["posting"]["fingerprint"]] = sorted(skill_name_to_id[s] for s in c["skills"])
+            fingerprint_to_preferred_skill_ids[c["posting"]["fingerprint"]] = sorted(
+                skill_name_to_id[s] for s in c["preferred_skills"])
 
         rows = [
             (
@@ -325,6 +332,8 @@ def save_records(records: list[dict]) -> tuple[int, int]:
                 c["posting"]["certifications"],
                 fingerprint_to_degree_ids[c["posting"]["fingerprint"]],
                 fingerprint_to_spec_ids[c["posting"]["fingerprint"]],
+                fingerprint_to_skill_ids[c["posting"]["fingerprint"]],
+                fingerprint_to_preferred_skill_ids[c["posting"]["fingerprint"]],
             )
             for c in deduped
         ]
@@ -352,13 +361,11 @@ def save_records(records: list[dict]) -> tuple[int, int]:
                 # always a subset of skill_ids (enforced by a CHECK
                 # constraint too) — cleaning.py already guarantees this by
                 # construction.
-                skill_ids = sorted(skill_name_to_id[s] for s in c["skills"])
-                preferred_skill_ids = sorted(skill_name_to_id[s] for s in c["preferred_skills"])
-                skill_rows.append((job_id, skill_ids, preferred_skill_ids))
+                fingerprint = c["posting"]["fingerprint"]
+                skill_rows.append((job_id, fingerprint_to_skill_ids[fingerprint], fingerprint_to_preferred_skill_ids[fingerprint]))
                 qualification_rows += [(job_id, q["level"], q["field_of_study"]) for q in c["qualifications"]]
                 city_rows += [(job_id, city_id) for city_id in c["posting"]["city_ids"]]
 
-                fingerprint = c["posting"]["fingerprint"]
                 if fingerprint_to_degree_ids[fingerprint]:
                     degree_rows.append((job_id, fingerprint_to_degree_ids[fingerprint]))
                 if fingerprint_to_spec_ids[fingerprint]:

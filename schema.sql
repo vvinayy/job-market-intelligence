@@ -213,9 +213,16 @@ CREATE TABLE cleaned_postings (
     -- table.
     degree_ids                 INT[],
     degree_specialization_ids  INT[],
+    -- Same facts as posting_skills below, duplicated here for the same
+    -- at-a-glance reason. Production computation runs off this table
+    -- directly, so every attribute that exists anywhere in this schema
+    -- needs to be reachable from cleaned_postings without a join.
+    skill_ids                  INT[] NOT NULL DEFAULT '{}',
+    preferred_skill_ids        INT[] NOT NULL DEFAULT '{}',
     first_seen_date          DATE NOT NULL DEFAULT CURRENT_DATE,
     last_seen_date           DATE NOT NULL DEFAULT CURRENT_DATE,
-    times_seen                INT NOT NULL DEFAULT 1
+    times_seen                INT NOT NULL DEFAULT 1,
+    CONSTRAINT cleaned_postings_preferred_subset_of_skills CHECK (preferred_skill_ids <@ skill_ids)
 );
 
 CREATE INDEX IF NOT EXISTS idx_cleaned_postings_description_hash
@@ -224,6 +231,8 @@ CREATE INDEX IF NOT EXISTS idx_cleaned_postings_degree_ids
     ON cleaned_postings USING GIN (degree_ids);
 CREATE INDEX IF NOT EXISTS idx_cleaned_postings_degree_specialization_ids
     ON cleaned_postings USING GIN (degree_specialization_ids);
+CREATE INDEX IF NOT EXISTS idx_cleaned_postings_skill_ids
+    ON cleaned_postings USING GIN (skill_ids);
 
 
 -- ---------------------------------------------------------------------
