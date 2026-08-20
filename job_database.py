@@ -138,7 +138,8 @@ INSERT INTO cleaned_postings (
     city_ids, unmapped_locations, working_type, employment_type, contract_type,
     role_family, seniority_level, role_category_id, naukri_role, industry_type_id, department_id,
     posted_date, posted_raw, openings, applicant_count, applicant_count_qualifier,
-    company_rating, company_reviews, company_badges, source_search, certifications
+    company_rating, company_reviews, company_badges, source_search, certifications,
+    degree_ids, degree_specialization_ids
 ) VALUES %s
 ON CONFLICT (fingerprint) DO UPDATE SET
     url                   = EXCLUDED.url,
@@ -173,6 +174,8 @@ ON CONFLICT (fingerprint) DO UPDATE SET
     company_badges        = EXCLUDED.company_badges,
     source_search         = EXCLUDED.source_search,
     certifications        = EXCLUDED.certifications,
+    degree_ids            = EXCLUDED.degree_ids,
+    degree_specialization_ids = EXCLUDED.degree_specialization_ids,
     last_seen_date        = CURRENT_DATE,
     times_seen            = cleaned_postings.times_seen + 1
 RETURNING job_id, fingerprint, (xmax = 0) AS was_inserted;
@@ -254,6 +257,54 @@ def save_records(records: list[dict]) -> tuple[int, int]:
             conn, "industry_types", "industry_type_id", "name",
             {c["posting"]["industry_type"] for c in deduped})
 
+        # education_degrees/education_specializations need their ids
+        # resolved once across the whole batch, same reason skills do —
+        # cheaper than a lookup per posting, and get-or-create still
+        # works correctly when two postings in one batch share a degree
+        # neither has been seen with before. Resolved before the main
+        # UPSERT (unlike before) so cleaned_postings.degree_ids and
+        # .degree_specialization_ids can be written in the same INSERT —
+        # a convenience duplicate of the same fact posting_qualification_
+        # degrees/specializations hold, same reason city_ids is
+        # duplicated onto cleaned_postings alongside posting_cities: an
+        # at-a-glance read without a join, for a table someone might
+        # browse directly.
+        degree_to_id = _resolve_degree_ids(
+            conn,
+            {(d["degree"], d["level"]) for c in deduped for d in c["qualification_degrees"]},
+        )
+        specialization_to_id = _resolve_reference_ids(
+            conn, "education_specializations", "specialization_id", "specialization_name",
+            {spec for c in deduped for d in c["qualification_degrees"] for spec in d["specializations"]},
+        )
+        # Every (degree, specialization) pairing this batch touches gets
+        # its own id too — posting_qualification_specializations and
+        # cleaned_postings.degree_specialization_ids both store an array
+        # of THESE ids, one row per posting, rather than one row per
+        # pairing, mirroring posting_skills.
+        degree_spec_to_id = _resolve_degree_specialization_ids(
+            conn,
+            {
+                (degree_to_id[(d["degree"], d["level"])], specialization_to_id[spec])
+                for c in deduped for d in c["qualification_degrees"] for spec in d["specializations"]
+            },
+        )
+
+        # Keyed by fingerprint rather than job_id, since job_id isn't
+        # assigned until the UPSERT below runs. Reused again in the
+        # per-posting loop further down instead of recomputing.
+        fingerprint_to_degree_ids = {}
+        fingerprint_to_spec_ids = {}
+        for c in deduped:
+            degrees = c["qualification_degrees"]
+            degree_ids = sorted({degree_to_id[(d["degree"], d["level"])] for d in degrees})
+            spec_ids = sorted({
+                degree_spec_to_id[(degree_to_id[(d["degree"], d["level"])], specialization_to_id[spec])]
+                for d in degrees for spec in d["specializations"]
+            })
+            fingerprint_to_degree_ids[c["posting"]["fingerprint"]] = degree_ids
+            fingerprint_to_spec_ids[c["posting"]["fingerprint"]] = spec_ids
+
         rows = [
             (
                 c["posting"]["fingerprint"], c["posting"]["url"], c["posting"]["title"],
@@ -272,6 +323,8 @@ def save_records(records: list[dict]) -> tuple[int, int]:
                 c["posting"]["company_rating"], c["posting"]["company_reviews"], c["posting"]["company_badges"],
                 c["posting"]["source_search"],
                 c["posting"]["certifications"],
+                fingerprint_to_degree_ids[c["posting"]["fingerprint"]],
+                fingerprint_to_spec_ids[c["posting"]["fingerprint"]],
             )
             for c in deduped
         ]
@@ -284,31 +337,6 @@ def save_records(records: list[dict]) -> tuple[int, int]:
             fingerprint_to_job_id = {row[1]: row[0] for row in results}
             new_count = sum(1 for row in results if row[2])
             repeat_count = len(results) - new_count
-
-            # education_degrees/education_specializations need their ids
-            # resolved once across the whole batch, same reason skills do —
-            # cheaper than a lookup per posting, and get-or-create still
-            # works correctly when two postings in one batch share a degree
-            # neither has been seen with before.
-            degree_to_id = _resolve_degree_ids(
-                conn,
-                {(d["degree"], d["level"]) for c in deduped for d in c["qualification_degrees"]},
-            )
-            specialization_to_id = _resolve_reference_ids(
-                conn, "education_specializations", "specialization_id", "specialization_name",
-                {spec for c in deduped for d in c["qualification_degrees"] for spec in d["specializations"]},
-            )
-            # Every (degree, specialization) pairing this batch touches
-            # gets its own id too — posting_qualification_specializations
-            # below stores an array of THESE ids, one row per posting,
-            # rather than one row per pairing, mirroring posting_skills.
-            degree_spec_to_id = _resolve_degree_specialization_ids(
-                conn,
-                {
-                    (degree_to_id[(d["degree"], d["level"])], specialization_to_id[spec])
-                    for c in deduped for d in c["qualification_degrees"] for spec in d["specializations"]
-                },
-            )
 
             skill_rows, qualification_rows, city_rows, job_ids_touched = [], [], [], []
             degree_rows, specialization_link_rows = [], []
@@ -330,16 +358,11 @@ def save_records(records: list[dict]) -> tuple[int, int]:
                 qualification_rows += [(job_id, q["level"], q["field_of_study"]) for q in c["qualifications"]]
                 city_rows += [(job_id, city_id) for city_id in c["posting"]["city_ids"]]
 
-                degrees = c["qualification_degrees"]
-                if degrees:
-                    degree_ids = sorted({degree_to_id[(d["degree"], d["level"])] for d in degrees})
-                    degree_rows.append((job_id, degree_ids))
-                    spec_ids = sorted({
-                        degree_spec_to_id[(degree_to_id[(d["degree"], d["level"])], specialization_to_id[spec])]
-                        for d in degrees for spec in d["specializations"]
-                    })
-                    if spec_ids:
-                        specialization_link_rows.append((job_id, spec_ids))
+                fingerprint = c["posting"]["fingerprint"]
+                if fingerprint_to_degree_ids[fingerprint]:
+                    degree_rows.append((job_id, fingerprint_to_degree_ids[fingerprint]))
+                if fingerprint_to_spec_ids[fingerprint]:
+                    specialization_link_rows.append((job_id, fingerprint_to_spec_ids[fingerprint]))
 
             # Rebuild each touched posting's skills/qualifications/cities/
             # degrees — cheap at this scale, and avoids stale rows when a

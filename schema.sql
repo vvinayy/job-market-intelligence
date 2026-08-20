@@ -203,6 +203,16 @@ CREATE TABLE cleaned_postings (
     -- tool/language skill, kept separate from posting_skills rather
     -- than folded in.
     certifications            TEXT[],
+    -- Same facts as posting_qualification_degrees/specializations below
+    -- (education_degrees.degree_id / education_degree_specializations.
+    -- degree_specialization_id), duplicated directly here for an
+    -- at-a-glance read without a join — same reason city_ids is
+    -- duplicated onto this table alongside posting_cities. No FK here
+    -- (Postgres can't constrain individual array elements), same
+    -- application-level guarantee as every other array column on this
+    -- table.
+    degree_ids                 INT[],
+    degree_specialization_ids  INT[],
     first_seen_date          DATE NOT NULL DEFAULT CURRENT_DATE,
     last_seen_date           DATE NOT NULL DEFAULT CURRENT_DATE,
     times_seen                INT NOT NULL DEFAULT 1
@@ -210,6 +220,10 @@ CREATE TABLE cleaned_postings (
 
 CREATE INDEX IF NOT EXISTS idx_cleaned_postings_description_hash
     ON cleaned_postings (description_hash);
+CREATE INDEX IF NOT EXISTS idx_cleaned_postings_degree_ids
+    ON cleaned_postings USING GIN (degree_ids);
+CREATE INDEX IF NOT EXISTS idx_cleaned_postings_degree_specialization_ids
+    ON cleaned_postings USING GIN (degree_specialization_ids);
 
 
 -- ---------------------------------------------------------------------
