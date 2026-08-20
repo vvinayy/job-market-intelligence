@@ -77,7 +77,8 @@ INSERT INTO cities (city_name, state) VALUES
     ('Indore',              'Madhya Pradesh'),
     ('Chandigarh',          'Chandigarh'),
     ('Bhubaneswar',         'Odisha'),
-    ('Visakhapatnam',       'Andhra Pradesh')
+    ('Visakhapatnam',       'Andhra Pradesh'),
+    ('Vijayawada',          'Andhra Pradesh')
 ON CONFLICT (city_name) DO NOTHING;
 
 
@@ -130,79 +131,21 @@ CREATE TABLE industry_types (
     name               TEXT NOT NULL UNIQUE
 );
 
+-- Column ORDER here is deliberate and matches the live table: identity
+-- first, then the two things a job description is actually judged on —
+-- education, then skills — then everything else. Postgres cannot
+-- reorder columns in place, so this order was applied by rebuilding the
+-- table (new table, copy, swap, restore constraints/indexes/FKs). If you
+-- add a column, `ALTER TABLE ADD COLUMN` appends it to the end and the
+-- live table will no longer match this file's order; that's cosmetic and
+-- harmless (every query names its columns), but rebuild if it matters.
 CREATE TABLE cleaned_postings (
     job_id                 BIGSERIAL PRIMARY KEY,
     fingerprint            TEXT NOT NULL UNIQUE,
     url                    TEXT NOT NULL,
     title                  TEXT,
     company                TEXT,
-    description            TEXT,
-    -- Exact-match hash of the normalized description text — not fuzzy —
-    -- so postings sharing verbatim JD text (common when several
-    -- staffing agencies repost the same vacancy) can be grouped:
-    -- SELECT description_hash FROM cleaned_postings
-    --   GROUP BY description_hash HAVING COUNT(DISTINCT company) > 1
-    description_hash       TEXT,
-    -- Best-effort split of `description` by heading phrases
-    -- ("Roles and Responsibilities" / "Desired Candidate Profile" etc.)
-    -- — text heuristics, not guaranteed for every posting's phrasing.
-    responsibilities_text  TEXT,
-    requirements_text      TEXT,
-    experience_min         INT,
-    experience_max         INT,
-    salary_min              NUMERIC,
-    salary_max              NUMERIC,
-    city_ids                INT[],
-    unmapped_locations      TEXT[],
-    working_type            TEXT,
-    employment_type         TEXT,
-    contract_type           TEXT,
-    role_family             TEXT,
-    -- Inferred from the title alone, not experience_min/max — a
-    -- different, often-absent signal. NULL means the title carried no
-    -- seniority marker at all (the common case), not "mid-level".
-    seniority_level          TEXT,
-    role_category_id        INT REFERENCES role_categories(role_category_id),
-    -- Naukri's own classification (e.g. "Back End Developer") — distinct
-    -- from role_category (e.g. "Software Development") and from
-    -- role_family (our own regex-derived classification of the title).
-    naukri_role              TEXT,
-    industry_type_id         INT REFERENCES industry_types(industry_type_id),
-    department_id            INT REFERENCES departments(department_id),
-    posted_date               DATE,
-    posted_raw                TEXT,
-    openings                  INT,
-    -- Naukri shows this three ways: a plain exact number ("44"), a
-    -- floor once past some threshold ("100+"), or a ceiling for very
-    -- new postings ("Less than 10"). applicant_count is always the
-    -- digit found either way; applicant_count_qualifier records which
-    -- direction the ambiguity runs — NULL means the number was exact,
-    -- not that the qualifier is unknown. 'at_least'/'less_than' point
-    -- opposite directions, so collapsing both into a bare int the way
-    -- an earlier version of this column did would be actively wrong
-    -- for the 'less_than' case, not just imprecise.
-    applicant_count           INT,
-    applicant_count_qualifier TEXT,
-    -- Shown inline in the posting header, sourced from AmbitionBox — no
-    -- separate company-profile page visit needed. company_reviews is
-    -- Naukri's own rounded figure ("50.5K Reviews") expanded from its
-    -- K/M shorthand, not a more precise count than the source has.
-    company_rating             NUMERIC,
-    company_reviews            INT,
-    -- Recognition badges from the inline "About the company" block
-    -- (e.g. "Fortune India 500 (2023)", "Highly Rated by Women").
-    -- Confirmed from raw HTML that short entries like "TOP" are
-    -- genuinely what Naukri shows, not a truncation artifact.
-    company_badges             TEXT[],
-    -- Which run_daily_scrape.bat search URL surfaced this posting —
-    -- lets a query answer "which searches are actually productive"
-    -- instead of only ever seeing the merged result.
-    source_search             TEXT,
-    -- Mined from description text via skill_taxonomy.extract_certifications()
-    -- — a credential someone holds, a different kind of signal from a
-    -- tool/language skill, kept separate from posting_skills rather
-    -- than folded in.
-    certifications            TEXT[],
+
     -- Same facts as posting_qualification_degrees/specializations below
     -- (education_degrees.degree_id / education_degree_specializations.
     -- degree_specialization_id), duplicated directly here for an
@@ -217,15 +160,103 @@ CREATE TABLE cleaned_postings (
     -- both are plain INT[] columns and look identical otherwise.
     accepted_degree_ids                 INT[],
     accepted_degree_specialization_ids  INT[],
+
     -- Same facts as posting_skills below, duplicated here for the same
     -- at-a-glance reason. Production computation runs off this table
     -- directly, so every attribute that exists anywhere in this schema
     -- needs to be reachable from cleaned_postings without a join.
     skill_ids                  INT[] NOT NULL DEFAULT '{}',
     preferred_skill_ids        INT[] NOT NULL DEFAULT '{}',
+    -- Mined from description text via skill_taxonomy.extract_certifications()
+    -- — a credential someone holds, a different kind of signal from a
+    -- tool/language skill, kept separate from posting_skills rather
+    -- than folded in.
+    certifications            TEXT[],
+
+    experience_min         INT,
+    experience_max         INT,
+    salary_min              NUMERIC,
+    salary_max              NUMERIC,
+
+    city_ids                INT[],
+    unmapped_locations      TEXT[],
+
+    -- Closed, stable vocabularies -- cleaning.py already collapses every
+    -- spelling Naukri uses down to one canonical value per category
+    -- (normalize_working_type / EMPLOYMENT_TYPES / CONTRACT_TYPES), so a
+    -- CHECK constraint is enough to guard against a bug in that code; a
+    -- reference table would only add a JOIN for a vocabulary this small
+    -- and this unlikely to grow.
+    working_type            TEXT CHECK (working_type IN ('On-site', 'Hybrid', 'Remote')),
+    employment_type         TEXT CHECK (employment_type IN ('Full Time', 'Part Time')),
+    contract_type           TEXT CHECK (contract_type IN
+                                 ('Permanent', 'Contract', 'Temporary', 'Internship', 'Freelance')),
+
+    role_family             TEXT,
+    -- Inferred from the title alone, not experience_min/max — a
+    -- different, often-absent signal. NULL means the title carried no
+    -- seniority marker at all (the common case), not "mid-level".
+    seniority_level          TEXT,
+    role_category_id        INT REFERENCES role_categories(role_category_id),
+    -- Naukri's own classification (e.g. "Back End Developer") — distinct
+    -- from role_category (e.g. "Software Development") and from
+    -- role_family (our own regex-derived classification of the title).
+    -- Recruiter-picked from a dropdown, so it is noisy: the same title
+    -- gets different values on different postings, and it occasionally
+    -- contradicts the JD outright. A raw signal, not ground truth.
+    naukri_role              TEXT,
+    department_id            INT REFERENCES departments(department_id),
+    industry_type_id         INT REFERENCES industry_types(industry_type_id),
+
+    description            TEXT,
+    -- Exact-match hash of the normalized description text — not fuzzy —
+    -- so postings sharing verbatim JD text (common when several
+    -- staffing agencies repost the same vacancy) can be grouped:
+    -- SELECT description_hash FROM cleaned_postings
+    --   GROUP BY description_hash HAVING COUNT(DISTINCT company) > 1
+    -- NOTE: responsibilities_text / requirements_text used to sit here.
+    -- They are a pure function of `description` (cleaning.py::
+    -- split_description_sections), verified byte-identical on every row,
+    -- so storing them cost ~24% of the table to duplicate text already
+    -- present in the column above. The API computes them per posting at
+    -- read time instead. Don't re-add them as columns.
+    description_hash       TEXT,
+
+    posted_date               DATE,
+    posted_raw                TEXT,
+    openings                  INT,
+    -- Naukri shows this three ways: a plain exact number ("44"), a
+    -- floor once past some threshold ("100+"), or a ceiling for very
+    -- new postings ("Less than 10"). applicant_count is always the
+    -- digit found either way; applicant_count_qualifier records which
+    -- direction the ambiguity runs — NULL means the number was exact,
+    -- not that the qualifier is unknown. 'at_least'/'less_than' point
+    -- opposite directions, so collapsing both into a bare int the way
+    -- an earlier version of this column did would be actively wrong
+    -- for the 'less_than' case, not just imprecise.
+    applicant_count           INT,
+    applicant_count_qualifier TEXT,
+
+    -- Shown inline in the posting header, sourced from AmbitionBox — no
+    -- separate company-profile page visit needed. company_reviews is
+    -- Naukri's own rounded figure ("50.5K Reviews") expanded from its
+    -- K/M shorthand, not a more precise count than the source has.
+    company_rating             NUMERIC,
+    company_reviews            INT,
+    -- Recognition badges from the inline "About the company" block
+    -- (e.g. "Fortune India 500 (2023)", "Highly Rated by Women").
+    -- Confirmed from raw HTML that short entries like "TOP" are
+    -- genuinely what Naukri shows, not a truncation artifact.
+    company_badges             TEXT[],
+
+    -- Which jobmarket.bat search URL surfaced this posting —
+    -- lets a query answer "which searches are actually productive"
+    -- instead of only ever seeing the merged result.
+    source_search             TEXT,
     first_seen_date          DATE NOT NULL DEFAULT CURRENT_DATE,
     last_seen_date           DATE NOT NULL DEFAULT CURRENT_DATE,
     times_seen                INT NOT NULL DEFAULT 1,
+
     CONSTRAINT cleaned_postings_preferred_subset_of_skills CHECK (preferred_skill_ids <@ skill_ids)
 );
 

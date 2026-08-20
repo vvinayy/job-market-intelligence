@@ -309,10 +309,23 @@ def _round_half_up(x: float) -> int:
 # =====================================================================
 # EMPLOYMENT / CONTRACT TYPE — split "Full Time, Permanent" on commas,
 # title-case each part, match against a known vocabulary. First match
-# in the original left-to-right order wins.
+# in the original left-to-right order wins. Vocabulary maps every
+# spelling Naukri uses to ONE canonical output ("full-time" and
+# "full time" both -> "Full Time") -- these are database CHECK
+# constraint values (see schema.sql), so two spellings of the same
+# real-world fact must never produce two different stored strings.
 # =====================================================================
-EMPLOYMENT_TYPES = {"full time", "full-time", "part time", "part-time"}
-CONTRACT_TYPES = {"permanent", "contract", "contractual", "temporary", "internship", "freelance"}
+EMPLOYMENT_TYPES = {
+    "full time": "Full Time", "full-time": "Full Time",
+    "part time": "Part Time", "part-time": "Part Time",
+}
+CONTRACT_TYPES = {
+    "permanent": "Permanent",
+    "contract": "Contract", "contractual": "Contract",
+    "temporary": "Temporary",
+    "internship": "Internship",
+    "freelance": "Freelance",
+}
 
 _WORD_RE = re.compile(r"[A-Za-z0-9]+")
 
@@ -325,11 +338,11 @@ def _initcap(s: str) -> str:
     return _WORD_RE.sub(lambda m: m.group(0)[0].upper() + m.group(0)[1:].lower(), s)
 
 
-def _match_type(raw: str | None, vocabulary: set[str]) -> str | None:
+def _match_type(raw: str | None, vocabulary: dict[str, str]) -> str | None:
     for part in (raw or "").split(","):
-        capped = _initcap(part.strip())
-        if capped.lower() in vocabulary:
-            return capped
+        key = _initcap(part.strip()).lower()
+        if key in vocabulary:
+            return vocabulary[key]
     return None
 
 
@@ -389,6 +402,7 @@ CITY_ALIASES = {
     "pune": "Pune",
     "secunderabad": "Secunderabad",
     "thiruvananthapuram": "Thiruvananthapuram", "trivandrum": "Thiruvananthapuram",
+    "vijayawada": "Vijayawada",
     "visakhapatnam": "Visakhapatnam", "vizag": "Visakhapatnam",
     "warangal": "Warangal",
 }
@@ -403,7 +417,12 @@ def resolve_locations(raw_location: str | None, city_name_to_id: dict[str, int])
         frag = frag.strip()
         if not frag:
             continue
-        key = frag.lower()
+        # Naukri sometimes appends a locality in parens, e.g.
+        # "Hyderabad( Raidurgam )" -- strip it before matching so the
+        # fragment still resolves to the city instead of falling
+        # through to unmapped_locations. Real example: job scraped
+        # 2026-08.
+        key = re.sub(r"\(.*?\)", "", frag).strip().lower()
         city_name = CITY_ALIASES.get(key)
         if city_name:
             city_ids.add(city_name_to_id[city_name])
@@ -754,6 +773,14 @@ def parse_education_degrees(education: dict[str, str] | None) -> list[dict]:
 # not guaranteed: a posting phrased unusually, or with no headings at
 # all, just won't split — the full text still lives in `description`
 # either way, so nothing is lost if the heuristic misses.
+#
+# Called at READ time by api/routers/postings.py, not by clean_record().
+# The results used to be stored as responsibilities_text/requirements_
+# text columns, but they are a pure function of `description` (verified
+# byte-identical across every row in the table), so storing them cost
+# roughly a quarter of the table to hold text already present in the
+# column beside them. One posting is split per detail-page view, which
+# is far cheaper than carrying the duplicate on every row forever.
 # =====================================================================
 _RESPONSIBILITY_HEADERS = [
     "roles and responsibilities", "role and responsibilities",
@@ -827,7 +854,6 @@ def clean_record(raw: dict, city_name_to_id: dict[str, int]) -> dict:
     title = _clean(raw.get("title"))
     company = _clean(raw.get("company"))
     description = _clean(raw.get("description"))
-    sections = split_description_sections(description)
 
     company_rating_raw = _clean(raw.get("company_rating"))
     company_rating = float(company_rating_raw) if company_rating_raw else None
@@ -839,8 +865,6 @@ def clean_record(raw: dict, city_name_to_id: dict[str, int]) -> dict:
         "company": company,
         "description": description,
         "description_hash": make_description_hash(description),
-        "responsibilities_text": sections["responsibilities"],
-        "requirements_text": sections["requirements"],
         "experience_min": _round_half_up(exp_min) if exp_min is not None else None,
         "experience_max": _round_half_up(exp_max) if exp_max is not None else None,
         "salary_min": parse_range_min(salary),

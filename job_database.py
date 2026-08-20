@@ -133,7 +133,6 @@ def get_connection():
 UPSERT_SQL = """
 INSERT INTO cleaned_postings (
     fingerprint, url, title, company, description, description_hash,
-    responsibilities_text, requirements_text,
     experience_min, experience_max, salary_min, salary_max,
     city_ids, unmapped_locations, working_type, employment_type, contract_type,
     role_family, seniority_level, role_category_id, naukri_role, industry_type_id, department_id,
@@ -147,8 +146,6 @@ ON CONFLICT (fingerprint) DO UPDATE SET
     company               = EXCLUDED.company,
     description           = EXCLUDED.description,
     description_hash      = EXCLUDED.description_hash,
-    responsibilities_text = EXCLUDED.responsibilities_text,
-    requirements_text     = EXCLUDED.requirements_text,
     experience_min        = EXCLUDED.experience_min,
     experience_max        = EXCLUDED.experience_max,
     salary_min            = EXCLUDED.salary_min,
@@ -320,7 +317,6 @@ def save_records(records: list[dict]) -> tuple[int, int]:
             (
                 c["posting"]["fingerprint"], c["posting"]["url"], c["posting"]["title"],
                 c["posting"]["company"], c["posting"]["description"], c["posting"]["description_hash"],
-                c["posting"]["responsibilities_text"], c["posting"]["requirements_text"],
                 c["posting"]["experience_min"], c["posting"]["experience_max"],
                 c["posting"]["salary_min"], c["posting"]["salary_max"],
                 c["posting"]["city_ids"], c["posting"]["unmapped_locations"],
@@ -431,6 +427,34 @@ def record_scrape_run(
             run_id = cur.fetchone()[0]
         conn.commit()
         return run_id
+    finally:
+        conn.close()
+
+
+def snapshot_daily_skills() -> int:
+    """Records today's skill counts by calling the SQL function of the
+    same name (defined in trends_setup.sql). Returns the row count it
+    wrote.
+
+    Called at the end of every scrape rather than only from
+    jobmarket.bat, because a scrape started any other way (a
+    manual run, a re-run of one search) would otherwise never snapshot
+    — and a day that isn't snapshotted is gone permanently, since
+    cleaned_postings only ever shows the present. The SQL function
+    recalculates rather than duplicating on a same-day re-run, so
+    calling it once per search URL is harmless.
+
+    This is exactly how three days were silently lost: the function
+    still referenced posting_skills.skill after that table moved to
+    skill_ids INT[], so it raised on every run, into a log nobody
+    reads. Failures here are surfaced loudly by the caller."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT snapshot_daily_skills()")
+            written = cur.fetchone()[0]
+        conn.commit()
+        return written
     finally:
         conn.close()
 

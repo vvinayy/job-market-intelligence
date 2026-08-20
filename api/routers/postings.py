@@ -14,6 +14,14 @@ from fastapi import APIRouter, HTTPException, Query
 from ..database import fetch_all, fetch_one, fetch_value, WhereBuilder
 from ..models import PostingSummary, PostingDetail, PostingPage, Qualification
 
+# The one place the API reaches outside itself. responsibilities_text /
+# requirements_text used to be stored columns, but they are a pure
+# function of `description` — verified byte-identical on every row — so
+# storing them cost ~24% of the table to hold nothing new. Recomputed
+# here instead, which is cheap because this is the single-posting detail
+# endpoint: one description, not a scan.
+from cleaning import split_description_sections
+
 router = APIRouter(prefix="/postings", tags=["postings"])
 
 
@@ -249,7 +257,7 @@ def get_posting(job_id: int):
         raise HTTPException(404, f"No posting with job_id {job_id}")
 
     extra = fetch_one("""
-        SELECT c.description, c.responsibilities_text, c.requirements_text,
+        SELECT c.description,
                COALESCE(c.certifications, '{}') AS certifications,
                COALESCE(c.company_badges, '{}') AS company_badges,
                c.source_search,
@@ -303,8 +311,12 @@ def get_posting(job_id: int):
         ORDER BY ed.level, ed.degree_name
     """, (job_id, job_id))
 
+    sections = split_description_sections(extra.get("description"))
+
     return PostingDetail(
         **{**row, **extra},
+        responsibilities_text=sections["responsibilities"],
+        requirements_text=sections["requirements"],
         qualifications=[Qualification(**q) for q in qualifications],
         qualification_degrees=qualification_degrees,
     )

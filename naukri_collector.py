@@ -34,10 +34,12 @@ import time
 import json
 import random
 import shutil
+from urllib.parse import urlparse
 from datetime import date, datetime, timedelta
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 from skill_taxonomy import extract_skills
-from job_database import save_records, record_scrape_run, check_field_health
+from job_database import (save_records, record_scrape_run, check_field_health,
+                          snapshot_daily_skills)
 
 
 def parse_posted_date(raw: str | None) -> date | None:
@@ -202,13 +204,26 @@ def discover_job_urls(page, search_url: str, limit: int | None = None) -> list[s
     print(f"[discovery] Found {len(cards)} job cards on this page.")
 
     urls = []
+    skipped_off_site = 0
     for card in cards:
         link = card.query_selector("a.title")
         if not link:
             continue
         href = link.get_attribute("href")
-        if href and href not in urls:
-            urls.append(href)
+        if not href or href in urls:
+            continue
+        if "naukri.com" not in urlparse(href).netloc:
+            # A stray off-site href here would mean a scraped page
+            # (title, company, everything) comes from whatever site
+            # that link points at instead of Naukri, extracted with
+            # Naukri's own selectors -- a defensive guard against that,
+            # not a fix for an observed occurrence of this exact path.
+            skipped_off_site += 1
+            continue
+        urls.append(href)
+
+    if skipped_off_site:
+        print(f"[discovery] Skipped {skipped_off_site} off-site link(s) that weren't naukri.com job URLs.")
 
     if limit:
         urls = urls[:limit]
@@ -490,6 +505,12 @@ def main(search_url: str, limit: int | None):
         _log_run(search_url, started_at, finished_at, len(urls), len(records),
                   new_count + repeat_count, field_counts, storage_ok, error_message, disk_warning)
 
+        # Snapshot here, not only in jobmarket.bat — a scrape
+        # started any other way would otherwise never record the day,
+        # and an unsnapshotted day can't be recovered afterwards.
+        if storage_ok:
+            _snapshot_today()
+
         duration = (finished_at - started_at).total_seconds()
         print(f"\nRun took {duration:.0f}s. Scraped {len(records)} of {len(urls)} jobs.")
 
@@ -516,6 +537,19 @@ def _log_run(search_url, started_at, finished_at, postings_found, postings_scrap
             print(f"\n[HEALTH WARNING] Storage failure this run: {error_message}")
     except Exception as e:
         print(f"\n[health tracking failed, not fatal] {e}")
+
+
+def _snapshot_today():
+    """Records today's skill counts. Deliberately loud on failure: this
+    silently raised on every run for three days (a stale column
+    reference after posting_skills moved to skill_ids INT[]) and those
+    days are now unrecoverable, because the snapshot is the only record
+    that a skill was in demand on a given date."""
+    try:
+        written = snapshot_daily_skills()
+        print(f"\nDaily snapshot: recorded {written} skill counts for today.")
+    except Exception as e:
+        print(f"\n[SNAPSHOT FAILED — TODAY'S TRENDS DATA IS LOST AND CANNOT BE REBUILT] {e}")
 
 
 if __name__ == "__main__":

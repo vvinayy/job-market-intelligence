@@ -153,6 +153,16 @@ def test_resolve_locations_none_input():
     assert unmapped == []
 
 
+def test_resolve_locations_strips_parenthetical_locality():
+    # Real fragment seen in production: "Hyderabad( Raidurgam )" —
+    # Naukri appends a locality in parens that must be stripped before
+    # the alias lookup, or the fragment falls through to unmapped.
+    city_map = {"Hyderabad": 1}
+    ids, unmapped = cleaning.resolve_locations("Hyderabad( Raidurgam )", city_map)
+    assert ids == [1]
+    assert unmapped == []
+
+
 # ---------------------------------------------------------------------
 # Skills
 # ---------------------------------------------------------------------
