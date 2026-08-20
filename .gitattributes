@@ -1,0 +1,10 @@
+# Batch files must have CRLF line endings in the working tree. cmd.exe
+# mis-parses LF-only .bat files: `goto` targets stop resolving and
+# multi-line `if (...)` blocks break, and rather than erroring it
+# silently eats the leading characters off lines. This repo has
+# core.autocrlf=input, which would otherwise check these out as LF and
+# reintroduce that bug on every clone.
+*.bat text eol=crlf
+
+# Everything else keeps LF in the repo and is left alone on checkout.
+* text=auto

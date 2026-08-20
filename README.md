@@ -16,7 +16,7 @@ Naukri.com → Playwright scraper → Python cleaning layer (in-process)
 - **Storage** (`job_database.py`) — calls `clean_record()` on every scraped posting and writes straight into `cleaned_postings`, `posting_qualifications`, and `posting_cities`. Skills go through one more step: each normalized skill name is resolved against a `skills` dictionary table (one row per distinct skill, its own `skill_id`), auto-registering any name not seen before. `posting_skills` stores one row per *posting* — `skill_ids INT[]`, GIN-indexed — rather than one row per skill, trading away Postgres's ability to index into the array for aggregation (skill demand, co-occurrence, and the daily snapshot all `unnest()` it at query time) for meaningfully less storage and a simpler single-posting lookup. A skill's category (Frontend/Backend/Database/Cloud-DevOps/Data-ML/Testing/Languages) is seeded from a lookup dict in `cleaning.py` only at the moment it's first registered; after that it lives purely in the `skills` table, so correcting one later is a data edit, not a code change. There is no raw/staging table — nothing scraped is ever stored unprocessed. Dedup is by a fingerprint of company + title + location + experience; a repeat sighting refreshes every field to its latest known value (salary, description, URL — postings do get edited after they go live) while preserving `first_seen_date`. `snapshot_daily_skills()` (SQL, in `trends_setup.sql`) freezes one skill-count-per-day afterward, since `cleaned_postings` itself only ever shows the present.
 - **API** (`api/`) — FastAPI + Pydantic + a psycopg2 connection pool, no ORM. Four routers: `postings` (filtered/paginated search), `reference` (canonical lookups for filter UIs), `analytics` (aggregates), `trends` (time series, movers). Every query is parameterised. Interactive docs at `/docs`.
 - **Dashboard** (`Home.py`, `pages/`, `dash_common.py`) — Streamlit multipage app, Plotly charts. `dash_common.py` is the only file that talks HTTP; every page calls named wrapper functions there, which hit the API and cache results for 5 minutes. Pages have no knowledge of the database schema.
-- **Automation** (`run_daily_scrape.bat`, `start_demo.bat`, Windows Task Scheduler) — daily scrape (cleans and writes as it goes) → snapshot, logged per run. `start_demo.bat` brings up the API and waits for a real health check before starting the dashboard, so nothing races.
+- **Automation** (`jobmarket.bat`, Windows Task Scheduler) — one script for the whole pipeline: daily scrape (cleans and writes as it goes) → snapshot, logged per run, then the API and dashboard. It waits for a real health check before starting the dashboard, so nothing races. `--scrape-only` is the mode Task Scheduler runs; `--skip-scrape` just brings the app up.
 
 ## Project structure
 
@@ -39,8 +39,7 @@ pages/
   3_Trends.py           demand over time, movers, new arrivals
   4_Jobs.py             individual posting search
 dash_common.py           shared API client for every dashboard page
-run_daily_scrape.bat     scheduled scrape (cleans in-process) → snapshot
-start_demo.bat           health-checked launcher: API, then dashboard
+jobmarket.bat            the only launcher: scrape → snapshot → API → dashboard
 ```
 
 ## Setup
@@ -79,7 +78,7 @@ uvicorn api.main:app --reload      # in one terminal
 streamlit run Home.py              # in another
 ```
 
-Or, on Windows, `start_demo.bat` does both — refreshes data, starts the API, waits for a real health check, then starts the dashboard.
+Or, on Windows, `jobmarket.bat` does everything — refreshes data, starts the API, waits for a real health check, then starts the dashboard. Add `--skip-scrape` if today's data is already fresh.
 
 To scrape on demand:
 
@@ -87,4 +86,4 @@ To scrape on demand:
 python naukri_collector.py "https://www.naukri.com/software-engineer-jobs-in-hyderabad" --limit 20
 ```
 
-Each run cleans and writes as it scrapes — no separate cleaning step. Run `SELECT snapshot_daily_skills();` afterward to fold that run into the trend history — `run_daily_scrape.bat` does this automatically for the scheduled searches.
+Each run cleans and writes as it scrapes — no separate cleaning step, and it folds itself into the trend history automatically (the scraper calls `snapshot_daily_skills()` when it finishes, so a manually-started scrape records the day too).
