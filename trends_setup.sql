@@ -29,7 +29,18 @@ INSERT INTO skill_blocklist (skill) VALUES
     ('Monitoring'), ('Debt'), ('Asynchronous'), ('Basic'),
     ('Team Development'), ('Design Development'), ('Application Software'),
     ('Root Cause Analysis'), ('Data Preprocessing'), ('Compliance'),
-    ('Workflow'), ('Scheduling'), ('Analytical'), ('It Services')
+    ('Workflow'), ('Scheduling'), ('Analytical'), ('It Services'),
+    -- Extraction noise: fragments that are ordinary English words, not
+    -- skills. Harmless in a count (1-5 postings each) but actively bad
+    -- for skill_groups, which scans description prose -- "As", "Be",
+    -- "Do", "Min" and "Pre" match constantly inside normal sentences.
+    -- 'C', 'R' and 'Go' are NOT here on purpose: those are real
+    -- languages despite being just as short.
+    ('S'), ('As'), ('Be'), ('Do'), ('Ap'), ('Cg'), ('3m'),
+    ('L1'), ('L2'), ('Min'), ('Pre'), ('Data'),
+    -- Too generic to be an alternative to anything: a posting saying
+    -- "AWS or cloud services" is not offering a choice between them.
+    ('Cloud Services')
 ON CONFLICT (skill) DO NOTHING;
 
 
@@ -68,7 +79,13 @@ BEGIN
         COUNT(DISTINCT c.job_id)
     FROM cleaned_postings c
     JOIN posting_skills ps ON ps.job_id = c.job_id
-    JOIN LATERAL unnest(ps.skill_ids) AS u(skill_id) ON true
+    -- skill_ids holds only the outright requirements; a skill offered
+    -- as one of several alternatives lives in skill_groups and is not
+    -- repeated there. Demand means "this posting would accept AWS",
+    -- so both are counted -- reading skill_ids alone would have cut
+    -- AWS from 207 postings to 149 overnight and made every day after
+    -- today incomparable with every day before it.
+    JOIN LATERAL unnest(ps.skill_ids || skill_group_ids(ps.skill_groups)) AS u(skill_id) ON true
     JOIN skills sk ON sk.skill_id = u.skill_id
     WHERE c.last_seen_date = CURRENT_DATE
     GROUP BY sk.skill_name

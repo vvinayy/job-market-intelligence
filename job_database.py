@@ -138,7 +138,8 @@ INSERT INTO cleaned_postings (
     role_family, seniority_level, role_category_id, naukri_role, industry_type_id, department_id,
     posted_date, posted_raw, openings, applicant_count, applicant_count_qualifier,
     company_rating, company_reviews, company_badges, source_search, certifications,
-    accepted_degree_ids, accepted_degree_specialization_ids, skill_ids, preferred_skill_ids
+    accepted_degree_ids, accepted_degree_specialization_ids, skill_ids, preferred_skill_ids,
+    skill_groups
 ) VALUES %s
 ON CONFLICT (fingerprint) DO UPDATE SET
     url                   = EXCLUDED.url,
@@ -175,6 +176,7 @@ ON CONFLICT (fingerprint) DO UPDATE SET
     accepted_degree_specialization_ids = EXCLUDED.accepted_degree_specialization_ids,
     skill_ids             = EXCLUDED.skill_ids,
     preferred_skill_ids   = EXCLUDED.preferred_skill_ids,
+    skill_groups          = EXCLUDED.skill_groups,
     last_seen_date        = CURRENT_DATE,
     times_seen            = cleaned_postings.times_seen + 1
 RETURNING job_id, fingerprint, (xmax = 0) AS was_inserted;
@@ -196,8 +198,13 @@ def save_records(records: list[dict]) -> tuple[int, int]:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT city_id, city_name FROM cities")
             city_name_to_id = {row["city_name"]: row["city_id"] for row in cur.fetchall()}
+            # Read here rather than hardcoding in cleaning.py: the
+            # blocklist is a data fix (a row someone adds when a generic
+            # term shows up), not a code change.
+            cur.execute("SELECT skill FROM skill_blocklist")
+            skill_blocklist = {row["skill"] for row in cur.fetchall()}
 
-        cleaned = [clean_record(r, city_name_to_id) for r in records]
+        cleaned = [clean_record(r, city_name_to_id, skill_blocklist) for r in records]
 
         # Postgres can't ON CONFLICT DO UPDATE the same row twice inside
         # one statement, so duplicates have to be removed BEFORE the
@@ -300,6 +307,7 @@ def save_records(records: list[dict]) -> tuple[int, int]:
         fingerprint_to_spec_ids = {}
         fingerprint_to_skill_ids = {}
         fingerprint_to_preferred_skill_ids = {}
+        fingerprint_to_skill_groups = {}
         for c in deduped:
             degrees = c["qualification_degrees"]
             degree_ids = sorted({degree_to_id[(d["degree"], d["level"])] for d in degrees})
@@ -309,9 +317,27 @@ def save_records(records: list[dict]) -> tuple[int, int]:
             })
             fingerprint_to_degree_ids[c["posting"]["fingerprint"]] = degree_ids
             fingerprint_to_spec_ids[c["posting"]["fingerprint"]] = spec_ids
-            fingerprint_to_skill_ids[c["posting"]["fingerprint"]] = sorted(skill_name_to_id[s] for s in c["skills"])
+            # Groups arrive as skill NAMES; resolve them to ids first,
+            # because they determine what skill_ids must NOT contain.
+            groups = []
+            for group in c.get("skill_choice_groups", []):
+                ids = sorted({skill_name_to_id[s] for s in group if s in skill_name_to_id})
+                if len(ids) >= 2 and ids not in groups:
+                    groups.append(ids)
+            grouped_ids = {i for g in groups for i in g}
+
+            # skill_ids holds only what the posting requires outright.
+            # A skill offered as one of several alternatives lives in
+            # skill_groups instead and is deliberately NOT repeated here,
+            # so the two columns never state the same skill twice. The
+            # full set is skill_ids || skill_group_ids(skill_groups) --
+            # which is what the daily snapshot and the subset CHECK use.
+            fingerprint_to_skill_ids[c["posting"]["fingerprint"]] = sorted(
+                skill_name_to_id[s] for s in c["skills"]
+                if skill_name_to_id[s] not in grouped_ids)
             fingerprint_to_preferred_skill_ids[c["posting"]["fingerprint"]] = sorted(
                 skill_name_to_id[s] for s in c["preferred_skills"])
+            fingerprint_to_skill_groups[c["posting"]["fingerprint"]] = Json(groups)
 
         rows = [
             (
@@ -334,6 +360,7 @@ def save_records(records: list[dict]) -> tuple[int, int]:
                 fingerprint_to_spec_ids[c["posting"]["fingerprint"]],
                 fingerprint_to_skill_ids[c["posting"]["fingerprint"]],
                 fingerprint_to_preferred_skill_ids[c["posting"]["fingerprint"]],
+                fingerprint_to_skill_groups[c["posting"]["fingerprint"]],
             )
             for c in deduped
         ]
@@ -362,7 +389,10 @@ def save_records(records: list[dict]) -> tuple[int, int]:
                 # constraint too) — cleaning.py already guarantees this by
                 # construction.
                 fingerprint = c["posting"]["fingerprint"]
-                skill_rows.append((job_id, fingerprint_to_skill_ids[fingerprint], fingerprint_to_preferred_skill_ids[fingerprint]))
+                skill_rows.append((job_id,
+                                   fingerprint_to_skill_ids[fingerprint],
+                                   fingerprint_to_preferred_skill_ids[fingerprint],
+                                   fingerprint_to_skill_groups[fingerprint]))
                 qualification_rows += [(job_id, q["level"], q["field_of_study"]) for q in c["qualifications"]]
                 city_rows += [(job_id, city_id) for city_id in c["posting"]["city_ids"]]
 
@@ -382,7 +412,7 @@ def save_records(records: list[dict]) -> tuple[int, int]:
                 cur.execute("DELETE FROM posting_qualification_degrees WHERE job_id = ANY(%s)", (job_ids_touched,))
 
             if skill_rows:
-                execute_values(cur, "INSERT INTO posting_skills (job_id, skill_ids, preferred_skill_ids) VALUES %s", skill_rows)
+                execute_values(cur, "INSERT INTO posting_skills (job_id, skill_ids, preferred_skill_ids, skill_groups) VALUES %s", skill_rows)
             if qualification_rows:
                 execute_values(cur, "INSERT INTO posting_qualifications (job_id, level, field_of_study) VALUES %s", qualification_rows)
             if city_rows:

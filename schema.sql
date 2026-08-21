@@ -131,6 +131,17 @@ CREATE TABLE industry_types (
     name               TEXT NOT NULL UNIQUE
 );
 
+-- Flattens skill_groups ([[1,2],[3,4]]) to a plain INT[] so it can be
+-- unioned with skill_ids. IMMUTABLE so a CHECK constraint may call it —
+-- CHECK cannot contain a subquery, which is why this is a function and
+-- not inline SQL. Defined before the tables whose constraints use it.
+CREATE OR REPLACE FUNCTION skill_group_ids(groups JSONB) RETURNS INT[]
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE AS $$
+  SELECT COALESCE(array_agg(DISTINCT v::int), '{}')
+  FROM jsonb_array_elements(groups) g, jsonb_array_elements_text(g) v
+$$;
+
+
 -- Column ORDER here is deliberate and matches the live table: identity
 -- first, then the two things a job description is actually judged on —
 -- education, then skills — then everything else. Postgres cannot
@@ -165,8 +176,32 @@ CREATE TABLE cleaned_postings (
     -- at-a-glance reason. Production computation runs off this table
     -- directly, so every attribute that exists anywhere in this schema
     -- needs to be reachable from cleaned_postings without a join.
+    -- ONLY the skills required outright. A skill the posting offers as
+    -- one of several alternatives is NOT here -- it lives in
+    -- skill_groups instead, so no skill is ever listed twice. The full
+    -- set a posting would accept is therefore
+    --     skill_ids || skill_group_ids(skill_groups)
+    -- and anything meaning "every skill mentioned" must use that union:
+    -- the daily snapshot and the preferred-subset CHECK both do.
     skill_ids                  INT[] NOT NULL DEFAULT '{}',
     preferred_skill_ids        INT[] NOT NULL DEFAULT '{}',
+    -- The alternatives: [[96,476,614],[50,131]] means "any one cloud
+    -- AND any one build tool", not all five.
+    --
+    -- JSONB rather than INT[][] because Postgres multidimensional
+    -- arrays must be rectangular -- groups have different sizes, so
+    -- ARRAY[[96,476,614],[50,131]] is rejected outright. Nesting inside
+    -- skill_ids itself was considered and rejected: it would break
+    -- `= ANY(skill_ids)` everywhere, the GIN index, and the
+    -- preferred_skill_ids <@ skill_ids constraint. Same reasoning as
+    -- preferred_skill_ids, which also annotates a subset from its own
+    -- column rather than nesting.
+    --
+    -- Heuristic (skill_taxonomy.find_skill_choice_groups) -- about three
+    -- in four groups are right. '[]' means none were detected, NOT that
+    -- none exist. Derived purely from `description`, so it can be
+    -- recomputed for every row at any time.
+    skill_groups               JSONB NOT NULL DEFAULT '[]',
     -- Mined from description text via skill_taxonomy.extract_certifications()
     -- — a credential someone holds, a different kind of signal from a
     -- tool/language skill, kept separate from posting_skills rather
@@ -257,7 +292,11 @@ CREATE TABLE cleaned_postings (
     last_seen_date           DATE NOT NULL DEFAULT CURRENT_DATE,
     times_seen                INT NOT NULL DEFAULT 1,
 
-    CONSTRAINT cleaned_postings_preferred_subset_of_skills CHECK (preferred_skill_ids <@ skill_ids)
+    -- Checked against the UNION, not skill_ids alone: a starred skill
+    -- can be one of a choice group (12 rows are), in which case it sits
+    -- in skill_groups rather than skill_ids.
+    CONSTRAINT cleaned_postings_preferred_subset_of_skills
+        CHECK (preferred_skill_ids <@ (skill_ids || skill_group_ids(skill_groups)))
 );
 
 CREATE INDEX IF NOT EXISTS idx_cleaned_postings_description_hash
@@ -327,7 +366,11 @@ CREATE TABLE posting_skills (
     job_id                BIGINT NOT NULL PRIMARY KEY REFERENCES cleaned_postings(job_id) ON DELETE CASCADE,
     skill_ids             INT[]  NOT NULL DEFAULT '{}',
     preferred_skill_ids    INT[]  NOT NULL DEFAULT '{}',
-    CONSTRAINT preferred_skills_subset_of_skills CHECK (preferred_skill_ids <@ skill_ids)
+    -- Mirrored onto cleaned_postings too; see the note there for why
+    -- this is JSONB and not nested inside skill_ids.
+    skill_groups          JSONB  NOT NULL DEFAULT '[]',
+    CONSTRAINT preferred_skills_subset_of_skills
+        CHECK (preferred_skill_ids <@ (skill_ids || skill_group_ids(skill_groups)))
 );
 
 CREATE INDEX IF NOT EXISTS idx_posting_skills_skill_ids ON posting_skills USING GIN (skill_ids);

@@ -22,7 +22,8 @@ import re
 import math
 import hashlib
 
-from skill_taxonomy import SKILL_ALIASES as _TAXONOMY_ALIASES, extract_certifications
+from skill_taxonomy import (SKILL_ALIASES as _TAXONOMY_ALIASES,
+                            extract_certifications, find_skill_choice_groups)
 
 
 NOT_FOUND = "not found"
@@ -832,7 +833,11 @@ def split_description_sections(description: str | None) -> dict[str, str | None]
 # (naukri_collector.py's scrape_job_detail() shape) plus a city-name ->
 # city_id lookup, returns everything needed to write it.
 # =====================================================================
-def clean_record(raw: dict, city_name_to_id: dict[str, int]) -> dict:
+def clean_record(raw: dict, city_name_to_id: dict[str, int],
+                 skill_blocklist: set[str] | None = None) -> dict:
+    """skill_blocklist keeps generic fragments ("Data", "Cloud Services")
+    out of skill_choice_groups. Optional so the pure-function tests can
+    call this without a database; job_database.py passes the real one."""
     experience = _clean(raw.get("experience"))
     salary = _clean(raw.get("salary"))
     exp_min = parse_range_min(experience)
@@ -896,6 +901,9 @@ def clean_record(raw: dict, city_name_to_id: dict[str, int]) -> dict:
         "posting": posting,
         "skills": skills,
         "preferred_skills": preferred_skills,
+        # Names, not ids -- job_database.py resolves them, same as
+        # `skills` above, because the skills dictionary lives there.
+        "skill_choice_groups": find_skill_choice_groups(description, skills, skill_blocklist),
         "qualifications": parse_qualifications(raw.get("education")),
         "qualification_degrees": parse_education_degrees(raw.get("education")),
     }
