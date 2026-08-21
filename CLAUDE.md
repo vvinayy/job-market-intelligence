@@ -136,6 +136,20 @@ on `cleaned_postings` *and* in their own normalized table — production computa
 `cleaned_postings` directly, so a fact that only exists in the normalized table is invisible to it.
 Add new columns to the UPSERT in both places or they go stale on a repeat sighting.
 
+**`skill_ids` and `skill_groups` are DISJOINT, and the union is the real skill set.**
+`skill_ids` holds only what a posting requires outright; a skill it offers as one of several
+alternatives ("AWS, Azure, or GCP") lives in `skill_groups JSONB` — `[[96,476,614]]` — and is
+deliberately *not* repeated in `skill_ids`, so no skill is ever listed twice. Anything meaning
+"every skill this posting involves" must therefore read
+`skill_ids || skill_group_ids(skill_groups)`: the API's `skills` field, both skill filters, the
+`preferred_skill_ids` subset CHECK, and `snapshot_daily_skills()` all do. Reading `skill_ids`
+alone silently drops 58 AWS postings and would have broken trend continuity permanently.
+`skill_group_ids()` is an IMMUTABLE SQL function because a CHECK constraint can't hold a
+subquery. Groups come from `skill_taxonomy.py::find_skill_choice_groups()`, which reads the
+sentence rather than assuming any two cloud names are alternatives — roughly 3 in 4 groups are
+right, `[]` means none were *found*, not that none exist, and it's recomputable from
+`description` at any time.
+
 **Array-column semantics aren't visible from the type.** `skill_ids` on a posting means "all of these
 together" (AND); `accepted_degree_ids` means "any one of these satisfies the requirement" (OR) — same
 `INT[]` type, opposite real-world meaning. The `accepted_` prefix exists specifically to make the OR
