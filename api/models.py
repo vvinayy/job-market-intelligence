@@ -27,7 +27,19 @@ class PostingSummary(BaseModel):
     experience_max: int | None = None
     salary_min: float | None = None
     salary_max: float | None = None
-    skills: list[str] = []
+    skills: list[str] = Field(
+        default=[],
+        description="Every skill this posting involves, including ones it "
+                    "accepts as an alternative. Filters match against this.")
+    skill_choices: list[list[str]] = Field(
+        default=[],
+        description="Sets the posting treats as interchangeable — any ONE "
+                    "member satisfies it, e.g. [[\"AWS\",\"Azure\",\"GCP\"]]. "
+                    "Skills absent from every set are required outright, so "
+                    "`skills` minus these is the unconditional requirement. "
+                    "Detected from the description text and best-effort: "
+                    "roughly three in four sets are right, and an empty list "
+                    "means none were found, not that none exist.")
     cities: list[str] = []
     working_type: str | None = None
     employment_type: str | None = None

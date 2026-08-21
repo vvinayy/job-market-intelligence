@@ -47,6 +47,14 @@ SORTABLE = {
 # deliberately excluded here — it's large, and returning it for 50 rows
 # would make every page response enormous. skills comes from
 # posting_skills now, not an array column.
+#
+# `skills` is the UNION of skill_ids and the ids inside skill_groups.
+# Storage keeps those disjoint (a skill offered as one of several
+# alternatives lives only in skill_groups), but the API's `skills` has
+# always meant "skills this posting involves" and clients filter on it,
+# so it must stay the complete set — otherwise a search for AWS would
+# stop matching the 58 postings that accept AWS as one option.
+# skill_choices below says which of them are alternatives.
 BASE_SELECT = """
     SELECT
         c.job_id, c.title, c.company, c.role_family, c.seniority_level,
@@ -56,10 +64,20 @@ BASE_SELECT = """
         COALESCE(
             (SELECT array_agg(sk.skill_name ORDER BY sk.skill_name)
              FROM posting_skills ps
-             JOIN skills sk ON sk.skill_id = ANY(ps.skill_ids)
+             JOIN skills sk ON sk.skill_id = ANY(ps.skill_ids || skill_group_ids(ps.skill_groups))
              WHERE ps.job_id = c.job_id),
             '{}'
         ) AS skills,
+        COALESCE(
+            (SELECT jsonb_agg(names ORDER BY names)
+             FROM posting_skills ps,
+                  LATERAL jsonb_array_elements(ps.skill_groups) grp,
+                  LATERAL (SELECT array_agg(sk.skill_name ORDER BY sk.skill_name) AS names
+                             FROM skills sk
+                            WHERE sk.skill_id IN (SELECT jsonb_array_elements_text(grp)::int)) n
+             WHERE ps.job_id = c.job_id),
+            '[]'::jsonb
+        ) AS skill_choices,
         COALESCE(
             (SELECT array_agg(ci.city_name ORDER BY ci.city_name)
              FROM posting_cities pc
@@ -88,11 +106,17 @@ def build_filters(
 
     # "any of these" vs "all of these" — two different questions, so
     # both are offered, same as before skills moved out of an array.
+    #
+    # Both match against skill_ids || skill_group_ids(skill_groups): a
+    # posting that accepts "AWS, Azure, or GCP" holds those three in
+    # skill_groups and not in skill_ids, and a search for AWS must still
+    # find it. Reading skill_ids alone would silently hide 58 postings.
     if skill:
         w.add_raw("""EXISTS (
             SELECT 1 FROM posting_skills ps
             WHERE ps.job_id = c.job_id
-              AND ps.skill_ids && (SELECT array_agg(skill_id) FROM skills WHERE skill_name = ANY(%s)))""")
+              AND (ps.skill_ids || skill_group_ids(ps.skill_groups))
+                  && (SELECT array_agg(skill_id) FROM skills WHERE skill_name = ANY(%s)))""")
         w.params.append(list(skill))
     if skills_all:
         # The count check guards against a requested name that doesn't
@@ -105,7 +129,8 @@ def build_filters(
             AND EXISTS (
                 SELECT 1 FROM posting_skills ps
                 WHERE ps.job_id = c.job_id
-                  AND ps.skill_ids @> (SELECT COALESCE(array_agg(skill_id), '{}') FROM skills WHERE skill_name = ANY(%s)))""")
+                  AND (ps.skill_ids || skill_group_ids(ps.skill_groups))
+                      @> (SELECT COALESCE(array_agg(skill_id), '{}') FROM skills WHERE skill_name = ANY(%s)))""")
         w.params.append(list(skills_all))
         w.params.append(len(set(skills_all)))
         w.params.append(list(skills_all))

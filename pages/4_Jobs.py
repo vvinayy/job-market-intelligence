@@ -173,8 +173,23 @@ if selected_rows:
 
         if detail.get("skills"):
             preferred = set(detail.get("preferred_skills") or [])
-            formatted = [f"⭐ {s}" if s in preferred else s for s in detail["skills"]]
-            st.markdown("**Skills:** " + ", ".join(formatted))
+            star = lambda s: f"⭐ {s}" if s in preferred else s
+
+            # Skills the posting treats as interchangeable are shown as
+            # their own "any one of" line rather than mixed in with the
+            # rest — listing them together is what made a posting look
+            # like it wanted AWS *and* Azure *and* GCP.
+            choices = detail.get("skill_choices") or []
+            in_a_choice = {s for group in choices for s in group}
+            required = [s for s in detail["skills"] if s not in in_a_choice]
+
+            if required:
+                st.markdown("**Skills required:** " + ", ".join(star(s) for s in required))
+            for group in choices:
+                st.markdown("**Any one of:** " + " / ".join(star(s) for s in group))
+            if choices:
+                st.caption("Alternatives are detected from the description text — best effort, "
+                           "so treat them as a hint rather than the final word.")
             if preferred:
                 st.caption("⭐ = marked as a preferred skill by the employer")
 

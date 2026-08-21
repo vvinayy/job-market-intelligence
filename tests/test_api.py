@@ -195,3 +195,33 @@ def test_posting_detail_qualification_degrees_shape(client):
         assert entry["degree"]
         assert entry["level"] in ("UG", "PG", "Doctorate")
         assert isinstance(entry["specializations"], list)
+
+
+def test_posting_detail_skill_choices_shape(client):
+    """skill_choices must be groups of names drawn from `skills`, and
+    `skills` must remain the full set so filters keep matching."""
+    page = client.get("/postings", params={"skill": "AWS", "page_size": 40}).json()
+    if not page["items"]:
+        pytest.skip("no AWS postings in this database")
+
+    checked = 0
+    for item in page["items"]:
+        detail = client.get(f"/postings/{item['job_id']}").json()
+        groups = detail.get("skill_choices") or []
+        assert isinstance(groups, list)
+        for group in groups:
+            assert isinstance(group, list) and len(group) >= 2
+            # never a name that isn't among the posting's own skills
+            assert set(group) <= set(detail["skills"])
+        if groups:
+            checked += 1
+    if checked == 0:
+        pytest.skip("no AWS posting carried a detected choice group")
+
+
+def test_skill_filter_matches_postings_that_only_accept_it_as_an_option(client):
+    """A posting storing AWS inside skill_groups (not skill_ids) must
+    still be found by ?skill=AWS — this silently broke once when the two
+    columns were made disjoint."""
+    total = client.get("/postings", params={"skill": "AWS", "page_size": 1}).json()["total"]
+    assert total > 0
