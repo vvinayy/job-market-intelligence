@@ -171,6 +171,28 @@ class SkillSuggestion(BaseModel):
     share_pct: float
 
 
+class SkillChoice(BaseModel):
+    """One set of skills employers treat as interchangeable — a posting
+    carrying this set wants any ONE of them, not all."""
+    skills: list[str]
+    postings: int
+
+
+class SkillFlexibility(BaseModel):
+    """How negotiable a skill is. `required` counts postings that ask for
+    it outright; `alternative` counts those that would equally accept
+    something else instead. A high negotiable_pct means employers care
+    about the capability more than this specific tool."""
+    skill: str
+    required: int
+    alternative: int
+    total: int
+    negotiable_pct: float
+    swaps: list[str] = Field(
+        default=[],
+        description="Skills seen offered in place of this one, most common first.")
+
+
 # ---------------------------------------------------------------------
 # Trends
 # ---------------------------------------------------------------------

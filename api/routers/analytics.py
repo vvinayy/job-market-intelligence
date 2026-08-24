@@ -12,6 +12,7 @@ from ..database import fetch_all, fetch_one, fetch_value, WhereBuilder
 from ..models import (
     Summary, Bucket, SkillPair, SkillSuggestion, NamedCount,
     ScrapeHealthReport, ScrapeRunSummary, FieldHealthWarning,
+    SkillChoice, SkillFlexibility,
 )
 from job_database import check_field_health
 
@@ -382,3 +383,84 @@ def scrape_health(lookback: int = Query(20, ge=1, le=100)):
         warnings=[FieldHealthWarning(**w) for w in warnings],
         recent_runs=[ScrapeRunSummary(**r) for r in runs],
     )
+
+
+# ---------------------------------------------------------------------
+# Skill choices — the one thing skill_groups makes answerable that
+# nothing else in this API can. Everywhere else treats a posting's
+# skills as a flat list of requirements; these two endpoints separate
+# "you must know X" from "X, or something like it, is fine".
+# ---------------------------------------------------------------------
+@router.get("/skill-choices", response_model=list[SkillChoice],
+            summary="Skill sets employers treat as interchangeable")
+def skill_choices(
+    limit: int = Query(20, ge=1, le=200),
+    min_postings: int = Query(2, ge=1,
+        description="Drop one-off sets; raise for only well-established swaps"),
+):
+    # jsonb_array_elements expands one row per group, then the ids inside
+    # each group are resolved to names and re-joined into a stable label
+    # so identical sets aggregate together regardless of id order.
+    return fetch_all("""
+        SELECT names AS skills, COUNT(*)::int AS postings
+        FROM (
+            SELECT (SELECT array_agg(sk.skill_name ORDER BY sk.skill_name)
+                      FROM skills sk
+                     WHERE sk.skill_id IN (SELECT jsonb_array_elements_text(grp)::int)) AS names
+            FROM cleaned_postings c, LATERAL jsonb_array_elements(c.skill_groups) grp
+        ) t
+        WHERE names IS NOT NULL
+        GROUP BY names
+        HAVING COUNT(*) >= %s
+        ORDER BY postings DESC, names
+        LIMIT %s
+    """, (min_postings, limit))
+
+
+@router.get("/skill-flexibility", response_model=list[SkillFlexibility],
+            summary="How negotiable each skill is")
+def skill_flexibility(
+    limit: int = Query(25, ge=1, le=200),
+    min_postings: int = Query(5, ge=1),
+):
+    """Splits each skill's demand into 'asked for outright' versus
+    'would accept a substitute'. Only skills that appear in at least one
+    choice group can score above zero, so the list is naturally ranked
+    toward tools with real competitors."""
+    return fetch_all("""
+        WITH per_skill AS (
+            SELECT sk.skill_id, sk.skill_name,
+                   COUNT(*) FILTER (WHERE sk.skill_id = ANY(c.skill_ids))                     AS required,
+                   COUNT(*) FILTER (WHERE sk.skill_id = ANY(skill_group_ids(c.skill_groups))) AS alternative
+            FROM cleaned_postings c
+            JOIN skills sk ON sk.skill_id = ANY(c.skill_ids || skill_group_ids(c.skill_groups))
+            WHERE sk.skill_name NOT IN (SELECT skill FROM skill_blocklist)
+            GROUP BY sk.skill_id, sk.skill_name
+        ),
+        -- What each skill is actually swapped with: every other member
+        -- of a group it appears in, most frequently paired first.
+        swaps AS (
+            SELECT a.skill_id,
+                   array_agg(b.skill_name ORDER BY b.n DESC, b.skill_name) AS swaps
+            FROM (SELECT DISTINCT sk.skill_id FROM skills sk) a
+            JOIN LATERAL (
+                SELECT other.skill_name, COUNT(*) AS n
+                FROM cleaned_postings c, LATERAL jsonb_array_elements(c.skill_groups) grp
+                JOIN skills other ON other.skill_id IN (SELECT jsonb_array_elements_text(grp)::int)
+                WHERE a.skill_id IN (SELECT jsonb_array_elements_text(grp)::int)
+                  AND other.skill_id <> a.skill_id
+                GROUP BY other.skill_name
+            ) b ON true
+            GROUP BY a.skill_id
+        )
+        SELECT p.skill_name AS skill,
+               p.required::int, p.alternative::int,
+               (p.required + p.alternative)::int AS total,
+               ROUND(100.0 * p.alternative / NULLIF(p.required + p.alternative, 0), 1)::float AS negotiable_pct,
+               COALESCE(s.swaps, '{}') AS swaps
+        FROM per_skill p
+        LEFT JOIN swaps s ON s.skill_id = p.skill_id
+        WHERE (p.required + p.alternative) >= %s AND p.alternative > 0
+        ORDER BY negotiable_pct DESC, total DESC
+        LIMIT %s
+    """, (min_postings, limit))

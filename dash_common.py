@@ -125,6 +125,19 @@ def co_occurrence(top_n: int = 20, min_together: int = 1) -> pd.DataFrame:
               (("top_skills", top_n), ("min_together", min_together), ("limit", 500)))
 
 
+def skill_choices(limit: int = 15, min_postings: int = 2) -> pd.DataFrame:
+    """Sets of skills employers treat as interchangeable. Distinct from
+    co_occurrence(): that shows skills wanted TOGETHER, this shows skills
+    offered INSTEAD of each other."""
+    return df("/analytics/skill-choices",
+              (("limit", limit), ("min_postings", min_postings)))
+
+
+def skill_flexibility(limit: int = 15, min_postings: int = 5) -> pd.DataFrame:
+    return df("/analytics/skill-flexibility",
+              (("limit", limit), ("min_postings", min_postings)))
+
+
 def role_distribution(**filters) -> pd.DataFrame:
     data = df("/analytics/roles", tuple(_filter_params(filters)))
     return data.rename(columns={"bucket": "role"}) if not data.empty else data

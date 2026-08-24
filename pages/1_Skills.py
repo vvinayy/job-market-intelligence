@@ -9,7 +9,8 @@ import dash_common as dc
 st.set_page_config(page_title="Skills", layout="wide", page_icon="◎")
 st.title("Skills")
 
-tab1, tab2, tab3, tab4 = st.tabs(["Demand", "Pairings", "By experience level", "By category"])
+tab1, tab2, tab5, tab3, tab4 = st.tabs(
+    ["Demand", "Pairings", "Interchangeable", "By experience level", "By category"])
 
 
 with tab1:
@@ -81,6 +82,62 @@ with tab2:
                               xaxis_title=None, yaxis_title=None, **dc.TRANSPARENT)
         st.plotly_chart(heatmap, use_container_width=True)
         st.caption("Darker cells mean the two skills are more often requested together. The diagonal (a skill against itself) is always empty.")
+
+
+with tab5:
+    # The counterpart to "Pairings": that tab shows skills wanted
+    # TOGETHER, this one shows skills accepted INSTEAD of each other.
+    st.write("Skills employers treat as swappable — a posting asking for one of these "
+             "would take any of the others.")
+
+    choices = dc.skill_choices(limit=15, min_postings=2)
+    flex = dc.skill_flexibility(limit=15, min_postings=5)
+
+    if choices.empty:
+        st.info("No interchangeable sets detected yet.")
+    else:
+        choices["set"] = choices["skills"].apply(lambda s: " / ".join(s))
+        fig = px.bar(choices.sort_values("postings"), x="postings", y="set",
+                     orientation="h", text="postings",
+                     color="postings", color_continuous_scale=dc.SCALE)
+        fig.update_traces(textposition="outside", cliponaxis=False)
+        fig.update_layout(height=max(340, len(choices) * 30),
+                          margin=dict(l=0, r=40, t=10, b=0), coloraxis_showscale=False,
+                          xaxis_title="postings offering this choice", yaxis_title=None,
+                          **dc.TRANSPARENT)
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption("Read as 'any one of these will do'. Detected from the wording of each "
+                   "description, so treat it as a strong hint rather than a guarantee — "
+                   "roughly one set in four is wrong.")
+
+    if not flex.empty:
+        st.divider()
+        st.subheader("How negotiable is each skill?")
+        st.write("Of the postings wanting a skill, the share that would equally accept "
+                 "something else. High means employers care about the capability more "
+                 "than the specific tool.")
+
+        flex["swaps_label"] = flex["swaps"].apply(lambda s: ", ".join(s[:3]) if len(s) else "-")
+        fig2 = px.bar(flex.sort_values("negotiable_pct"), x="negotiable_pct", y="skill",
+                      orientation="h", text="negotiable_pct",
+                      color="negotiable_pct", color_continuous_scale=dc.SCALE,
+                      hover_data={"required": True, "alternative": True, "swaps_label": True})
+        fig2.update_traces(texttemplate="%{text:.0f}%", textposition="outside", cliponaxis=False)
+        fig2.update_layout(height=max(340, len(flex) * 30),
+                           margin=dict(l=0, r=50, t=10, b=0), coloraxis_showscale=False,
+                           xaxis_title="% of demand that would accept a substitute",
+                           yaxis_title=None, **dc.TRANSPARENT)
+        st.plotly_chart(fig2, use_container_width=True)
+
+        st.dataframe(
+            flex[["skill", "required", "alternative", "negotiable_pct", "swaps_label"]]
+                .rename(columns={"required": "asked for outright",
+                                 "alternative": "would accept a swap",
+                                 "negotiable_pct": "negotiable %",
+                                 "swaps_label": "usually swapped with"}),
+            use_container_width=True, hide_index=True)
+        st.caption("Only skills that appear in at least one choice set can score above zero, "
+                   "so a skill missing here was never offered as an alternative to anything.")
 
 
 with tab3:
