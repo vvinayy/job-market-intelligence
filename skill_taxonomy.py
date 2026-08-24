@@ -111,6 +111,9 @@ SKILL_ALIASES = {
     "Nginx": ["nginx"],
     "Kafka": ["kafka", "apache kafka"],
     "RabbitMQ": ["rabbitmq"],
+    # Missed until a posting listed "Redis, Celery, Kafka, or microservices
+    # architecture" and the detector built the choice set without it.
+    "Celery": ["celery"],
     "Airflow": ["airflow", "apache airflow"],
     "Spark": ["spark", "apache spark", "pyspark"],
     "Hadoop": ["hadoop"],

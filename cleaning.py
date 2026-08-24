@@ -225,6 +225,12 @@ SKILL_CATEGORIES = {
     ".NET Core": "Backend", "ASP.NET": "Backend", "Entity Framework": "Backend", "MVC": "Backend",
     "LINQ": "Backend", "Web API": "Backend", "REST API": "Backend", "GraphQL": "Backend",
     "gRPC": "Backend", "Microservices": "Backend", "API": "Backend", "SDK": "Backend",
+    # Message brokers and task queues are backend plumbing, not devops tooling.
+    # RabbitMQ sat under Cloud/DevOps and so disagreed with Kafka on the three
+    # postings that offer the two as alternatives ("messaging systems such as
+    # Kafka or RabbitMQ"). Kafka stays Data/ML: it earns that placement through
+    # pipeline use alongside Airflow and Spark, which RabbitMQ never has.
+    "RabbitMQ": "Backend", "Celery": "Backend",
 
     # Database
     "PostgreSQL": "Database", "MySQL": "Database", "MongoDB": "Database", "Redis": "Database",
@@ -236,7 +242,7 @@ SKILL_CATEGORIES = {
     "S3": "Cloud/DevOps", "EC2": "Cloud/DevOps", "Docker": "Cloud/DevOps", "Kubernetes": "Cloud/DevOps",
     "Terraform": "Cloud/DevOps", "Ansible": "Cloud/DevOps", "Jenkins": "Cloud/DevOps",
     "CI/CD": "Cloud/DevOps", "Git": "Cloud/DevOps", "GitHub": "Cloud/DevOps", "GitLab": "Cloud/DevOps",
-    "Linux": "Cloud/DevOps", "Nginx": "Cloud/DevOps", "RabbitMQ": "Cloud/DevOps", "DevOps": "Cloud/DevOps",
+    "Linux": "Cloud/DevOps", "Nginx": "Cloud/DevOps", "DevOps": "Cloud/DevOps",
     "Grafana": "Cloud/DevOps", "AKS": "Cloud/DevOps", "Containerization": "Cloud/DevOps",
     "Version Control": "Cloud/DevOps",
 
