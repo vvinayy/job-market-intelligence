@@ -72,19 +72,6 @@ def make_fingerprint(company: str | None, title: str | None,
     return hashlib.sha256(combined.encode()).hexdigest()
 
 
-def make_description_hash(description: str | None) -> str | None:
-    """Groups postings that share the same underlying description text
-    even when posted under different companies/fingerprints — common on
-    Naukri when several staffing agencies repost the exact same vacancy.
-    Not fuzzy matching, just exact-text-after-normalizing — genuinely
-    reworded reposts won't be caught, only verbatim copies. Returns None
-    for an empty description rather than hashing an empty string, so
-    postings with no description don't all collide into one fake group."""
-    if not description:
-        return None
-    return hashlib.sha256(_normalize_for_fingerprint(description).encode()).hexdigest()
-
-
 # =====================================================================
 # SKILL NORMALIZATION — ported from skill_aliases.
 # =====================================================================
@@ -884,7 +871,6 @@ def clean_record(raw: dict, city_name_to_id: dict[str, int],
         "title": title,
         "company": company,
         "description": description,
-        "description_hash": make_description_hash(description),
         "experience_min": _round_half_up(exp_min) if exp_min is not None else None,
         "experience_max": _round_half_up(exp_max) if exp_max is not None else None,
         "salary_min": parse_range_min(salary),

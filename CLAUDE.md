@@ -326,11 +326,21 @@ wrong company) rather than a caught error.
 
 ## Known open items
 
-- **`description_hash` cross-company anomaly.** One group of 5 postings (2 companies, 2
+- **Cross-company duplicate-description anomaly.** One group of 5 postings (2 companies, 2
   unrelated titles — Cisco "Software Engineer" and Fractal Analytics "Full stack Developer")
   shares identical, unrelated description text (an "IoT Intern / Drone Technology / Indore"
-  JD that matches neither posting). The other 9 duplicate-description groups in the DB are
-  legitimate same-company reposts, so this looks like a rare glitch rather than a systemic
-  bug, but root cause is unconfirmed — Naukri 403s non-browser requests (confirmed via
-  WebFetch), so verifying live needs an actual headed Playwright run against one of the
-  affected URLs, which hasn't been done yet.
+  JD that matches neither posting). The other duplicate-description groups are legitimate
+  same-company reposts, so this looks like a rare glitch rather than a systemic bug, but
+  root cause is unconfirmed — Naukri 403s non-browser requests (confirmed via WebFetch), so
+  verifying live needs an actual headed Playwright run against one of the affected URLs,
+  which hasn't been done yet. Find the group with:
+
+  ```sql
+  SELECT md5(description), COUNT(*), COUNT(DISTINCT company) FROM cleaned_postings
+   WHERE description IS NOT NULL GROUP BY 1 HAVING COUNT(DISTINCT company) > 1;
+  ```
+
+  There is no `description_hash` column — it was dropped once it was clear dedup runs off
+  `fingerprint` and the hash only ever served this one ad-hoc query, whose index was never
+  scanned. Postgres cannot btree-index `description` directly (rows exceed the 2704-byte
+  limit), so index `md5(description)` as an expression if this ever needs to be fast.

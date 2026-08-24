@@ -30,18 +30,6 @@ def test_fingerprint_changes_with_experience():
     assert a != b
 
 
-def test_description_hash_none_for_empty():
-    assert cleaning.make_description_hash(None) is None
-    assert cleaning.make_description_hash("") is None
-
-
-def test_description_hash_deterministic():
-    a = cleaning.make_description_hash("We are looking for a Python developer.")
-    b = cleaning.make_description_hash("We are looking for a Python developer.")
-    assert a == b
-    assert a is not None
-
-
 # ---------------------------------------------------------------------
 # Seniority — priority ordering is the part most likely to regress
 # silently if a new pattern is added carelessly.

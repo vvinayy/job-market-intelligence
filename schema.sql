@@ -248,18 +248,22 @@ CREATE TABLE cleaned_postings (
     industry_type_id         INT REFERENCES industry_types(industry_type_id),
 
     description            TEXT,
-    -- Exact-match hash of the normalized description text — not fuzzy —
-    -- so postings sharing verbatim JD text (common when several
-    -- staffing agencies repost the same vacancy) can be grouped:
-    -- SELECT description_hash FROM cleaned_postings
-    --   GROUP BY description_hash HAVING COUNT(DISTINCT company) > 1
+    -- NOTE: description_hash used to sit here. Deduplication is by
+    -- `fingerprint` (company + title + location + experience), so the
+    -- hash never distinguished a posting from another -- it only sped up
+    -- the ad-hoc "which postings share verbatim JD text" query, whose
+    -- index was never once scanned. That query still works without it:
+    --   SELECT md5(description) FROM cleaned_postings
+    --     GROUP BY 1 HAVING COUNT(DISTINCT company) > 1
+    -- Postgres cannot btree-index `description` directly (rows exceed the
+    -- 2704-byte limit), so if it ever needs an index again, index
+    -- md5(description) as an expression rather than storing a column.
     -- NOTE: responsibilities_text / requirements_text used to sit here.
     -- They are a pure function of `description` (cleaning.py::
     -- split_description_sections), verified byte-identical on every row,
     -- so storing them cost ~24% of the table to duplicate text already
     -- present in the column above. The API computes them per posting at
     -- read time instead. Don't re-add them as columns.
-    description_hash       TEXT,
 
     posted_date               DATE,
     posted_raw                TEXT,
@@ -303,8 +307,6 @@ CREATE TABLE cleaned_postings (
         CHECK (preferred_skill_ids <@ (skill_ids || skill_group_ids(skill_groups)))
 );
 
-CREATE INDEX IF NOT EXISTS idx_cleaned_postings_description_hash
-    ON cleaned_postings (description_hash);
 CREATE INDEX IF NOT EXISTS idx_cleaned_postings_accepted_degree_ids
     ON cleaned_postings USING GIN (accepted_degree_ids);
 CREATE INDEX IF NOT EXISTS idx_cleaned_postings_accepted_degree_specialization_ids

@@ -132,7 +132,7 @@ def get_connection():
 # narrower SET clause would silently go stale on every repeat sighting.
 UPSERT_SQL = """
 INSERT INTO cleaned_postings (
-    fingerprint, url, title, company, description, description_hash,
+    fingerprint, url, title, company, description,
     experience_min, experience_max, salary_min, salary_max,
     city_ids, unmapped_locations, working_type, is_full_time, contract_type,
     role_family, seniority_level, role_category_id, naukri_role, industry_type_id, department_id,
@@ -146,7 +146,6 @@ ON CONFLICT (fingerprint) DO UPDATE SET
     title                 = EXCLUDED.title,
     company               = EXCLUDED.company,
     description           = EXCLUDED.description,
-    description_hash      = EXCLUDED.description_hash,
     experience_min        = EXCLUDED.experience_min,
     experience_max        = EXCLUDED.experience_max,
     salary_min            = EXCLUDED.salary_min,
@@ -342,7 +341,7 @@ def save_records(records: list[dict]) -> tuple[int, int]:
         rows = [
             (
                 c["posting"]["fingerprint"], c["posting"]["url"], c["posting"]["title"],
-                c["posting"]["company"], c["posting"]["description"], c["posting"]["description_hash"],
+                c["posting"]["company"], c["posting"]["description"],
                 c["posting"]["experience_min"], c["posting"]["experience_max"],
                 c["posting"]["salary_min"], c["posting"]["salary_max"],
                 c["posting"]["city_ids"], c["posting"]["unmapped_locations"],
