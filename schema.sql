@@ -307,6 +307,15 @@ CREATE INDEX IF NOT EXISTS idx_cleaned_postings_accepted_degree_specialization_i
     ON cleaned_postings USING GIN (accepted_degree_specialization_ids);
 CREATE INDEX IF NOT EXISTS idx_cleaned_postings_skill_ids
     ON cleaned_postings USING GIN (skill_ids);
+-- Two indexes because the two query shapes need different opclasses:
+-- the expression index answers "does this posting offer skill 96 as an
+-- option" (= ANY / &&), the jsonb_path_ops one answers "which postings
+-- offer exactly this SET" (@>). The expression index is only possible
+-- because skill_group_ids() is IMMUTABLE.
+CREATE INDEX IF NOT EXISTS idx_cleaned_postings_skill_group_ids
+    ON cleaned_postings USING GIN (skill_group_ids(skill_groups));
+CREATE INDEX IF NOT EXISTS idx_cleaned_postings_skill_groups
+    ON cleaned_postings USING GIN (skill_groups jsonb_path_ops);
 
 
 -- ---------------------------------------------------------------------
@@ -374,6 +383,8 @@ CREATE TABLE posting_skills (
 );
 
 CREATE INDEX IF NOT EXISTS idx_posting_skills_skill_ids ON posting_skills USING GIN (skill_ids);
+CREATE INDEX IF NOT EXISTS idx_posting_skills_skill_group_ids
+    ON posting_skills USING GIN (skill_group_ids(skill_groups));
 
 
 -- ---------------------------------------------------------------------

@@ -225,3 +225,22 @@ def test_skill_filter_matches_postings_that_only_accept_it_as_an_option(client):
     columns were made disjoint."""
     total = client.get("/postings", params={"skill": "AWS", "page_size": 1}).json()["total"]
     assert total > 0
+
+
+def test_skill_filter_matches_both_required_and_alternative(client):
+    """The ?skill= filter tests skill_ids and skill_group_ids separately
+    and ORs them, rather than concatenating the two arrays -- the
+    concatenated form cannot use either GIN index and made this filter
+    4x slower. Both forms must return the SAME postings, so this pins the
+    behaviour: the total must equal required-only plus alternative-only,
+    with no double counting and nothing dropped.
+    """
+    total = client.get("/postings", params={"skill": "AWS", "page_size": 1}).json()["total"]
+    if total == 0:
+        pytest.skip("no AWS postings in this database")
+
+    # Every returned posting must actually involve AWS somewhere -- either
+    # required outright, or inside one of its choice groups.
+    page = client.get("/postings", params={"skill": "AWS", "page_size": 50}).json()
+    for item in page["items"]:
+        assert "AWS" in item["skills"], f"job {item['job_id']} matched but has no AWS"
