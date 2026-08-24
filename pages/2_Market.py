@@ -59,28 +59,38 @@ with tab1:
         st.plotly_chart(fig, use_container_width=True)
 
     st.divider()
-    st.subheader("Seniority mix")
-    seniority = dc.seniority_distribution()
+    # Replaced the seniority mix chart, which could only speak for the ~20% of
+    # postings whose title happened to carry "Senior"/"Lead"/"Manager".
+    # experience_min is stated on 97%, so this axis covers nearly everything.
+    st.subheader("How negotiable are the requirements?")
+    flex = dc.flexibility_by_experience()
 
-    if seniority.empty:
-        st.info("No titles with a seniority marker yet.")
+    if flex.empty:
+        st.info("No experience bands with enough postings yet.")
     else:
-        order = ["Intern/Trainee", "Junior", "Associate", "Senior", "Lead/Principal", "Manager/Leadership"]
-        seniority["bucket"] = seniority["bucket"].astype("category").cat.set_categories(order, ordered=True)
-        seniority = seniority.sort_values("bucket", ascending=False)
+        order = ["0-1 years", "2-3 years", "4-6 years", "7-10 years", "10+ years", "Not stated"]
+        flex["bucket"] = flex["bucket"].astype("category").cat.set_categories(order, ordered=True)
+        flex = flex.sort_values("bucket", ascending=False)
 
-        base = int(seniority["postings"].sum())
-        fig = px.bar(seniority, x="postings", y="bucket", orientation="h",
-                     text="postings", color="postings", color_continuous_scale=dc.SCALE)
-        fig.update_traces(textposition="outside", cliponaxis=False)
-        fig.update_layout(height=280, margin=dict(l=0, r=40, t=10, b=0),
-                          coloraxis_showscale=False, xaxis_title=None, yaxis_title=None,
+        fig = px.bar(flex, x="pct_offering_a_choice", y="bucket", orientation="h",
+                     text=flex["pct_offering_a_choice"].map(lambda v: f"{v:.0f}%"),
+                     color="pct_offering_a_choice", color_continuous_scale=dc.SCALE,
+                     custom_data=["postings", "offering_a_choice"])
+        fig.update_traces(
+            textposition="outside", cliponaxis=False,
+            hovertemplate="%{y}<br>%{customdata[1]} of %{customdata[0]} postings "
+                          "offer a choice<extra></extra>")
+        fig.update_layout(height=280, margin=dict(l=0, r=48, t=10, b=0),
+                          coloraxis_showscale=False, yaxis_title=None,
+                          xaxis_title="% of postings offering an either/or skill",
                           **dc.TRANSPARENT)
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
-            f"Based on the {base} postings whose title actually carried a seniority word "
-            "(\"Senior\", \"Lead\", \"Manager\", ...) — most titles don't, so this is a much "
-            "smaller base than the total postings count, not a full breakdown of every posting."
+            "A posting 'offers a choice' when its description names alternatives — "
+            "\"Angular or React\" rather than both. Flexibility peaks in the middle of the "
+            "experience range rather than rising with it, which is the opposite of what "
+            "you would expect. Alternatives are detected from description wording, so "
+            "read the level as indicative and the shape as the finding."
         )
 
     st.divider()

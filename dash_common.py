@@ -151,6 +151,12 @@ def seniority_distribution(**filters) -> pd.DataFrame:
     return df("/analytics/seniority", tuple(_filter_params(filters)))
 
 
+def flexibility_by_experience(**filters) -> pd.DataFrame:
+    """Share of postings in each experience band that offer an either/or skill
+    rather than naming everything outright."""
+    return df("/analytics/flexibility-by-experience", tuple(_filter_params(filters)))
+
+
 def location_distribution(by: str = "city", limit: int = 30, **filters) -> pd.DataFrame:
     params = [("by", by), ("limit", limit)] + _filter_params(filters)
     return df("/analytics/locations", tuple(params))

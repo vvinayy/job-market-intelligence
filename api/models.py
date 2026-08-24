@@ -178,6 +178,16 @@ class SkillChoice(BaseModel):
     postings: int
 
 
+class ExperienceFlexibility(BaseModel):
+    """How willing postings in one experience band are to accept a substitute
+    skill. `offering_a_choice` counts postings with at least one either/or set;
+    the rest name every skill outright."""
+    bucket: str
+    postings: int
+    offering_a_choice: int
+    pct_offering_a_choice: float
+
+
 class SkillFlexibility(BaseModel):
     """How negotiable a skill is. `required` counts postings that ask for
     it outright; `alternative` counts those that would equally accept

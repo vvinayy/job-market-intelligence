@@ -12,7 +12,7 @@ from ..database import fetch_all, fetch_one, fetch_value, WhereBuilder
 from ..models import (
     Summary, Bucket, SkillPair, SkillSuggestion, NamedCount,
     ScrapeHealthReport, ScrapeRunSummary, FieldHealthWarning,
-    SkillChoice, SkillFlexibility,
+    SkillChoice, SkillFlexibility, ExperienceFlexibility,
 )
 from job_database import check_field_health
 
@@ -476,3 +476,37 @@ def skill_flexibility(
         ORDER BY negotiable_pct DESC, total DESC
         LIMIT %s
     """, (min_postings, limit))
+
+
+@router.get("/flexibility-by-experience", response_model=list[ExperienceFlexibility],
+            summary="Willingness to accept a substitute, by experience band")
+def flexibility_by_experience(
+    role_family: list[str] | None = Query(None),
+    city: list[str] | None = Query(None),
+    state: list[str] | None = Query(None),
+):
+    """Shows how often postings in each experience band offer an either/or
+    skill instead of naming one outright. Bands match /analytics/experience so
+    the two charts read against the same axis."""
+    w = scope(role_family, city, state, None, None, None, None)
+    # experience_min covers 97% of postings, so unlike the seniority split this
+    # is a breakdown of nearly everything rather than of a self-selected few.
+    return fetch_all(f"""
+        SELECT
+            CASE
+                WHEN c.experience_min IS NULL THEN 'Not stated'
+                WHEN c.experience_min <= 1  THEN '0-1 years'
+                WHEN c.experience_min <= 3  THEN '2-3 years'
+                WHEN c.experience_min <= 6  THEN '4-6 years'
+                WHEN c.experience_min <= 10 THEN '7-10 years'
+                ELSE '10+ years'
+            END AS bucket,
+            COUNT(*)::int AS postings,
+            COUNT(*) FILTER (WHERE c.skill_groups <> '[]')::int AS offering_a_choice,
+            ROUND(100.0 * COUNT(*) FILTER (WHERE c.skill_groups <> '[]')
+                  / COUNT(*), 1)::float AS pct_offering_a_choice
+        FROM cleaned_postings c {w.sql}
+        GROUP BY bucket
+        HAVING COUNT(*) >= 5
+        ORDER BY pct_offering_a_choice DESC
+    """, w.values)

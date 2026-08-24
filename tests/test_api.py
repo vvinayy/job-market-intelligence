@@ -74,6 +74,8 @@ ANALYTICS_LIST_ENDPOINTS = [
     "/analytics/skills", "/analytics/roles", "/analytics/seniority",
     "/analytics/experience", "/analytics/locations", "/analytics/qualifications",
     "/analytics/skill-categories", "/analytics/openings", "/analytics/co-occurrence",
+    "/analytics/skill-choices", "/analytics/skill-flexibility",
+    "/analytics/flexibility-by-experience",
 ]
 
 
@@ -244,3 +246,21 @@ def test_skill_filter_matches_both_required_and_alternative(client):
     page = client.get("/postings", params={"skill": "AWS", "page_size": 50}).json()
     for item in page["items"]:
         assert "AWS" in item["skills"], f"job {item['job_id']} matched but has no AWS"
+
+
+def test_flexibility_by_experience_bands_match_experience_endpoint(client):
+    """Both endpoints bucket experience_min the same way, so the two charts
+    can be read against one axis. If one set of CASE arms is edited and the
+    other isn't, the bands silently stop lining up."""
+    flex = {row["bucket"] for row in client.get("/analytics/flexibility-by-experience").json()}
+    exp = {row["bucket"] for row in client.get("/analytics/experience").json()}
+    assert flex <= exp, f"bands not in /analytics/experience: {flex - exp}"
+
+
+def test_flexibility_by_experience_counts_are_consistent(client):
+    """offering_a_choice is a subset of postings, and the percentage is
+    derived from the two rather than computed independently."""
+    for row in client.get("/analytics/flexibility-by-experience").json():
+        assert 0 <= row["offering_a_choice"] <= row["postings"]
+        expected = round(100.0 * row["offering_a_choice"] / row["postings"], 1)
+        assert row["pct_offering_a_choice"] == pytest.approx(expected, abs=0.05)

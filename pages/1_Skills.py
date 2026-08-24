@@ -1,4 +1,4 @@
-"""Skills — demand, pairings, seniority split, and category mix."""
+"""Skills — demand, pairings, interchangeable sets, experience split, category mix."""
 
 import pandas as pd
 import streamlit as st
