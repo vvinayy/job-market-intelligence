@@ -182,7 +182,12 @@ def list_working_types():
 @router.get("/employment-types", response_model=list[NamedCount])
 def list_employment_types():
     return fetch_all("""
-        SELECT COALESCE(employment_type, 'Not stated') AS name, COUNT(*)::int AS postings
+        SELECT CASE is_full_time
+                    WHEN TRUE  THEN 'Full Time'
+                    WHEN FALSE THEN 'Part Time'
+                    ELSE 'Not stated'
+               END AS name,
+               COUNT(*)::int AS postings
         FROM cleaned_postings GROUP BY name ORDER BY postings DESC
     """)
 

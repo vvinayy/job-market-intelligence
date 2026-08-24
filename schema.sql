@@ -221,9 +221,13 @@ CREATE TABLE cleaned_postings (
     -- (normalize_working_type / EMPLOYMENT_TYPES / CONTRACT_TYPES), so a
     -- CHECK constraint is enough to guard against a bug in that code; a
     -- reference table would only add a JOIN for a vocabulary this small
-    -- and this unlikely to grow.
+    -- and this unlikely to grow. EMPLOYMENT_TYPES still normalises the
+    -- spellings even though the column below is a boolean -- the collapse
+    -- happens before the True/False decision, not instead of it.
     working_type            TEXT CHECK (working_type IN ('On-site', 'Hybrid', 'Remote')),
-    employment_type         TEXT CHECK (employment_type IN ('Full Time', 'Part Time')),
+    -- Two values and no prospect of a third, so a boolean rather than
+    -- TEXT + CHECK. contract_type stays TEXT: it already carries five.
+    is_full_time            BOOLEAN,
     contract_type           TEXT CHECK (contract_type IN
                                  ('Permanent', 'Contract', 'Temporary', 'Internship', 'Freelance')),
 

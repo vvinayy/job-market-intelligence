@@ -85,7 +85,7 @@ BASE_SELECT = """
              WHERE pc.job_id = c.job_id),
             '{}'
         ) AS cities,
-        c.working_type, c.employment_type, c.contract_type,
+        c.working_type, c.is_full_time, c.contract_type,
         c.posted_date, c.openings, c.applicant_count, c.applicant_count_qualifier,
         c.company_rating, c.company_reviews, c.url
     FROM cleaned_postings c
@@ -98,7 +98,7 @@ BASE_SELECT = """
 def build_filters(
     skill, skills_all, role_family, seniority_level, company, city, state,
     experience_min, experience_max, has_salary, salary_min, salary_max,
-    working_type, employment_type, contract_type, qualification_level,
+    working_type, is_full_time, contract_type, qualification_level,
     posted_after, posted_before, seen_after, search, min_openings,
 ) -> WhereBuilder:
     """Turn optional query parameters into a parameterised WHERE clause."""
@@ -184,8 +184,9 @@ def build_filters(
 
     if working_type:
         w.add("c.working_type = ANY(%s)", list(working_type))
-    if employment_type:
-        w.add("c.employment_type = ANY(%s)", list(employment_type))
+    # Boolean, so a single value rather than the ANY(list) the other two
+    # arrangement filters use -- there is no "either of these" to express.
+    w.add("c.is_full_time = %s", is_full_time)
     if contract_type:
         w.add("c.contract_type = ANY(%s)", list(contract_type))
 
@@ -233,7 +234,8 @@ def list_postings(
 
     # --- arrangement ---
     working_type: list[str] | None = Query(None, description="Remote, Hybrid, On-site"),
-    employment_type: list[str] | None = Query(None, description="Full Time, Part Time"),
+    is_full_time: bool | None = Query(
+        None, description="true for full time, false for part time; omit for both"),
     contract_type: list[str] | None = Query(None, description="Permanent, Contract, Internship"),
     qualification_level: list[str] | None = Query(None, description="e.g. 'UG', 'PG', 'Doctorate'"),
 
@@ -257,7 +259,7 @@ def list_postings(
     w = build_filters(
         skill, skills_all, role_family, seniority_level, company, city, state,
         experience_min, experience_max, has_salary, salary_min, salary_max,
-        working_type, employment_type, contract_type, qualification_level,
+        working_type, is_full_time, contract_type, qualification_level,
         posted_after, posted_before, seen_after, search, min_openings,
     )
 

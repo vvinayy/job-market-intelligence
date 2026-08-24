@@ -353,8 +353,17 @@ def _match_type(raw: str | None, vocabulary: dict[str, str]) -> str | None:
     return None
 
 
-def parse_employment_type(raw: str | None) -> str | None:
-    return _match_type(raw, EMPLOYMENT_TYPES)
+def parse_is_full_time(raw: str | None) -> bool | None:
+    """True for full time, False for part time, None when Naukri says neither.
+
+    Stored as a boolean rather than the matched string because the
+    vocabulary has exactly two members and no prospect of a third — unlike
+    contract_type, which already carries five. The normalisation still runs
+    through EMPLOYMENT_TYPES so every spelling Naukri uses ("full-time",
+    "Full Time") collapses before the True/False decision is made.
+    """
+    matched = _match_type(raw, EMPLOYMENT_TYPES)
+    return None if matched is None else matched == "Full Time"
 
 
 def parse_contract_type(raw: str | None) -> str | None:
@@ -883,7 +892,7 @@ def clean_record(raw: dict, city_name_to_id: dict[str, int],
         "city_ids": city_ids,
         "unmapped_locations": unmapped,
         "working_type": normalize_working_type(_clean(raw.get("working_type"))),
-        "employment_type": parse_employment_type(_clean(raw.get("employment_type"))),
+        "is_full_time": parse_is_full_time(_clean(raw.get("employment_type"))),
         "contract_type": parse_contract_type(_clean(raw.get("employment_type"))),
         "role_family": classify_role(title),
         "seniority_level": classify_seniority(title),

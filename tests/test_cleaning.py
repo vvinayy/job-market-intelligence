@@ -110,12 +110,22 @@ def test_parse_range_none_input():
 # Employment / contract / working type
 # ---------------------------------------------------------------------
 def test_employment_and_contract_type_split_on_comma():
-    assert cleaning.parse_employment_type("Full Time, Permanent") == "Full Time"
+    # Naukri packs both facts into one comma-separated field, and each
+    # parser must pick out only its own half.
+    assert cleaning.parse_is_full_time("Full Time, Permanent") is True
     assert cleaning.parse_contract_type("Full Time, Permanent") == "Permanent"
 
 
+def test_part_time_is_false_not_none():
+    """False and None mean different things: Naukri said part time, versus
+    Naukri said nothing. A falsy check would collapse the two."""
+    assert cleaning.parse_is_full_time("Part Time, Contract") is False
+    assert cleaning.parse_is_full_time("part-time") is False
+
+
 def test_employment_type_no_match_is_none():
-    assert cleaning.parse_employment_type("Something Unexpected") is None
+    assert cleaning.parse_is_full_time("Something Unexpected") is None
+    assert cleaning.parse_is_full_time(None) is None
 
 
 def test_working_type_no_badge_is_onsite():
@@ -226,7 +236,7 @@ def test_clean_record_end_to_end_shape():
     assert posting["experience_max"] == 8
     assert posting["city_ids"] == [1]
     assert posting["working_type"] == "Hybrid"
-    assert posting["employment_type"] == "Full Time"
+    assert posting["is_full_time"] is True
     assert posting["contract_type"] == "Permanent"
     assert "Python" in result["skills"]
     assert "Docker" in result["skills"]

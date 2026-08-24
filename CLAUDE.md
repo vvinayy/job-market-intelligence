@@ -219,15 +219,27 @@ double its live size. `VACUUM FULL ANALYZE cleaned_postings` reclaimed 3416 kB �
 scale use `pg_repack` instead — `VACUUM FULL` takes an exclusive lock for the whole rewrite,
 which is instant at 447 rows and very much not at millions.
 
-**A closed, stable vocabulary is `TEXT` + `CHECK`, not a reference table.** `working_type`,
-`employment_type`, `contract_type` are small fixed sets (3 / 2 / 5 values) that Python already
-collapses to one canonical spelling per category (`cleaning.py::EMPLOYMENT_TYPES`/
-`CONTRACT_TYPES` map every spelling Naukri uses — `"full-time"`, `"Full Time"` — to a single
-output). A `CHECK (col IN (...))` constraint on `cleaned_postings` enforces that against bugs,
-with no JOIN and no get-or-create resolution step. Reach for a reference table only when the
+**A closed, stable vocabulary is `TEXT` + `CHECK`, not a reference table.** `working_type`
+(3 values) and `contract_type` (5) are small fixed sets that Python already collapses to one
+canonical spelling per category (`cleaning.py::EMPLOYMENT_TYPES`/`CONTRACT_TYPES` map every
+spelling Naukri uses — `"full-time"`, `"Full Time"` — to a single output). A
+`CHECK (col IN (...))` constraint on `cleaned_postings` enforces that against bugs, with no
+JOIN and no get-or-create resolution step. Reach for a reference table only when the
 vocabulary is open-ended (skills, degrees) or Naukri-tag-driven and genuinely growing
 (`role_category`/`department`/`industry_type`) — not for a column that will only ever hold a
 handful of known values.
+
+**Exactly two values is a boolean, not a two-member CHECK.** `is_full_time BOOLEAN` replaced
+`employment_type TEXT CHECK (IN ('Full Time','Part Time'))`. The bar is *no prospect of a
+third value* — `contract_type` looks binary in the current data (468 Permanent, 10 NULL) but
+its vocabulary already carries five, and a boolean would silently fold Contract, Temporary,
+Internship and Freelance into `false` the first time one is scraped. Three states still
+exist and must stay distinct: `TRUE`, `FALSE`, and `NULL` for "Naukri said nothing" — so
+never test a column like this for truthiness, and note `WhereBuilder.add()` correctly skips
+on `is None` rather than on falsy, which is what lets `?is_full_time=false` work at all.
+`EMPLOYMENT_TYPES` still normalises the spellings; the collapse happens *before* the
+True/False decision, not instead of it. `/reference/employment-types` keeps returning
+`Full Time` / `Part Time` / `Not stated` labels so filter controls are unaffected.
 
 **Every query is parameterised.** Values go to psycopg2 separately; use `WhereBuilder`.
 Anything that can't be parameterised (sort columns) is validated against an allowlist —

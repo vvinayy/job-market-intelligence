@@ -42,7 +42,7 @@ class PostingSummary(BaseModel):
                     "means none were found, not that none exist.")
     cities: list[str] = []
     working_type: str | None = None
-    employment_type: str | None = None
+    is_full_time: bool | None = None
     contract_type: str | None = None
     posted_date: date | None = None
     openings: int | None = None
