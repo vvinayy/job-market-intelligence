@@ -21,6 +21,10 @@ import dash_common as dc
 
 st.set_page_config(page_title="Job Market Intelligence", layout="wide", page_icon="◎")
 
+# Warm every shared endpoint once, so the other pages open from cache instead
+# of fetching on arrival. No-op after the first run of a session.
+dc.prefetch()
+
 st.title("Job Market Intelligence")
 st.caption("What Indian IT employers are actually asking for")
 

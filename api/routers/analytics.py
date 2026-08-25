@@ -1,4 +1,4 @@
-﻿"""
+"""
 Analytics — the aggregate views.
 
 Most of these accept the same filters as /postings, so a client can ask

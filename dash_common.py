@@ -16,10 +16,26 @@ import streamlit as st
 
 # Where the API lives. Same pattern as DATABASE_URL: local default,
 # overridable via environment variable or Streamlit secrets when deployed.
+#
+# 127.0.0.1, not localhost: on Windows "localhost" resolves to ::1 first, and
+# with the API listening on IPv4 only every call waits out a ~2s connect
+# timeout before falling back. Measured 2048 ms/call against 7 ms. A page
+# firing 11 calls took 22 seconds purely on that.
+_DEFAULT_API = "http://127.0.0.1:8000"
 try:
-    API_BASE = st.secrets.get("API_BASE_URL", os.environ.get("API_BASE_URL", "http://localhost:8000"))
+    API_BASE = st.secrets.get("API_BASE_URL", os.environ.get("API_BASE_URL", _DEFAULT_API))
 except Exception:
-    API_BASE = os.environ.get("API_BASE_URL", "http://localhost:8000")
+    API_BASE = os.environ.get("API_BASE_URL", _DEFAULT_API)
+
+# One Session for the process, so the TCP connection is opened once and reused
+# rather than reopened per call. Worth ~2s per call on its own when the host
+# resolves slowly, and a few ms even when it doesn't.
+_SESSION = requests.Session()
+
+# Data changes once a day, after the scheduled scrape — a 5 minute TTL meant
+# re-fetching everything roughly 288 times more often than it can change.
+# Streamlit's menu has "Clear cache" if you need it sooner.
+CACHE_TTL = 1800
 
 
 PALETTE = ["#00b4c8", "#c8d400", "#6b7280", "#0891a5", "#9aa300", "#4b5563"]
@@ -47,7 +63,7 @@ CITY_COORDINATES = {
 }
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=CACHE_TTL)
 def api_get(path: str, params: tuple = ()) -> list[dict]:
     """Call one API endpoint, return its JSON as a list of dicts.
 
@@ -57,7 +73,7 @@ def api_get(path: str, params: tuple = ()) -> list[dict]:
     `skill=` filters) are passed as repeated tuple entries.
     """
     try:
-        response = requests.get(f"{API_BASE}{path}", params=list(params), timeout=15)
+        response = _SESSION.get(f"{API_BASE}{path}", params=list(params), timeout=15)
         response.raise_for_status()
         return response.json()
     except requests.exceptions.ConnectionError:
@@ -76,11 +92,15 @@ def df(path: str, params: tuple = ()) -> pd.DataFrame:
     return pd.DataFrame(api_get(path, params))
 
 
+@st.cache_data(ttl=CACHE_TTL)
 def one(path: str, params: tuple = ()) -> dict:
     """For endpoints that return a single object, not a list — /analytics/summary
-    and /trends/coverage are dicts, not arrays, so they skip the DataFrame step."""
+    and /trends/coverage are dicts, not arrays, so they skip the DataFrame step.
+
+    Cached like api_get. It wasn't, so /analytics/summary re-fetched on every
+    widget interaction on every page that shows a headline figure."""
     try:
-        response = requests.get(f"{API_BASE}{path}", params=list(params), timeout=15)
+        response = _SESSION.get(f"{API_BASE}{path}", params=list(params), timeout=15)
         response.raise_for_status()
         return response.json()
     except requests.exceptions.ConnectionError:
@@ -278,3 +298,32 @@ def sampling_note():
         "Figures describe postings collected from a fixed set of Naukri searches "
         "and cities, not the Indian IT market as a whole."
     )
+
+
+# ---------------------------------------------------------------------
+# Prefetch — warm every shared endpoint once, so moving between pages is
+# instant instead of paying a round trip per chart on arrival.
+# ---------------------------------------------------------------------
+def prefetch() -> None:
+    """Populate the cache for the endpoints more than one page reads.
+
+    Cheap because it runs through the same cached wrappers: on a warm cache
+    this is a no-op, and cold it is one pass over ~15 endpoints on a reused
+    connection. Page-specific, parameterised calls (a posting search, a skill
+    series for a chosen skill) are deliberately not prefetched — they depend
+    on user input and would be cache misses anyway.
+    """
+    if st.session_state.get("_prefetched"):
+        return
+    for call in (summary, trends_coverage, roles, working_types, employment_types,
+                 contract_types, skill_demand, role_distribution,
+                 experience_distribution, location_distribution,
+                 qualification_distribution, openings_distribution,
+                 skill_category_mix, flexibility_by_experience, cities_reference):
+        try:
+            call()
+        except Exception:
+            # A single failing endpoint must not stop the dashboard opening;
+            # the page that actually needs it will surface the error itself.
+            pass
+    st.session_state["_prefetched"] = True
