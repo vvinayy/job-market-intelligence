@@ -10,6 +10,8 @@ reachable, so `pytest tests/test_cleaning.py` style offline runs aren't
 affected by this file's presence.
 """
 
+from decimal import Decimal, ROUND_HALF_UP
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -260,7 +262,10 @@ def test_flexibility_by_experience_bands_match_experience_endpoint(client):
 def test_flexibility_by_experience_counts_are_consistent(client):
     """offering_a_choice is a subset of postings, and the percentage is
     derived from the two rather than computed independently."""
+    # Decimal ROUND_HALF_UP, not Python's round(): Postgres rounds a half away
+    # from zero, Python rounds it to even, and 10/32 = 31.25 lands exactly there.
     for row in client.get("/analytics/flexibility-by-experience").json():
         assert 0 <= row["offering_a_choice"] <= row["postings"]
-        expected = round(100.0 * row["offering_a_choice"] / row["postings"], 1)
-        assert row["pct_offering_a_choice"] == pytest.approx(expected, abs=0.05)
+        expected = float((Decimal(100 * row["offering_a_choice"]) / Decimal(row["postings"]))
+                         .quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
+        assert row["pct_offering_a_choice"] == pytest.approx(expected, abs=0.001)

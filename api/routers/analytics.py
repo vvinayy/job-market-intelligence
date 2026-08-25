@@ -71,10 +71,8 @@ def summary():
     row["median_openings"] = fetch_value("""
         SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY openings)
         FROM cleaned_postings WHERE openings IS NOT NULL""")
-    # Sum of each posting's array length, divided by total postings — not
-    # postings-with-skills — so a posting with zero skills still belongs
-    # in the average's denominator. COALESCE covers postings whose
-    # skill_ids is '{}', where array_length returns NULL rather than 0.
+    # Divided by ALL postings, not just those with skills, so a posting with
+    # none still counts in the denominator. COALESCE: array_length('{}') is NULL.
     row["avg_skills_per_posting"] = fetch_value("""
         SELECT ROUND(COALESCE(SUM(array_length(skill_ids, 1)), 0)::numeric / NULLIF(%s, 0), 2)::float
         FROM posting_skills
@@ -140,11 +138,8 @@ def seniority_distribution(
     city: list[str] | None = Query(None),
     state: list[str] | None = Query(None),
 ):
-    # Denominator is postings where the title actually carried a
-    # seniority marker, not every posting — most Naukri titles carry
-    # none at all, so dividing by the full total would understate every
-    # bucket for a reason that has nothing to do with real seniority
-    # mix. Same reasoning as qualification_distribution().
+    # Denominator is postings whose title carried a seniority word, not all
+    # postings — most carry none. Same reasoning as qualification_distribution().
     w = scope(None, city, state, None, None, None, None)
     w.add_raw("c.seniority_level IS NOT NULL")
     total = fetch_value(
@@ -214,11 +209,8 @@ def location_distribution(
 
 @router.get("/qualifications", response_model=list[Bucket], summary="Education level breakdown")
 def qualification_distribution():
-    # Denominator is postings that disclose ANY education requirement,
-    # not all postings — Education is a newer field, only populated for
-    # postings scraped after it was added, so dividing by every posting
-    # would understate these percentages for a reason that has nothing
-    # to do with actual demand.
+    # Denominator is postings disclosing any education requirement, not all
+    # postings — the field is newer than some rows.
     total = fetch_value("SELECT COUNT(DISTINCT job_id) FROM posting_qualifications") or 1
     return fetch_all(f"""
         SELECT level AS bucket, COUNT(DISTINCT job_id)::int AS postings,
@@ -236,14 +228,9 @@ def skill_category_mix(
     experience_min: int | None = Query(None, ge=0),
     experience_max: int | None = Query(None, ge=0),
 ):
-    # Counts skill MENTIONS, not postings — a posting with three
-    # Cloud/DevOps skills contributes three, so shares add up to a real
-    # composition ("this role's skill mix is 58% Cloud/DevOps") rather
-    # than an overlap count that wouldn't sum to 100%. Only categorized
-    # skills count towards the denominator: most of Naukri's own tags
-    # (Agile, Communication Skills, generic role titles) aren't specific
-    # enough to categorize, and folding them into a fake "Other" bucket
-    # would dilute the real signal rather than add to it.
+    # Counts skill MENTIONS, not postings, so shares sum to 100% and read as a
+    # composition. Uncategorized skills are excluded rather than bucketed as
+    # "Other" — most are generic Naukri tags and would dilute the signal.
     w = scope(role_family, city, state, experience_min, experience_max, None, None)
     w.add_raw("sk.category IS NOT NULL")
 
@@ -289,11 +276,8 @@ def co_occurrence(
     limit: int = Query(100, ge=1, le=1000),
     min_together: int = Query(1, ge=1),
 ):
-    # posting_skills is one row per posting now, so pairing requires
-    # unnesting each posting's skill_ids twice (once per side of the
-    # self-join) — the cost this design trades away for its smaller
-    # footprint. a.skill_id < b.skill_id keeps one row per pair rather
-    # than both directions, and excludes a skill paired with itself.
+    # One row per posting means pairing needs two unnests, one per side of the
+    # self-join. `a.skill_id < b.skill_id` gives each pair once, never itself.
     return fetch_all("""
         WITH exploded AS (
             SELECT ps.job_id, u.skill_id
@@ -360,12 +344,9 @@ def skill_suggestions(
 
 @router.get("/scrape-health", response_model=ScrapeHealthReport, summary="Scraper pipeline health")
 def scrape_health(lookback: int = Query(20, ge=1, le=100)):
-    # check_field_health() reuses job_database.py's own connection
-    # rather than this file's pooled one — a deliberate, small
-    # architectural bend: the anomaly-detection logic already lives
-    # there (it runs during every scrape too, for the in-run log
-    # warning), and duplicating it here in SQL would risk the two
-    # drifting out of sync with each other over time.
+    # Uses job_database.py's own connection, not the pool — a deliberate bend.
+    # The logic already lives there for the in-run warning; duplicating it here
+    # would let the two drift apart.
     runs = fetch_all("""
         SELECT run_id, search_url, started_at, finished_at, postings_found,
                postings_scraped, postings_written, storage_ok, error_message,
@@ -386,10 +367,8 @@ def scrape_health(lookback: int = Query(20, ge=1, le=100)):
 
 
 # ---------------------------------------------------------------------
-# Skill choices — the one thing skill_groups makes answerable that
-# nothing else in this API can. Everywhere else treats a posting's
-# skills as a flat list of requirements; these two endpoints separate
-# "you must know X" from "X, or something like it, is fine".
+# Skill choices — the only endpoints that separate "you must know X" from
+# "X, or something like it, is fine".
 # ---------------------------------------------------------------------
 @router.get("/skill-choices", response_model=list[SkillChoice],
             summary="Skill sets employers treat as interchangeable")
@@ -398,14 +377,9 @@ def skill_choices(
     min_postings: int = Query(2, ge=1,
         description="Drop one-off sets; raise for only well-established swaps"),
 ):
-    # Expand to one row per (posting, group, member), resolve names with a
-    # plain join, then re-aggregate. Names are sorted inside each set so two
-    # postings writing the same choice in a different id order still land on
-    # the same label and count together.
-    #
-    # Deliberately a join, not a correlated subquery over `skills` per group:
-    # that form re-ran a lookup for every group in the table and cost 40 ms at
-    # 478 rows, against 2.8 ms here for byte-identical output.
+    # Names sorted inside each set so the same choice written in a different id
+    # order still counts together. A join, not a correlated subquery per group:
+    # that form cost 40 ms against 2.8 ms here, for identical output.
     return fetch_all("""
         WITH members AS (
             SELECT c.job_id, g.ord, e.id::int AS skill_id

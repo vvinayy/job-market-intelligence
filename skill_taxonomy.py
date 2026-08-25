@@ -220,45 +220,31 @@ def extract_certifications(description: str) -> list[str]:
 
 # =====================================================================
 # SKILL CHOICE GROUPS — which of a posting's skills are alternatives
-# ("AWS, Azure, or GCP") rather than all required together.
+# ("AWS, Azure, or GCP") rather than all required together. Reads the
+# sentence; a posting can genuinely require both AWS and Azure.
 #
-# This replaces an earlier group_alternatives(), which assumed any two
-# skills from a fixed list were alternatives. Its own docstring named
-# the flaw: a posting can genuinely require both AWS and Azure, and
-# "only reading the sentence could" tell the difference. This does read
-# the sentence.
+# Two rules, derived by parsing real postings with spaCy and reading the
+# structures it produced. spaCy is NOT a dependency — it was a measuring
+# instrument. The rules need only commas and "and"/"or", so this runs in
+# ~0.4 ms per posting with nothing installed:
 #
-# The scoping rule below was derived by parsing real postings with a
-# dependency parser (spaCy) and reading which structures it produced.
-# The parser is NOT a dependency here -- it was a measuring instrument.
-# The rule it revealed turns out to need only commas and the words
-# "and"/"or", so it runs in ~0.4 ms per posting with nothing installed:
+#   1. "or" INSIDE a comma segment binds tightly, joining just the nearest
+#      term either side.  "React JS using Nginx or Apache" -> Nginx|Apache
 #
-#   1. "or" INSIDE a comma segment binds tightly, joining just the
-#      nearest term either side.
-#        "React JS using Nginx or Apache"  ->  Nginx | Apache
-#      Naive matching produced React|Vue here -- the "or" is nowhere
-#      near them.
+#   2. "or" straight after a comma is list-final and distributes backwards,
+#      stopping at (but including) a segment introduced by "and".
+#      "Git, Maven or Gradle, Docker, and AWS, Azure, or GCP"
+#        -> Maven|Gradle and AWS|Azure|GCP, leaving Git and Docker out.
 #
-#   2. "or" immediately after a comma is list-final and distributes
-#      back over the preceding segments, stopping at (but including) a
-#      segment introduced by "and":
-#        "Git, Maven or Gradle, Docker, CI/CD, and AWS, Azure, or GCP"
-#          ->  Maven|Gradle  and  AWS|Azure|GCP
-#      Git, Docker and CI/CD are correctly left out of both.
-#
-# Deliberately scoped to the skills ALREADY found on the posting rather
-# than the whole taxonomy: extract_skills() has done that job, and
-# scanning prose against every known skill both dragged in fragments
-# that are ordinary English words and cost ~700x more time.
+# Scoped to the skills already found on this posting, not the whole
+# taxonomy: scanning all of it dragged in ordinary English words and cost
+# ~700x more time.
 # =====================================================================
 _OR_RE = re.compile(r"\bor\b", re.IGNORECASE)
 _AND_LEAD_RE = re.compile(r"^\s*(?:and|&)\b", re.IGNORECASE)
 
-# Words that close the list and begin a new phrase. Without this the
-# scan runs past the end of the disjunction and grabs an unrelated
-# skill: "Maven, Gradle, or similar tools FOR Java/Node/Python" pulled
-# in Java as though it were a third build tool.
+# Words that close the list. Without them the scan runs past the end:
+# "Maven, Gradle, or similar tools FOR Java/Node" pulled in Java.
 _BOUNDARY_RE = re.compile(
     r"\b(?:for|in|on|with|within|across|using|to|from|at|by|based|"
     r"including|include|such as|like|e\.g\.?)\b", re.IGNORECASE)
@@ -323,20 +309,16 @@ def _groups_in_sentence(sentence: str, resolve) -> list[tuple[str, ...]]:
             before, after = segment[:m.start()], segment[m.end():]
 
             if before.strip():
-                # RULE 1 -- tight binding. Direction matters: the nearest
-                # term on the left is the LAST named, on the right the
-                # FIRST. Using "last" on both turned "Python or R for
-                # data processing" into Python|Visualization.
+                # RULE 1 — tight binding. Nearest term left is the LAST named,
+                # right is the FIRST; "last" on both mismatched the pair.
                 left = resolve(_clip_before(before), "last")
                 right = resolve(_clip_after(after), "first")
                 if left and right and left != right:
                     groups.append((left, right))
                 continue
 
-            # RULE 2 -- list-final "or", distributing backwards. A tail
-            # naming nothing known ("or similar tools", "or equivalent")
-            # still leaves the earlier members alternatives to each
-            # other, so keep what resolves rather than dropping the list.
+            # RULE 2 — list-final "or", distributing backwards. A tail naming
+            # nothing known ("or equivalent") still leaves the rest a choice.
             tail = resolve(_clip_after(after), "first")
             members = [tail] if tail else []
             for previous in reversed(segments[:idx]):

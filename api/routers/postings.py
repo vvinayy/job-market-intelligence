@@ -1,9 +1,7 @@
 """
-Postings — the individual job records, with filtering.
+Postings — individual job records, with filtering.
 
-This is the endpoint with the most parameters, because it's the one a
-client uses to answer "show me the jobs matching X". Every filter is
-optional; supplying none returns everything, paginated.
+Every filter is optional; supplying none returns everything, paginated.
 """
 
 from datetime import date
@@ -14,20 +12,15 @@ from fastapi import APIRouter, HTTPException, Query
 from ..database import fetch_all, fetch_one, fetch_value, WhereBuilder
 from ..models import PostingSummary, PostingDetail, PostingPage, Qualification
 
-# The one place the API reaches outside itself. responsibilities_text /
-# requirements_text used to be stored columns, but they are a pure
-# function of `description` — verified byte-identical on every row — so
-# storing them cost ~24% of the table to hold nothing new. Recomputed
-# here instead, which is cheap because this is the single-posting detail
-# endpoint: one description, not a scan.
+# The API's only import from outside api/. responsibilities_text and
+# requirements_text recompute exactly from `description`, so they are not stored.
 from cleaning import split_description_sections
 
 router = APIRouter(prefix="/postings", tags=["postings"])
 
 
-# Sorting is restricted to a known list rather than accepting arbitrary
-# column names. A caller-supplied ORDER BY would be an injection route,
-# since column names can't be parameterised the way values can.
+# Allowlist: column names cannot be parameterised, so caller input is used as a
+# dict key here, never as SQL.
 SORTABLE = {
     "posted_date": "c.posted_date",
     "experience_min": "c.experience_min",
@@ -43,18 +36,12 @@ SORTABLE = {
     "title": "c.title",
 }
 
-# Selected in both list and detail responses. The description is
-# deliberately excluded here — it's large, and returning it for 50 rows
-# would make every page response enormous. skills comes from
-# posting_skills now, not an array column.
+# Shared by the list and detail responses. `description` is excluded — too large
+# to return for 50 rows.
 #
-# `skills` is the UNION of skill_ids and the ids inside skill_groups.
-# Storage keeps those disjoint (a skill offered as one of several
-# alternatives lives only in skill_groups), but the API's `skills` has
-# always meant "skills this posting involves" and clients filter on it,
-# so it must stay the complete set — otherwise a search for AWS would
-# stop matching the 58 postings that accept AWS as one option.
-# skill_choices below says which of them are alternatives.
+# `skills` is the UNION of skill_ids and the ids inside skill_groups. Storage
+# keeps those disjoint, but the API field has always meant "skills this posting
+# involves" and clients filter on it, so it must stay complete.
 BASE_SELECT = """
     SELECT
         c.job_id, c.title, c.company, c.role_family, c.seniority_level,
@@ -95,6 +82,9 @@ BASE_SELECT = """
 """
 
 
+# =====================================================================
+# FILTERS
+# =====================================================================
 def build_filters(
     skill, skills_all, role_family, seniority_level, company, city, state,
     experience_min, experience_max, has_salary, salary_min, salary_max,
@@ -104,23 +94,12 @@ def build_filters(
     """Turn optional query parameters into a parameterised WHERE clause."""
     w = WhereBuilder()
 
-    # "any of these" vs "all of these" — two different questions, so
-    # both are offered, same as before skills moved out of an array.
-    #
-    # Both match against skill_ids || skill_group_ids(skill_groups): a
-    # posting that accepts "AWS, Azure, or GCP" holds those three in
-    # skill_groups and not in skill_ids, and a search for AWS must still
-    # find it. Reading skill_ids alone would silently hide 58 postings.
+    # Both skill filters match skill_ids || skill_group_ids(skill_groups): a
+    # posting accepting "AWS, Azure or GCP" holds those only in skill_groups.
     if skill:
-        # Tested against each array SEPARATELY rather than against the
-        # two concatenated. Both forms return exactly the same postings,
-        # but `(a || b) && wanted` builds a new array per row, which no
-        # index can cover, so Postgres reads every row (Seq Scan, ~10 ms).
-        # Two indexed overlap tests OR'd together let it use the GIN
-        # indexes on skill_ids and skill_group_ids(skill_groups)
-        # (Bitmap Heap Scan, ~1.9 ms) -- 4x on the most-used filter here.
-        # Note this trick does NOT transfer to skills_all below: "all of
-        # these are in a OR b" is not "all in a, or all in b".
+        # Each array tested separately and OR'd, not concatenated: `(a || b) &&`
+        # builds a new array per row and no index can cover it. 14x measured.
+        # Does NOT transfer to skills_all — see there.
         w.add_raw("""EXISTS (
             SELECT 1 FROM posting_skills ps
             WHERE ps.job_id = c.job_id
@@ -131,11 +110,9 @@ def build_filters(
         w.params.append(list(skill))
         w.params.append(list(skill))
     if skills_all:
-        # The count check guards against a requested name that doesn't
-        # match any skill at all — without it, array_agg would silently
-        # drop that name from the containment check below and the filter
-        # would quietly accept postings missing a skill that was asked
-        # for, instead of correctly returning nothing.
+        # Containment cannot be split like overlap: "all of these in a OR b" is
+        # not "all in a, or all in b". The COUNT guard rejects a name that
+        # matches no skill — array_agg would otherwise drop it silently.
         w.add_raw("""(
             SELECT COUNT(*) FROM skills WHERE skill_name = ANY(%s)) = %s
             AND EXISTS (
@@ -168,9 +145,8 @@ def build_filters(
             WHERE pc.job_id = c.job_id AND ci.state = ANY(%s))""")
         w.params.append(list(state))
 
-    # experience_max here means "the role's minimum requirement is at
-    # most N" — i.e. someone with N years qualifies. Filtering on the
-    # posting's own max would exclude roles open to more experience.
+    # Both bound experience_min: "roles someone with N years qualifies for".
+    # Filtering on the posting's own max would exclude roles open to more.
     w.add("c.experience_min >= %s", experience_min)
     w.add("c.experience_min <= %s", experience_max)
 
@@ -184,8 +160,7 @@ def build_filters(
 
     if working_type:
         w.add("c.working_type = ANY(%s)", list(working_type))
-    # Boolean, so a single value rather than the ANY(list) the other two
-    # arrangement filters use -- there is no "either of these" to express.
+    # Boolean, so a single value — no "either of these" to express.
     w.add("c.is_full_time = %s", is_full_time)
     if contract_type:
         w.add("c.contract_type = ANY(%s)", list(contract_type))
@@ -207,6 +182,9 @@ def build_filters(
     return w
 
 
+# =====================================================================
+# ENDPOINTS
+# =====================================================================
 @router.get("", response_model=PostingPage, summary="Search postings")
 def list_postings(
     # --- content filters ---
@@ -267,8 +245,8 @@ def list_postings(
         f"SELECT COUNT(*) FROM cleaned_postings c {w.sql}", w.values
     ) or 0
 
-    # NULLS LAST matters: Postgres sorts NULL as largest, so a DESC sort
-    # on posted_date would otherwise lead with postings that have no date.
+    # NULLS LAST: Postgres sorts NULL largest, so a DESC date sort would
+    # otherwise lead with postings that have no date.
     sql = (
         f"{BASE_SELECT}{w.sql} "
         f"ORDER BY {SORTABLE[sort_by]} {order.upper()} NULLS LAST, c.job_id DESC "
@@ -317,15 +295,9 @@ def get_posting(job_id: int):
         SELECT level, field_of_study FROM posting_qualifications WHERE job_id = %s ORDER BY level
     """, (job_id,))
 
-    # Same facts as `qualifications` above, but broken out to individual
-    # degrees via the reference tables instead of Naukri's flattened
-    # display string -- e.g. "B.Tech / B.E." becomes two separate
-    # entries here, each with only the specializations that actually
-    # pair with it. Two CTEs unnest this posting's accepted_degree_ids
-    # and accepted_degree_specialization_ids arrays; education_degree_
-    # specializations is the global dictionary of every (degree,
-    # specialization) pairing ever seen, filtered down to just the ones
-    # this posting actually has via the IN clause.
+    # Same facts as `qualifications`, but split into individual degrees via the
+    # reference tables — "B.Tech / B.E." becomes two entries, each with only the
+    # specializations that actually pair with it.
     qualification_degrees = fetch_all("""
         WITH pqd AS (
             SELECT unnest(accepted_degree_ids) AS degree_id

@@ -213,11 +213,8 @@ def discover_job_urls(page, search_url: str, limit: int | None = None) -> list[s
         if not href or href in urls:
             continue
         if "naukri.com" not in urlparse(href).netloc:
-            # A stray off-site href here would mean a scraped page
-            # (title, company, everything) comes from whatever site
-            # that link points at instead of Naukri, extracted with
-            # Naukri's own selectors -- a defensive guard against that,
-            # not a fix for an observed occurrence of this exact path.
+            # Defensive: an off-site href would be scraped with Naukri's own
+            # selectors and yield silent garbage rather than an error.
             skipped_off_site += 1
             continue
         urls.append(href)
@@ -244,13 +241,9 @@ def scrape_job_detail(page, url: str, search_url: str | None = None) -> dict | N
         print(f"  [skip] Description never rendered — {url}")
         return None
 
-    # --- Key Skills: Naukri's own tagged chips, some starred as
-    # "preferred" (confirmed from the page's own legend: "Skills
-    # highlighted with [star] are preferred keyskills" — the star is an
-    # <i class="ni-icon-jd-save"> inside the chip). Walking the chip
-    # elements directly, rather than safe_texts() on just the spans,
-    # since knowing which chip a name came from is what makes the
-    # preferred/not-preferred split possible. ---
+    # --- Key Skills: Naukri's chips, some starred as "preferred" (an
+    # <i class="ni-icon-jd-save"> inside the chip). Walks chip elements rather
+    # than spans, since chip identity is what makes the split possible. ---
     skills = []
     preferred_key_skills = []
     for chip in page.query_selector_all("div.styles_key-skill__GIPn_ a"):
@@ -271,11 +264,8 @@ def scrape_job_detail(page, url: str, search_url: str | None = None) -> dict | N
     company_rating = safe_text(page, ".styles_amb-rating__4UyFL")
     company_reviews_raw = safe_text(page, ".styles_amb-reviews__0J1e3")
 
-    # --- Company recognition badges: also inline, in the "About the
-    # company" block ("Fortune India 500 (2023)", "Highly Rated by
-    # Women", etc). A couple of these render as short, terse single
-    # words ("TOP") — confirmed from raw HTML that this is genuinely
-    # what Naukri shows, not a truncation artifact of the extraction. ---
+    # --- Company badges, from the "About the company" block. Some are single
+    # words ("TOP") — confirmed as Naukri's own text, not truncation. ---
     company_badges = safe_texts(page, ".styles_company-info-tags__y6RDs .styles_chips__AKDM0")
 
     # --- Employment Type and Role Category: sibling rows in the same
@@ -288,24 +278,15 @@ def scrape_job_detail(page, url: str, search_url: str | None = None) -> dict | N
         page, "div.styles_details__Y424J:has-text('Role Category') span span"
     )
 
-    # --- Role: Naukri's own classification (e.g. "Back End Developer"),
-    # distinct from Role Category (e.g. "Software Development") and from
-    # our own regex-derived role_family. :has-text('Role') would also
-    # match the "Role Category:" row since it contains "Role" as a
-    # substring, so this needs the exact-label helper instead. Same
-    # anchor-wrapped markup as Industry Type/Department (confirmed from
-    # real page HTML), which safe_text_by_exact_label already handles.
+    # --- Role: Naukri's own classification, distinct from Role Category and
+    # from our regex-derived role_family. Needs the exact-label helper —
+    # :has-text('Role') also matches the "Role Category:" row. ---
     naukri_role = safe_text_by_exact_label(page, "Role:")
 
-    # --- Industry Type and Department: same "other details" block, but
-    # different internal markup from Employment Type/Role Category — the
-    # value sits inside an <a> tag, with a trailing decorative comma in
-    # its own sibling span (<a>value</a><span class="...comma...">,</span>).
-    # span span (the pattern that works above) matches that comma span
-    # instead of the anchor — confirmed from real page markup — which is
-    # exactly why these two were broken and removed earlier. Targeting
-    # the anchor directly instead, and reading all of them since the
-    # comma implies more than one value is possible.
+    # --- Industry Type and Department: value sits in an <a>, followed by a
+    # decorative comma span. The `span span` pattern used above matches the
+    # comma instead — which is why these two broke before. Target the anchor,
+    # and read all of them: the comma implies more than one value. ---
     industry_type = ", ".join(safe_texts(
         page, "div.styles_details__Y424J:has-text('Industry Type') span a"
     )) or None
@@ -322,20 +303,16 @@ def scrape_job_detail(page, url: str, search_url: str | None = None) -> dict | N
     description = safe_text(page, "div.styles_JDC__dang-inner-html__h0K4t")
 
     # --- Technologies named in the description body ---
-    # Naukri's chips are often sparse (3 tags on a posting naming a dozen
-    # tools), so scan the description text too. This field shows ONLY what
-    # the chips missed — anything already tagged above is filtered out, so
-    # the two fields together give full coverage with no repetition.
-    # Compared case-insensitively, since Naukri writes "Power Bi" where the
-    # taxonomy returns "Power BI".
+    # Chips are often sparse, so scan the text too. Shows ONLY what the chips
+    # missed, so the two fields together cover everything without repeating.
+    # Case-insensitive: Naukri writes "Power Bi", the taxonomy "Power BI".
     all_tech = extract_skills(description) if description else []
     already_tagged = {s.lower() for s in skills}
     tech_in_description = [t for t in all_tech if t.lower() not in already_tagged]
 
     # --- Posted date ---
-    # The class is shared with other stats on the same row (Openings,
-    # Applicants), so scope by the "Posted" label rather than the class
-    # alone — same disambiguation problem we hit on LinkedIn.
+    # Class is shared with Openings and Applicants on the same row, so scope by
+    # the "Posted" label rather than the class.
     posted_raw = safe_text(page, "span.styles_jhc__stat__PgY67:has-text('Posted') span")
     posted_date = parse_posted_date(posted_raw)
 
@@ -349,9 +326,8 @@ def scrape_job_detail(page, url: str, search_url: str | None = None) -> dict | N
         openings = int(digits.group()) if digits else None
 
     # --- Applicants ---
-    # Naukri shows this three ways ("44", "100+", "Less than 10") —
-    # parse_applicant_count() keeps the direction of the ambiguity
-    # rather than collapsing all three into a bare number.
+    # Three forms: "44", "100+", "Less than 10". parse_applicant_count() keeps
+    # the direction of the ambiguity instead of flattening to a number.
     applicants_raw = safe_text(page, "span.styles_jhc__stat__PgY67:has-text('Applicants') span")
     applicant_count, applicant_count_qualifier = parse_applicant_count(applicants_raw)
 
@@ -391,10 +367,8 @@ def scrape_job_detail(page, url: str, search_url: str | None = None) -> dict | N
         record["preferred_key_skills"] = preferred_key_skills
     if company_badges:
         record["company_badges"] = company_badges
-    # None here is a real, meaningful value ("exact count, no qualifier
-    # needed") distinct from "not found" — so this key is only added at
-    # all when there's an actual qualifier to record, rather than using
-    # the NOT_FOUND-sentinel pattern above, which would conflate the two.
+    # None here means "exact count, no qualifier" — a real value, distinct from
+    # "not found". So the key is added only when there IS a qualifier.
     if applicant_count_qualifier:
         record["applicant_count_qualifier"] = applicant_count_qualifier
 
@@ -420,10 +394,8 @@ def print_record(record: dict, index: int, total: int):
 
 
 # =====================================================================
-# HEALTH TRACKING — makes a broken selector, a slow run, or a storage
-# failure show up in the run's own log instead of only being caught
-# later by someone happening to notice, which is how Department/
-# Industry Type and the applicant-count bug were actually found.
+# HEALTH TRACKING — surfaces a broken selector or storage failure in the run's
+# own log, rather than months later when someone notices a gap.
 # =====================================================================
 def compute_field_found_counts(records: list[dict]) -> dict[str, int]:
     """How many records actually found each field (not NOT_FOUND, not
@@ -462,10 +434,8 @@ def main(search_url: str, limit: int | None):
         urls = discover_job_urls(page, search_url, limit)
         if not urls:
             browser.close()
-            # Zero URLs from discovery is itself a real health signal —
-            # could mean the search layout changed or got blocked, not
-            # necessarily that there's nothing to find. Logged the same
-            # as any other run rather than silently returning.
+            # Zero URLs is itself a signal — the layout may have changed or
+            # we may be blocked. Logged like any other run, not skipped.
             _log_run(search_url, started_at, datetime.now(), 0, 0, 0, {}, True, None, disk_warning)
             return
 

@@ -87,10 +87,10 @@ with tab1:
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
             "A posting 'offers a choice' when its description names alternatives — "
-            "\"Angular or React\" rather than both. Flexibility peaks in the middle of the "
-            "experience range rather than rising with it, which is the opposite of what "
-            "you would expect. Alternatives are detected from description wording, so "
-            "read the level as indicative and the shape as the finding."
+            "\"Angular or React\" rather than both. Note it does not climb with "
+            "seniority: entry-level roles are the most rigid, and the 2-3 year band "
+            "is about as negotiable as the most senior one. Alternatives are detected "
+            "from description wording, so read the ordering rather than the exact level."
         )
 
     st.divider()

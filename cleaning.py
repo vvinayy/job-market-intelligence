@@ -51,11 +51,9 @@ def _clean(value):
 
 
 # =====================================================================
-# FINGERPRINTING — same fields always produce the same fingerprint, on
-# any machine, which is what makes it usable as "have I seen this job
-# before?". Experience is included deliberately: large employers post
-# many openings sharing a title and city, and without experience in
-# the mix they'd all collapse into one row.
+# FINGERPRINTING — deterministic across machines, which is what makes it
+# usable as "seen this job before?". Experience is included deliberately:
+# without it, one employer's many same-title openings collapse into one row.
 # =====================================================================
 def _normalize_for_fingerprint(text: str | None) -> str:
     if not text:
@@ -184,14 +182,9 @@ def merge_skills(key_skills: list[str] | None, tech_in_desc: list[str] | None) -
 
 
 # =====================================================================
-# SKILL CATEGORIES — Frontend / Backend / Database / Cloud-DevOps /
-# Data-ML / Testing / Languages. Covers the canonical names produced by
-# both SKILL_ALIASES above and skill_taxonomy.py's larger vocabulary
-# (that's what actually populates key_skills/tech_in_description, so
-# this needs to cover its canonical names too, not just this file's).
-# Anything not listed here gets category=None rather than a forced
-# guess — an uncategorized skill is honest; a wrongly categorized one
-# isn't.
+# SKILL CATEGORIES — covers the canonical names from both SKILL_ALIASES above
+# and skill_taxonomy.py's larger vocabulary. Anything unlisted gets None: an
+# uncategorized skill is honest, a wrongly categorized one isn't.
 # =====================================================================
 SKILL_CATEGORIES = {
     # Languages
@@ -212,11 +205,8 @@ SKILL_CATEGORIES = {
     ".NET Core": "Backend", "ASP.NET": "Backend", "Entity Framework": "Backend", "MVC": "Backend",
     "LINQ": "Backend", "Web API": "Backend", "REST API": "Backend", "GraphQL": "Backend",
     "gRPC": "Backend", "Microservices": "Backend", "API": "Backend", "SDK": "Backend",
-    # Message brokers and task queues are backend plumbing, not devops tooling.
-    # RabbitMQ sat under Cloud/DevOps and so disagreed with Kafka on the three
-    # postings that offer the two as alternatives ("messaging systems such as
-    # Kafka or RabbitMQ"). Kafka stays Data/ML: it earns that placement through
-    # pipeline use alongside Airflow and Spark, which RabbitMQ never has.
+    # Brokers and task queues are backend plumbing, not devops tooling. Kafka
+    # stays Data/ML — it earns that through pipeline use, RabbitMQ doesn't.
     "RabbitMQ": "Backend", "Celery": "Backend",
 
     # Database
@@ -301,13 +291,9 @@ def _round_half_up(x: float) -> int:
 
 
 # =====================================================================
-# EMPLOYMENT / CONTRACT TYPE — split "Full Time, Permanent" on commas,
-# title-case each part, match against a known vocabulary. First match
-# in the original left-to-right order wins. Vocabulary maps every
-# spelling Naukri uses to ONE canonical output ("full-time" and
-# "full time" both -> "Full Time") -- these are database CHECK
-# constraint values (see schema.sql), so two spellings of the same
-# real-world fact must never produce two different stored strings.
+# EMPLOYMENT / CONTRACT TYPE — split "Full Time, Permanent" on commas, match
+# each part against a vocabulary, first match wins. Every spelling maps to ONE
+# output, because these are CHECK constraint values in schema.sql.
 # =====================================================================
 EMPLOYMENT_TYPES = {
     "full time": "Full Time", "full-time": "Full Time",
@@ -420,11 +406,8 @@ def resolve_locations(raw_location: str | None, city_name_to_id: dict[str, int])
         frag = frag.strip()
         if not frag:
             continue
-        # Naukri sometimes appends a locality in parens, e.g.
-        # "Hyderabad( Raidurgam )" -- strip it before matching so the
-        # fragment still resolves to the city instead of falling
-        # through to unmapped_locations. Real example: job scraped
-        # 2026-08.
+        # Strip a parenthetical locality — "Hyderabad( Raidurgam )" must still
+        # resolve to Hyderabad rather than fall through to unmapped.
         key = re.sub(r"\(.*?\)", "", frag).strip().lower()
         city_name = CITY_ALIASES.get(key)
         if city_name:
@@ -440,11 +423,9 @@ def resolve_locations(raw_location: str | None, city_name_to_id: dict[str, int])
 # patterns are given the lowest numbers so they beat generic catch-alls
 # like "engineer".
 # =====================================================================
-# For two patterns tied on priority, the first one listed wins — this
-# order matches the original SQL implementation's real tie behavior
-# (table scan order followed insertion order), confirmed against a
-# real ambiguous title ("Data Scientist | Data Engineer (...)") that
-# the two orderings classify differently. Not a hypothetical.
+# On a priority tie the first listed wins, matching the original SQL's scan
+# order. Confirmed against a real ambiguous title that the two orders classify
+# differently — not hypothetical.
 _ROLE_PATTERNS_SOURCE = [
     ("machine learning", "ML Engineer", 10),
     ("ml engineer", "ML Engineer", 10),
@@ -530,12 +511,8 @@ def classify_role(raw_title: str | None) -> str:
 
 
 # =====================================================================
-# SENIORITY — inferred from the title only, a different (and often
-# absent) signal from role_family. Most Indian IT titles carry no
-# seniority marker at all ("Python Developer", not "Senior Python
-# Developer") — that's the honest, common case, so this returns None
-# rather than guessing a default the way classify_role() falls back to
-# "Other". A title with no marker means "not stated", not "mid-level".
+# SENIORITY — from the title only. Most Indian IT titles carry no marker, so
+# this returns None rather than defaulting: "not stated", never "mid-level".
 # =====================================================================
 _SENIORITY_PATTERNS_SOURCE = [
     ("intern", "Intern/Trainee", 10),
@@ -572,12 +549,9 @@ def classify_seniority(raw_title: str | None) -> str | None:
 
 
 # =====================================================================
-# QUALIFICATIONS — Naukri's Education block, read by the scraper as
-# {"UG": "Any Graduate", "PG": "Any Postgraduate", ...}. Not every
-# posting shows all three levels (a posting with no doctorate
-# requirement usually omits that row rather than saying "not
-# required"), so this just normalizes whatever levels are actually
-# present instead of assuming a fixed set.
+# QUALIFICATIONS — Naukri's Education block, e.g. {"UG": "Any Graduate", ...}.
+# A posting omits levels it doesn't require rather than saying "not required",
+# so this normalizes whatever is present instead of assuming a fixed set.
 # =====================================================================
 _QUALIFICATION_LEVEL_ALIASES = {
     "ug": "UG", "under graduate": "UG", "undergraduate": "UG",
@@ -600,44 +574,25 @@ def parse_qualifications(education: dict[str, str] | None) -> list[dict[str, str
 
 
 # =====================================================================
-# EDUCATION DEGREES / SPECIALIZATIONS — breaks parse_qualifications()'s
-# flat "field_of_study" display string into individually referenceable
-# facts: which degrees does a posting accept, and which specialization
-# for each. Confirmed from real HTML that Naukri renders this as ONE
-# flattened <span> per level (no separate chip per degree), e.g.
-#   "MCA in Any Specialization, MS/M.Sc(Science) in Any Specialization,
-#    M.Tech in Any Specialization"
-# so the comma is genuinely overloaded in the source text itself — it
-# separates a new degree from the one before it, AND separates two
-# specializations that both belong to the same degree ("B.Sc in
-# Computer Science and Technology, Information Technology (IT)" is ONE
-# degree with two acceptable specializations, not two degrees). There
-# is no punctuation that tells the two cases apart, so this walks the
-# comma-split tokens and treats anything that isn't a recognized degree
-# name as another specialization for whichever degree came right before
-# it. The base vocabulary came from every distinct field_of_study value
-# in this project's own data; it was later cross-checked against
-# Naukri's own site-wide Education filter panel (the full checkbox list
-# on a search results page) and extended with entries confirmed real
-# there but not yet seen in our own sample (CA, PG Diploma, Post
-# Graduation Not Required, B.B.A./B.M.S., M.Com/B.Com, M.A, and later
-# LLB - Bachelor of Laws, B.Ed, M.B.B.S. — non-tech UG/PG degrees added
-# deliberately broad, not filtered to IT relevance, so a new combo this
-# taxonomy hasn't seen doesn't need a code change to register cleanly).
-# Every entry's exact text was confirmed against a real live posting
-# first, not typed in from the (partially cut-off) filter screenshot —
-# e.g. it reads "LLB - Bachelor of Laws", not a guessed abbreviation.
-# Medical-MS/MD and B.Arch appear on Naukri's own filter list too but
-# were left out for now since neither actually turned up on a live
-# posting during this project's checks — better caught by
-# parse_education_degrees()'s auto-registration fallback with real
-# context than added here on guessed phrasing. Same reasoning kept
-# "Diploma" out earlier: it has no clear UG/PG signal on Naukri's list.
+# EDUCATION DEGREES / SPECIALIZATIONS — splits parse_qualifications()'s flat
+# display string into per-degree facts.
 #
-# A slash-joined entry ("B.Tech / B.E.", "MS/M.Sc(Science)", "MBA/PGDM",
-# "Ph.D/Doctorate", "B.B.A. / B.M.S.") is Naukri listing two alternative
-# credentials, not one combined one — split into separate atomic degree
-# references.
+# Naukri renders one flattened <span> per level, so the comma is overloaded in
+# the source itself: it separates a new degree AND two specializations of the
+# same degree. "B.Sc in Computer Science and Technology, Information Technology
+# (IT)" is ONE degree with two specializations. No punctuation distinguishes
+# the cases, so anything that isn't a recognized degree name is treated as
+# another specialization of the degree before it.
+#
+# The vocabulary came from this project's own data, then was cross-checked
+# against Naukri's site-wide Education filter and extended with entries
+# confirmed there. Every entry's exact text was verified against a live posting
+# rather than guessed ("LLB - Bachelor of Laws", not an abbreviation).
+# Medical-MS/MD, B.Arch and Diploma were left out: never seen live here, and
+# better caught by the auto-registration fallback with real context.
+#
+# A slash-joined entry ("B.Tech / B.E.", "MBA/PGDM") is two alternative
+# credentials, not one — split into separate degree references.
 # =====================================================================
 _DEGREE_VOCABULARY = [
     # (raw prefix exactly as Naukri renders it, level)
@@ -771,19 +726,13 @@ def parse_education_degrees(education: dict[str, str] | None) -> list[dict]:
 
 
 # =====================================================================
-# DESCRIPTION SECTIONS — best-effort split into Responsibilities and
-# Requirements, using common heading phrases. This is text heuristics,
-# not guaranteed: a posting phrased unusually, or with no headings at
-# all, just won't split — the full text still lives in `description`
-# either way, so nothing is lost if the heuristic misses.
+# DESCRIPTION SECTIONS — best-effort split on common heading phrases. A
+# posting with no headings just won't split; the full text is in `description`
+# either way, so nothing is lost.
 #
-# Called at READ time by api/routers/postings.py, not by clean_record().
-# The results used to be stored as responsibilities_text/requirements_
-# text columns, but they are a pure function of `description` (verified
-# byte-identical across every row in the table), so storing them cost
-# roughly a quarter of the table to hold text already present in the
-# column beside them. One posting is split per detail-page view, which
-# is far cheaper than carrying the duplicate on every row forever.
+# Called at READ time by api/routers/postings.py, not by clean_record(). These
+# were stored columns until they were shown to recompute byte-identically from
+# `description`, costing ~24% of the table to hold nothing new.
 # =====================================================================
 _RESPONSIBILITY_HEADERS = [
     "roles and responsibilities", "role and responsibilities",

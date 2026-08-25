@@ -260,8 +260,11 @@ wrong company) rather than a caught error.
 
 - Module docstrings explain *why* the file exists and what it deliberately doesn't do.
   Inline comments justify non-obvious decisions (`NULLS LAST`, the `skills_all` count
-  guard, `ping` instead of `timeout` in the `.bat`). Match that density — it's the
-  house style, not decoration.
+  guard, `ping` instead of `timeout` in the `.bat`) — **but keep them to one or two
+  lines.** State the reason, not the story: what would go wrong without this, or what
+  was measured. Drop the narrative of how it was discovered, what it replaced, and what
+  was considered and rejected — that belongs in the commit message, which is where the
+  history is meant to live. A comment longer than the code it explains is a smell.
 - Section banners: `# ===...===` blocks in Python, `-- ---...---` in SQL.
 - Modern typing throughout: `str | None`, `list[dict]`. No `Optional`/`typing.List`.
 - Every endpoint declares a `response_model` and a `summary=`; add the Pydantic model in

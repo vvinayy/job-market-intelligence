@@ -87,10 +87,8 @@ def _resolve_degree_specialization_ids(conn, pairs: set[tuple[int, int]]) -> dic
     degree_ids = list({d for d, _ in pairs})
     specialization_ids = list({s for _, s in pairs})
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        # Filtered by both columns separately (Postgres arrays can't hold
-        # composite row values through a plain %s parameter) then
-        # intersected with `pairs` in Python -- exact, just not a single
-        # round-trip filter. Fine at this table's size.
+        # Filtered on each column separately then intersected in Python: a %s
+        # parameter can't carry composite row values. Exact, just two steps.
         cur.execute("""
             SELECT degree_specialization_id, degree_id, specialization_id
             FROM education_degree_specializations
@@ -124,12 +122,9 @@ def get_connection():
     )
 
 
-# ON CONFLICT is where dedup actually happens. If this fingerprint is
-# already in the table, refresh it in place instead of inserting a
-# second row. Every field refreshes except job_id and first_seen_date —
-# postings get edited after they go live (a salary gets added, a
-# description gets reworded, a listing moves to a new URL), so a
-# narrower SET clause would silently go stale on every repeat sighting.
+# ON CONFLICT is where dedup happens: a known fingerprint refreshes in place.
+# Every field refreshes except job_id and first_seen_date — postings get edited
+# after going live, so a narrower SET clause goes stale on repeat sightings.
 UPSERT_SQL = """
 INSERT INTO cleaned_postings (
     fingerprint, url, title, company, description,
@@ -205,10 +200,8 @@ def save_records(records: list[dict]) -> tuple[int, int]:
 
         cleaned = [clean_record(r, city_name_to_id, skill_blocklist) for r in records]
 
-        # Postgres can't ON CONFLICT DO UPDATE the same row twice inside
-        # one statement, so duplicates have to be removed BEFORE the
-        # insert. Naukri does list the same job more than once on a
-        # single search page, so this fires in practice.
+        # Postgres can't ON CONFLICT DO UPDATE one row twice in a statement, so
+        # dedupe first. Naukri does repeat a job on a single search page.
         seen_fingerprints = set()
         deduped = []
         skipped_in_batch = 0
@@ -223,13 +216,9 @@ def save_records(records: list[dict]) -> tuple[int, int]:
         if skipped_in_batch:
             print(f"  ({skipped_in_batch} duplicate posting(s) within this batch collapsed into one)")
 
-        # Resolve every skill name in this batch to a skill_id, auto-
-        # registering any name not already in the dictionary. Category is
-        # only set at registration time (an initial guess from cleaning.py's
-        # SKILL_CATEGORIES, or NULL if that dict doesn't know it) — once a
-        # skill exists, this never touches its category again, so a manual
-        # correction made directly in the skills table persists across
-        # future scrapes instead of being overwritten.
+        # Get-or-create every skill name in the batch. Category is set only at
+        # registration, never updated — so a manual fix in the skills table
+        # survives future scrapes.
         all_skill_names = sorted({s for c in deduped for s in c["skills"]})
         skill_name_to_id = {}
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -248,10 +237,8 @@ def save_records(records: list[dict]) -> tuple[int, int]:
                 )
             skill_name_to_id.update({name: skill_id for skill_id, name in inserted})
 
-        # role_category/department/industry_type are single-valued per
-        # posting (unlike skills), so each just needs a get-or-create id
-        # lookup against its own small reference table -- no array, no
-        # join table, same registration pattern otherwise.
+        # Single-valued per posting, so each is one id against its own small
+        # reference table — no array, no join table.
         role_category_to_id = _resolve_reference_ids(
             conn, "role_categories", "role_category_id", "name",
             {c["posting"]["role_category"] for c in deduped})
@@ -262,22 +249,11 @@ def save_records(records: list[dict]) -> tuple[int, int]:
             conn, "industry_types", "industry_type_id", "name",
             {c["posting"]["industry_type"] for c in deduped})
 
-        # education_degrees/education_specializations need their ids
-        # resolved once across the whole batch, same reason skills do —
-        # cheaper than a lookup per posting, and get-or-create still
-        # works correctly when two postings in one batch share a degree
-        # neither has been seen with before. Resolved before the main
-        # UPSERT (unlike before) so cleaned_postings.accepted_degree_ids
-        # and .accepted_degree_specialization_ids can be written in the
-        # same INSERT — a convenience duplicate of the same fact
-        # posting_qualification_degrees/specializations hold, same
-        # reason city_ids is duplicated onto cleaned_postings alongside
-        # posting_cities: an at-a-glance read without a join, for a
-        # table someone might browse directly. Named "accepted_" rather
-        # than a bare noun so the array reads unambiguously as "any one
-        # of these satisfies the posting" (OR) and can't be misread the
-        # way a plain skill_ids-style array might be — skills genuinely
-        # are all wanted together, degrees are alternatives.
+        # Resolved once per batch, before the main UPSERT, so
+        # cleaned_postings.accepted_degree_ids can be written in the same
+        # INSERT — duplicated onto that table for an at-a-glance read, same as
+        # city_ids. The "accepted_" prefix marks OR semantics: any one degree
+        # satisfies the posting, unlike skill_ids which are all wanted.
         degree_to_id = _resolve_degree_ids(
             conn,
             {(d["degree"], d["level"]) for c in deduped for d in c["qualification_degrees"]},
@@ -286,11 +262,8 @@ def save_records(records: list[dict]) -> tuple[int, int]:
             conn, "education_specializations", "specialization_id", "specialization_name",
             {spec for c in deduped for d in c["qualification_degrees"] for spec in d["specializations"]},
         )
-        # Every (degree, specialization) pairing this batch touches gets
-        # its own id too — posting_qualification_specializations and
-        # cleaned_postings.accepted_degree_specialization_ids both store
-        # an array of THESE ids, one row per posting, rather than one
-        # row per pairing, mirroring posting_skills.
+        # Each (degree, specialization) pairing gets its own id; both tables
+        # store an array of those, one row per posting, mirroring posting_skills.
         degree_spec_to_id = _resolve_degree_specialization_ids(
             conn,
             {
@@ -325,12 +298,9 @@ def save_records(records: list[dict]) -> tuple[int, int]:
                     groups.append(ids)
             grouped_ids = {i for g in groups for i in g}
 
-            # skill_ids holds only what the posting requires outright.
-            # A skill offered as one of several alternatives lives in
-            # skill_groups instead and is deliberately NOT repeated here,
-            # so the two columns never state the same skill twice. The
-            # full set is skill_ids || skill_group_ids(skill_groups) --
-            # which is what the daily snapshot and the subset CHECK use.
+            # skill_ids holds only outright requirements; alternatives live in
+            # skill_groups and are NOT repeated here. The full set is
+            # skill_ids || skill_group_ids(skill_groups).
             fingerprint_to_skill_ids[c["posting"]["fingerprint"]] = sorted(
                 skill_name_to_id[s] for s in c["skills"]
                 if skill_name_to_id[s] not in grouped_ids)
@@ -379,14 +349,9 @@ def save_records(records: list[dict]) -> tuple[int, int]:
             for c in deduped:
                 job_id = fingerprint_to_job_id[c["posting"]["fingerprint"]]
                 job_ids_touched.append(job_id)
-                # posting_skills is one row per posting (skill_ids is an
-                # array), so every touched posting gets exactly one row here,
-                # even one with no skills — unlike qualifications below,
-                # which stays one-row-per-entry and simply contributes zero
-                # rows when a posting has none. preferred_skill_ids is
-                # always a subset of skill_ids (enforced by a CHECK
-                # constraint too) — cleaning.py already guarantees this by
-                # construction.
+                # One row per posting, even with no skills — unlike
+                # qualifications below, which is one row per entry.
+                # preferred_skill_ids is a subset, guaranteed here and CHECKed.
                 fingerprint = c["posting"]["fingerprint"]
                 skill_rows.append((job_id,
                                    fingerprint_to_skill_ids[fingerprint],
@@ -428,10 +393,9 @@ def save_records(records: list[dict]) -> tuple[int, int]:
 
 
 # =====================================================================
-# SCRAPE HEALTH — makes a broken selector or a storage failure visible
-# in the run's own log output, instead of only showing up later as a
-# gap someone happens to notice by hand (how Department/Industry Type
-# and the applicant-count bug were actually found, both times).
+# SCRAPE HEALTH — surfaces a broken selector in the run's own log, rather than
+# as a gap someone notices by hand months later (which is how the last two
+# extraction bugs were actually found).
 # =====================================================================
 def record_scrape_run(
     search_url: str, started_at, finished_at,
