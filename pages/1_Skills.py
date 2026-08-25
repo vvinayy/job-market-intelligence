@@ -32,8 +32,9 @@ with tab1:
         )
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
-            "Generic terms Naukri tags as skills — 'Agile', 'Coding', 'Cloud' — are "
-            "excluded via a blocklist."
+            "How many postings ask for each skill. Naukri tags some very broad "
+            "terms as skills — 'Agile', 'Coding', 'Cloud' — and those are left out "
+            "so they don't crowd out real tools."
         )
 
 
@@ -63,7 +64,9 @@ with tab2:
             **dc.TRANSPARENT,
         )
         st.plotly_chart(fig, use_container_width=True)
-        st.caption("Ranked among the 30 most in-demand skills — a pair outside that pool wouldn't appear here even if it were common.")
+        st.caption("Skills most often asked for in the same posting. Only the 30 "
+                   "most in-demand skills are paired up, so a common pairing "
+                   "between two rarer skills won't show here.")
 
         st.divider()
         st.write("Full picture: every pairing among those same skills, not just the top ones.")
@@ -136,8 +139,10 @@ with tab5:
                                  "negotiable_pct": "negotiable %",
                                  "swaps_label": "usually swapped with"}),
             use_container_width=True, hide_index=True)
-        st.caption("Only skills that appear in at least one choice set can score above zero, "
-                   "so a skill missing here was never offered as an alternative to anything.")
+        st.caption("How negotiable each skill is: the share of postings that would "
+                   "accept something else in its place, rather than naming it "
+                   "outright. A skill scores zero until some posting offers it as "
+                   "one option among several.")
 
 
 with tab3:
@@ -206,12 +211,11 @@ with tab4:
         )
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
-            "Counts skill mentions, not postings — a posting with three Cloud/DevOps "
-            "skills contributes three, so shares reflect a real mix rather than an "
-            "overlap count. Only categorized skills are included; most of Naukri's own "
-            "tags ('Agile', 'Communication Skills', generic role titles like "
-            "'Full Stack Developer') aren't a specific enough technology to categorize, "
-            "so they're excluded rather than forced into a catch-all bucket."
+            "What kind of work each role is really made of, as a share of the skills "
+            "it names. A role wanting three cloud tools counts three times over, so "
+            "the shares read as a mix rather than a headcount. Only skills specific "
+            "enough to place in a category are shown — broad tags like 'Agile' or "
+            "'Communication Skills' are left out rather than lumped into 'Other'."
         )
 
 dc.sampling_note()

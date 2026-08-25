@@ -37,8 +37,8 @@ with tab1:
         other = roles[roles["role"] == "Other"]["postings"].sum()
         if other:
             st.caption(
-                f"{int(other)} postings didn't match a known role pattern and are "
-                "grouped as 'Other' — job titles are free text, so this is expected."
+                "Roles are read from job titles, which employers write freely. "
+                f"{int(other)} titles matched no known pattern and sit in 'Other'."
             )
 
     st.divider()
@@ -86,26 +86,17 @@ with tab1:
                           **dc.TRANSPARENT)
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
-            "A posting 'offers a choice' when its description names alternatives — "
-            "\"Angular or React\" rather than both. Note it does not climb with "
-            "seniority: entry-level roles are the most rigid, and the 2-3 year band "
-            "is about as negotiable as the most senior one. Alternatives are detected "
-            "from description wording, so read the ordering rather than the exact level."
+            "The share of postings at each experience level that name alternatives — "
+            "\"Angular or React\" rather than demanding both. Notably it does not rise "
+            "with seniority: entry-level roles are the most rigid of all. Alternatives "
+            "are read from the description wording, so trust the ordering more than "
+            "the exact percentages."
         )
 
-    st.divider()
-    st.subheader("Work arrangement")
-    wt = dc.working_types()
-
-    if wt.empty:
-        st.info("No arrangement data yet.")
-    else:
-        st.plotly_chart(ranked_bar(wt, "postings", "name", height_per_row=40, min_height=180),
-                        use_container_width=True)
-        st.caption(
-            "Naukri only shows a work-mode badge on Hybrid and Remote postings — a "
-            "posting with no badge is On-site by Naukri's own convention, not an unknown."
-        )
+    # The "Work arrangement" chart was removed here. Naukri badges work mode on
+    # only ~25% of postings, so the chart was three-quarters "Not stated" — a
+    # picture of Naukri's badging, not of the market. /reference/working-types
+    # still serves the counts if it is ever worth stating as a plain figure.
 
     st.divider()
     st.subheader("Education requirements")
@@ -123,9 +114,10 @@ with tab1:
                           **dc.TRANSPARENT)
         st.plotly_chart(fig, use_container_width=True)
         st.caption(
-            f"Based on the {base} postings that disclose an education requirement so far — "
-            "a much smaller, newer slice of the data than most other charts here. A posting "
-            "can require more than one level (e.g. both UG and PG), so shares don't sum to 100%."
+            "The degree levels employers ask for. A posting can accept more than one "
+            f"(both UG and PG, say), so these don't sum to 100%. Drawn from the {base} "
+            "postings that state a requirement at all — fewer than most charts here, "
+            "since this field was added to the scraper later."
         )
 
 

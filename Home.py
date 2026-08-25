@@ -168,7 +168,9 @@ if not skills.empty:
         **dc.TRANSPARENT,
     )
     st.plotly_chart(fig, use_container_width=True)
-    st.caption("Generic tags like 'Agile' and 'Coding' are filtered out. See **Skills** for pairings and seniority splits.")
+    st.caption("The skills employers ask for most, counted across every posting. "
+               "Generic tags like 'Agile' and 'Coding' are left out. "
+               "**Skills** breaks these down by pairing and experience level.")
 
 st.divider()
 

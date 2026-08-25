@@ -68,7 +68,8 @@ with tab0:
     for line in lines:
         st.markdown(f"- {line}")
 
-    st.caption("Composed from the same figures as the other tabs on this page and the Skills page — nothing here is computed specially for this view.")
+    st.caption("How demand has moved since daily tracking began. Pick skills to "
+               "chart below, or see which rose and fell fastest.")
 
 
 with tab1:
