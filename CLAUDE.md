@@ -1,4 +1,4 @@
-# CLAUDE.md
+﻿# CLAUDE.md
 
 Guidance for AI assistants working in this repository.
 
@@ -131,7 +131,7 @@ guarantee in `job_database.py`.
 (`job_database.py::_resolve_reference_ids` / `_resolve_degree_ids`) — an unseen value auto-registers
 rather than being dropped or rejected. Cities are the deliberate exception: `cleaning.py::CITY_ALIASES`
 is a curated map, not auto-registering, because `cities.state` is `NOT NULL` and can't be derived from
-a bare city fragment — a genuinely new city needs a human to add it (`resolve_locations()`).
+a bare city fragment — a genuinely new city needs a human to add it (`resolve_locations()`). That backlog is surfaced, not silently dropped: `job_database.py::pending_locations()` lists fragments awaiting a curated entry, the scraper prints them at the end of every run, and `/analytics/scrape-health` returns them as `pending_locations`. It filters out state names and non-places (`pan india`), which should stay unmapped rather than become cities.
 
 **Multi-valued normalized facts are array-of-ids, one row per posting.** Same shape as
 `posting_skills(job_id, skill_ids INT[])`: `posting_qualification_degrees`,

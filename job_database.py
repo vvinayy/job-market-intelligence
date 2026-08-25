@@ -504,3 +504,33 @@ def check_field_health(current_run_id: int, lookback_runs: int = 10) -> list[dic
             warnings.append({"field": field, "current_rate": round(current_rate, 3),
                               "historical_avg_rate": round(avg_rate, 3)})
     return warnings
+
+
+def pending_locations() -> list[dict]:
+    """Location fragments that resolved to no city, minus the ones that are not
+    cities at all.
+
+    Every other reference table auto-registers an unseen value; cities cannot,
+    because cities.state is NOT NULL and a bare fragment gives nothing to fill
+    it with. So the fragment lands in unmapped_locations instead — and this
+    surfaces that backlog, since a column nobody reads is the same as dropping
+    it. Anything listed here needs a CITY_ALIASES entry and a state.
+
+    Excludes state names ("Telangana" is not a city) and non-place tokens
+    ("pan india"), which should stay unmapped rather than be registered.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT u AS fragment, COUNT(*)::int AS postings
+                FROM cleaned_postings, LATERAL unnest(unmapped_locations) u
+                WHERE NOT EXISTS (SELECT 1 FROM states s
+                                   WHERE lower(s.state_name) = lower(trim(u)))
+                  AND lower(trim(u)) NOT IN ('pan india', 'india', 'remote',
+                                             'anywhere', 'work from home')
+                GROUP BY u ORDER BY 2 DESC, 1
+            """)
+            return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()

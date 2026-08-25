@@ -1,4 +1,4 @@
-"""
+﻿"""
 Analytics — the aggregate views.
 
 Most of these accept the same filters as /postings, so a client can ask
@@ -11,10 +11,10 @@ from fastapi import APIRouter, Query
 from ..database import fetch_all, fetch_one, fetch_value, WhereBuilder
 from ..models import (
     Summary, Bucket, SkillPair, SkillSuggestion, NamedCount,
-    ScrapeHealthReport, ScrapeRunSummary, FieldHealthWarning,
+    ScrapeHealthReport, ScrapeRunSummary, FieldHealthWarning, PendingLocation,
     SkillChoice, SkillFlexibility, ExperienceFlexibility,
 )
-from job_database import check_field_health
+from job_database import check_field_health, pending_locations
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -363,6 +363,7 @@ def scrape_health(lookback: int = Query(20, ge=1, le=100)):
         latest_run=ScrapeRunSummary(**runs[0]),
         warnings=[FieldHealthWarning(**w) for w in warnings],
         recent_runs=[ScrapeRunSummary(**r) for r in runs],
+        pending_locations=[PendingLocation(**p) for p in pending_locations()],
     )
 
 

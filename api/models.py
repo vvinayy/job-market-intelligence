@@ -259,7 +259,20 @@ class FieldHealthWarning(BaseModel):
     historical_avg_rate: float = Field(description="Average found-rate over the lookback window, excluding this run")
 
 
+class PendingLocation(BaseModel):
+    """A location fragment that matched no city and needs a curated entry.
+
+    Cities are the one reference table that cannot auto-register an unseen
+    value: `cities.state` is NOT NULL and a bare fragment gives nothing to
+    fill it with."""
+    fragment: str
+    postings: int
+
+
 class ScrapeHealthReport(BaseModel):
     latest_run: ScrapeRunSummary | None = None
     warnings: list[FieldHealthWarning] = []
     recent_runs: list[ScrapeRunSummary] = []
+    pending_locations: list[PendingLocation] = Field(
+        default=[],
+        description="Location fragments awaiting a CITY_ALIASES entry and a state.")

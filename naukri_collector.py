@@ -480,6 +480,7 @@ def main(search_url: str, limit: int | None):
         # and an unsnapshotted day can't be recovered afterwards.
         if storage_ok:
             _snapshot_today()
+            _report_pending_locations()
 
         duration = (finished_at - started_at).total_seconds()
         print(f"\nRun took {duration:.0f}s. Scraped {len(records)} of {len(urls)} jobs.")
@@ -507,6 +508,22 @@ def _log_run(search_url, started_at, finished_at, postings_found, postings_scrap
             print(f"\n[HEALTH WARNING] Storage failure this run: {error_message}")
     except Exception as e:
         print(f"\n[health tracking failed, not fatal] {e}")
+
+
+def _report_pending_locations():
+    """Every other reference table auto-registers an unseen value; cities can't,
+    because cities.state is NOT NULL. So an unknown fragment lands in
+    unmapped_locations — printed here, since a column nobody reads is the same
+    as dropping it."""
+    try:
+        from job_database import pending_locations
+        pending = pending_locations()
+        if pending:
+            print(f"\n[LOCATIONS AWAITING A CITY_ALIASES ENTRY — {len(pending)}]")
+            for p in pending[:10]:
+                print(f"    {p['fragment']}  ({p['postings']} posting(s))")
+    except Exception as e:
+        print(f"[pending-location check failed: {e}]")
 
 
 def _snapshot_today():

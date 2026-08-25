@@ -121,6 +121,24 @@ SKILL_ALIASES = {
     "ux": "UX",
     "apis": "API",
     "generative ai": "Generative AI",
+
+    # Spellings that reached the skills table as separate rows before these
+    # existed, splitting one skill's demand across two or three ids. Merged
+    # 2026-08-25; these keep them converged. Canonical spellings are the
+    # surviving row's name, so trend history in skill_daily_counts continues
+    # under the name it already has.
+    "ai ml": "Aiml", "ai/ml": "Aiml", "ai-ml": "Aiml",
+    "back end": "Backend",
+    "cicd": "CI/CD",
+    "ci / cd tools": "Ci/Cd Tools", "ci cd tools": "Ci/Cd Tools",
+    "dynamo db": "DynamoDB",
+    "frontend development": "Front-End Development",
+    "front end development": "Front-End Development",
+    "full-stack development": "Fullstack Development",
+    "full stack development": "Fullstack Development",
+    "java full stack": "Java Fullstack",
+    "object oriented programming": "Object-Oriented Programming",
+    "pl/sql": "Plsql", "pl sql": "Plsql",
 }
 
 
