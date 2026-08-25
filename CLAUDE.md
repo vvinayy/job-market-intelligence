@@ -100,6 +100,15 @@ into SQL `NULL`. Never introduce a model call or a guess to fill a gap.
 `"30+ days ago"` → `posted_date = NULL` (raw text kept in `posted_raw`), `"100+"`
 applicants stored as the floor. Keep this rule when adding fields.
 
+The rule is easiest to break in a *fallback*. `normalize_working_type()` returned
+`"On-site"` when nothing matched, which put a fabricated value on 372 of 495 rows —
+Naukri's work-mode badge (`wfhmode`) only renders when a remote arrangement exists, so
+its absence means "not stated", never "office". The column read 100% populated while the
+scraper's own `field_found_counts` said 25%; that mismatch is the tell, and
+`/analytics/scrape-health` is where to look for it. A classifier fallback over a value
+that *is* present is fine by contrast — `classify_role()` returning `"Other"` describes a
+real title that matched no pattern, and invents nothing.
+
 **Dedup is by fingerprint.** SHA-256 of company + title + location + experience
 (`cleaning.py::make_fingerprint`). A repeat sighting `ON CONFLICT DO UPDATE`s every
 field to its latest value, preserves `first_seen_date`, bumps `last_seen_date` and

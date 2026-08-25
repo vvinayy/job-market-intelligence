@@ -116,16 +116,23 @@ def test_employment_type_no_match_is_none():
     assert cleaning.parse_is_full_time(None) is None
 
 
-def test_working_type_no_badge_is_onsite():
-    # Naukri only badges Hybrid/Remote/WFH postings -- no badge means
-    # On-site by convention, not "unknown".
-    assert cleaning.normalize_working_type(None) == "On-site"
-    assert cleaning.normalize_working_type("Work from office") == "On-site"
+def test_working_type_no_badge_is_unknown_not_onsite():
+    """No badge means Naukri said nothing, not that the job is on-site.
+
+    This asserted "On-site" until 2026-08-25, which put a fabricated value on
+    372 of 495 rows — the badge only renders when a remote arrangement exists.
+    """
+    assert cleaning.normalize_working_type(None) is None
+    assert cleaning.normalize_working_type("") is None
+    assert cleaning.normalize_working_type("not found") is None
 
 
-def test_working_type_hybrid_and_remote():
+def test_working_type_reads_a_real_badge():
     assert cleaning.normalize_working_type("Hybrid work mode") == "Hybrid"
     assert cleaning.normalize_working_type("Work from home") == "Remote"
+    assert cleaning.normalize_working_type("Permanently remote") == "Remote"
+    # Only an explicit office badge yields On-site.
+    assert cleaning.normalize_working_type("Work from office") == "On-site"
 
 
 # ---------------------------------------------------------------------

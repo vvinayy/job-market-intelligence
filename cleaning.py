@@ -347,17 +347,21 @@ def parse_contract_type(raw: str | None) -> str | None:
 # WORKING TYPE — Naukri only shows a badge for Hybrid/Remote/WFH
 # postings; no badge means on-site, not unknown.
 # =====================================================================
-def normalize_working_type(raw: str | None) -> str:
+def normalize_working_type(raw: str | None) -> str | None:
+    """None when Naukri showed no work-mode badge at all.
+
+    Used to default to "On-site", which asserted a fact no posting had
+    stated: the badge (CSS class `wfhmode`) only renders when there IS a
+    remote arrangement, so it is absent on ~75% of postings.
+    """
     text = (raw or "").lower()
     if "hybrid" in text:
         return "Hybrid"
-    if "remote" in text:
-        return "Remote"
-    if "work from home" in text:
+    if "remote" in text or "work from home" in text:
         return "Remote"
     if "office" in text:
         return "On-site"
-    return "On-site"
+    return None
 
 
 # =====================================================================
