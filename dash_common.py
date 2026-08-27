@@ -239,12 +239,6 @@ def departments() -> pd.DataFrame:
     return df("/reference/departments")
 
 
-def role_categories() -> pd.DataFrame:
-    """Naukri's own Role Category. Distinct from role_family, which we derive
-    from the title ourselves."""
-    return df("/reference/role-categories")
-
-
 def education_degrees() -> pd.DataFrame:
     """Accepted degrees, one row each. Naukri's "B.Tech / B.E." is two rows."""
     return df("/reference/education-degrees")
