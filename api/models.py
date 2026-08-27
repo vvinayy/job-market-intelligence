@@ -188,6 +188,26 @@ class ExperienceFlexibility(BaseModel):
     pct_offering_a_choice: float
 
 
+class ClosureRate(BaseModel):
+    """How fast postings in one group stop being listed.
+
+    `per_100_posting_days` is the figure to rank on, not `pct_closed`.
+    Exposure differs between groups -- a posting first seen two weeks ago has
+    had twice as long to close as one seen last week -- so a raw percentage
+    partly measures when we happened to scrape. Adjusting moved one department
+    from second place to first when this was checked against real data.
+
+    `closed` counts postings Naukri now redirects as expired. It never means
+    "filled": withdrawn, cancelled and expired-unfilled look identical from
+    outside, which is why nothing here is named hiring."""
+    bucket: str
+    postings: int
+    closed: int
+    pct_closed: float
+    mean_exposure_days: float
+    per_100_posting_days: float
+
+
 class SkillFlexibility(BaseModel):
     """How negotiable a skill is. `required` counts postings that ask for
     it outright; `alternative` counts those that would equally accept

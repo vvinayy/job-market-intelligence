@@ -6,13 +6,13 @@ Most of these accept the same filters as /postings, so a client can ask
 stuck with global totals.
 """
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 
 from ..database import fetch_all, fetch_one, fetch_value, WhereBuilder
 from ..models import (
     Summary, Bucket, SkillPair, SkillSuggestion, NamedCount,
     ScrapeHealthReport, ScrapeRunSummary, FieldHealthWarning, PendingLocation,
-    SkillChoice, SkillFlexibility, ExperienceFlexibility,
+    SkillChoice, SkillFlexibility, ExperienceFlexibility, ClosureRate,
 )
 from job_database import check_field_health, pending_locations
 
@@ -484,4 +484,79 @@ def flexibility_by_experience(
         GROUP BY bucket
         HAVING COUNT(*) >= 5
         ORDER BY pct_offering_a_choice DESC
+    """, w.values)
+
+
+# ---------------------------------------------------------------------
+# CLOSURES
+# ---------------------------------------------------------------------
+# Only the two dimensions that survive scrutiny. Both come from fields the
+# scraper has captured since its first run, so neither carries the cohort
+# confound that makes department/industry/education unusable: those landed
+# on 19 Aug, so their "not stated" bucket is really "collected earlier",
+# and earlier postings have had longer to close.
+CLOSURE_DIMENSIONS = {
+    "experience_band": """
+        CASE
+            WHEN c.experience_min IS NULL THEN 'Not stated'
+            WHEN c.experience_min <= 1  THEN '0-1 years'
+            WHEN c.experience_min <= 3  THEN '2-3 years'
+            WHEN c.experience_min <= 6  THEN '4-6 years'
+            WHEN c.experience_min <= 10 THEN '7-10 years'
+            ELSE '10+ years'
+        END
+    """,
+    "role_family": "COALESCE(c.role_family, 'Uncategorised')",
+}
+
+
+@router.get("/closures", response_model=list[ClosureRate],
+            summary="How fast postings close, by group")
+def closures(
+    dimension: str = Query("experience_band",
+                           description="experience_band or role_family"),
+    min_postings: int = Query(15, ge=1,
+                              description="Groups smaller than this are omitted"),
+    role_family: list[str] | None = Query(None),
+    city: list[str] | None = Query(None),
+    state: list[str] | None = Query(None),
+):
+    """Closure rate per group, adjusted for how long each posting has been
+    watched.
+
+    Rank on `per_100_posting_days`. `pct_closed` is the intuitive number and
+    the misleading one: it compares groups that have been observed for
+    different lengths of time.
+
+    Company and location are deliberately not offered. Company splits 522
+    postings across 239 employers, and location is 520 Hyderabad because that
+    is what the searches target -- neither can separate groups.
+    """
+    if dimension not in CLOSURE_DIMENSIONS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"dimension must be one of {sorted(CLOSURE_DIMENSIONS)}",
+        )
+    bucket_sql = CLOSURE_DIMENSIONS[dimension]
+    w = scope(role_family, city, state, None, None, None, None)
+
+    # is_expired IS NULL means never checked, which is neither open nor
+    # closed -- counting it either way would be inventing an observation.
+    return fetch_all(f"""
+        SELECT
+            {bucket_sql} AS bucket,
+            COUNT(*)::int AS postings,
+            COUNT(*) FILTER (WHERE c.is_expired)::int AS closed,
+            ROUND(100.0 * COUNT(*) FILTER (WHERE c.is_expired)
+                  / COUNT(*), 1)::float AS pct_closed,
+            ROUND(AVG(CURRENT_DATE - c.first_seen_date), 1)::float
+                AS mean_exposure_days,
+            ROUND(100.0 * COUNT(*) FILTER (WHERE c.is_expired)
+                  / NULLIF(SUM(CURRENT_DATE - c.first_seen_date), 0), 2)::float
+                AS per_100_posting_days
+        FROM cleaned_postings c
+        {w.sql}{" AND" if w.sql else "WHERE"} c.is_expired IS NOT NULL
+        GROUP BY bucket
+        HAVING COUNT(*) >= {int(min_postings)}
+        ORDER BY per_100_posting_days DESC NULLS LAST
     """, w.values)

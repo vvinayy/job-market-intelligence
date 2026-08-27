@@ -269,3 +269,59 @@ def test_flexibility_by_experience_counts_are_consistent(client):
         expected = float((Decimal(100 * row["offering_a_choice"]) / Decimal(row["postings"]))
                          .quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
         assert row["pct_offering_a_choice"] == pytest.approx(expected, abs=0.001)
+
+
+# ---------------------------------------------------------------------
+# Closures. The rate, not the count -- exposure differs between groups.
+# ---------------------------------------------------------------------
+def test_closures_returns_both_dimensions(client):
+    for dimension in ("experience_band", "role_family"):
+        r = client.get(f"/analytics/closures?dimension={dimension}")
+        assert r.status_code == 200, dimension
+
+
+def test_closures_rejects_unlisted_dimension(client):
+    # company and city are excluded deliberately: 239 employers across 522
+    # postings, and 520 of 522 are Hyderabad. Neither can separate groups.
+    for bad in ("company", "city", "department", "'; DROP TABLE cleaned_postings--"):
+        assert client.get(f"/analytics/closures?dimension={bad}").status_code == 422
+
+
+def test_closures_counts_are_internally_consistent(client):
+    from decimal import Decimal, ROUND_HALF_UP
+
+    rows = client.get("/analytics/closures?dimension=experience_band").json()
+    assert rows, "expected at least one experience band"
+    for row in rows:
+        assert 0 <= row["closed"] <= row["postings"]
+        # Decimal, not round(): Postgres rounds half away from zero while
+        # Python rounds half to even, so 31.25 becomes 31.3 there and 31.2 here.
+        expected = float((Decimal(100 * row["closed"]) / Decimal(row["postings"]))
+                         .quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
+        assert row["pct_closed"] == expected
+
+
+def test_closures_honours_min_postings(client):
+    rows = client.get("/analytics/closures?dimension=role_family&min_postings=40").json()
+    assert all(row["postings"] >= 40 for row in rows)
+
+
+def test_closures_never_counts_unchecked_postings(client):
+    """A posting nobody has checked is neither open nor closed.
+
+    Counting NULL is_expired as "still live" would invent an observation and
+    quietly depress every rate -- the same error the working_type fallback made.
+    """
+    rows = client.get("/analytics/closures?dimension=experience_band").json()
+    checked = client.get("/analytics/summary").json()
+    total_in_closures = sum(row["postings"] for row in rows)
+    # Bands under the floor are dropped, so this is a ceiling not an equality.
+    assert total_in_closures <= checked["total_postings"]
+
+
+def test_closures_ranks_by_rate_not_percentage(client):
+    """The whole point of the endpoint: results come back ordered by the
+    exposure-adjusted rate, which is NOT the same order as raw percentage."""
+    rows = client.get("/analytics/closures?dimension=role_family").json()
+    rates = [row["per_100_posting_days"] for row in rows]
+    assert rates == sorted(rates, reverse=True)

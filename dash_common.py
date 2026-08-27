@@ -177,6 +177,14 @@ def flexibility_by_experience(**filters) -> pd.DataFrame:
     return df("/analytics/flexibility-by-experience", tuple(_filter_params(filters)))
 
 
+def closures(dimension: str = "experience_band", min_postings: int = 15,
+             **filters) -> pd.DataFrame:
+    """How fast postings close, per group. Rank on per_100_posting_days --
+    pct_closed compares groups watched for different lengths of time."""
+    params = [("dimension", dimension), ("min_postings", min_postings)] + _filter_params(filters)
+    return df("/analytics/closures", tuple(params))
+
+
 def location_distribution(by: str = "city", limit: int = 30, **filters) -> pd.DataFrame:
     params = [("by", by), ("limit", limit)] + _filter_params(filters)
     return df("/analytics/locations", tuple(params))

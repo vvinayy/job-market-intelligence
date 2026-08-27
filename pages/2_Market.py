@@ -99,6 +99,47 @@ with tab1:
     # still serves the counts if it is ever worth stating as a plain figure.
 
     st.divider()
+    st.subheader("How quickly are these roles being filled?")
+    dim_label = st.radio("Compare by", ["Experience level", "Role"],
+                         horizontal=True, key="closure_dim")
+    dimension = "experience_band" if dim_label == "Experience level" else "role_family"
+    closures = dc.closures(dimension=dimension)
+
+    if closures.empty:
+        st.info("No closure data yet — postings need to be checked for a few days first.")
+    else:
+        baseline = (100 * closures["closed"].sum()
+                    / (closures["postings"] * closures["mean_exposure_days"]).sum())
+        closures = closures.sort_values("per_100_posting_days")
+
+        fig = px.bar(closures, x="per_100_posting_days", y="bucket", orientation="h",
+                     text=closures["per_100_posting_days"].map(lambda v: f"{v:.2f}"),
+                     color="per_100_posting_days", color_continuous_scale=dc.SCALE,
+                     custom_data=["postings", "closed", "pct_closed", "mean_exposure_days"])
+        fig.update_traces(
+            textposition="outside", cliponaxis=False,
+            hovertemplate="%{y}<br>%{customdata[1]} of %{customdata[0]} postings closed "
+                          "(%{customdata[2]}%)<br>watched %{customdata[3]} days on "
+                          "average<extra></extra>")
+        # A rate means nothing on its own -- the line is what makes a bar
+        # readable as faster or slower than the market.
+        fig.add_vline(x=baseline, line_dash="dot", line_color="#9aa5a2",
+                      annotation_text="all postings", annotation_position="top")
+        fig.update_layout(height=max(300, len(closures) * 46),
+                          margin=dict(l=0, r=60, t=26, b=0), coloraxis_showscale=False,
+                          yaxis_title=None,
+                          xaxis_title="closures per 100 days a posting is listed",
+                          **dc.TRANSPARENT)
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption(
+            "How fast postings stop being listed, measured against how long each "
+            "one has been tracked — a posting found two weeks ago has had twice as "
+            "long to close as one found last week, so plain counts would mostly "
+            "reflect when it was collected. Naukri only says a posting is gone, "
+            "never whether anyone was hired."
+        )
+
+    st.divider()
     st.subheader("Education requirements")
     quals = dc.qualification_distribution()
 
