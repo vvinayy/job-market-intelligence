@@ -12,6 +12,7 @@ Naukri.com → Playwright scraper → Python cleaning layer (in-process)
 ```
 
 - **Collection** (`naukri_collector.py`, `skill_taxonomy.py`) — Playwright scraper, visible browser (Naukri blocks headless). Discovers job URLs from a search page, then reads each posting's fields directly off labelled DOM elements — no AI, no guessing: title, company, experience, location, key skills, employment type, Role Category, Industry Type, Department, work mode, salary, posted date, openings, description, and Education (UG/PG/Doctorate, whichever levels a posting actually shows). A regex-based skill taxonomy mines the description text for tools/frameworks Naukri's own tags missed.
+- **Liveness tracking** (`liveness_checker.py`, `liveness.py`) — the one part of the pipeline that reads URLs from the database rather than from a search. The scraper only ever sees postings a search returns, so an expired posting drops out of the results and can never be re-visited, corrected, or marked; the rows most in need of updating are precisely the ones it cannot reach. A daily pass re-checks every stored URL with a plain HEAD request — Naukri answers an expired posting with a 302 whose `Location` carries `expJD=true`, so nothing needs rendering (measured 40/40 against a full browser census, 0.11s per check against 0.85s). Expiry requires that positive evidence: a timeout, a block, or a 404 is recorded as unknown and writes nothing, and two safety valves abort the run entirely rather than write partial results. Results go to `is_expired` / `expired_on` / `last_checked_on`, never to `last_seen_date`, which means "a search surfaced this" and must stay distinguishable from "we verified the URL".
 - **Cleaning layer** (`cleaning.py`) — plain Python, not SQL, and not a separate batch step. `clean_record()` takes one scraped posting and returns everything needed to write it: skill name normalization, experience/salary range parsing, work-mode/employment/contract-type detection, city resolution, role classification, and qualification-level normalization.
 - **Storage** (`job_database.py`) — calls `clean_record()` on every scraped posting and writes straight into `cleaned_postings`, `posting_qualifications`, and `posting_cities`. Skills go through one more step: each normalized skill name is resolved against a `skills` dictionary table (one row per distinct skill, its own `skill_id`), auto-registering any name not seen before. `posting_skills` stores one row per *posting* — `skill_ids INT[]`, GIN-indexed — rather than one row per skill, trading away Postgres's ability to index into the array for aggregation (skill demand, co-occurrence, and the daily snapshot all `unnest()` it at query time) for meaningfully less storage and a simpler single-posting lookup. A skill's category (Frontend/Backend/Database/Cloud-DevOps/Data-ML/Testing/Languages) is seeded from a lookup dict in `cleaning.py` only at the moment it's first registered; after that it lives purely in the `skills` table, so correcting one later is a data edit, not a code change. There is no raw/staging table — nothing scraped is ever stored unprocessed. Dedup is by a fingerprint of company + title + location + experience; a repeat sighting refreshes every field to its latest known value (salary, description, URL — postings do get edited after they go live) while preserving `first_seen_date`. `snapshot_daily_skills()` (SQL, in `trends_setup.sql`) freezes one skill-count-per-day afterward, since `cleaned_postings` itself only ever shows the present.
 - **API** (`api/`) — FastAPI + Pydantic + a psycopg2 connection pool, no ORM. Four routers: `postings` (filtered/paginated search), `reference` (canonical lookups for filter UIs), `analytics` (aggregates), `trends` (time series, movers). Every query is parameterised. Interactive docs at `/docs`.
@@ -25,6 +26,9 @@ naukri_collector.py      scraper — discovery + detail extraction
 skill_taxonomy.py        regex skill vocabulary used by the scraper
 cleaning.py               cleaning layer — one scraped record in, a cleaned record out
 job_database.py            writes cleaned_postings + posting_skills/qualifications/cities
+liveness.py                 decides whether a posting URL is still live (pure, no I/O)
+liveness_checker.py          daily pass over stored URLs, finds expired postings
+notify.py                    Windows toasts, so unattended runs aren't silent
 schema.sql                   every table shape — cities/states, cleaned_postings, skills dictionary, posting_cities/skills/qualifications
 trends_setup.sql                daily snapshot + trend views
 api/
@@ -34,10 +38,11 @@ api/
   routers/              postings, reference, analytics, trends
 Home.py                 dashboard landing page
 pages/
-  1_Skills.py           demand, pairings, seniority split
-  2_Market.py           roles, employers, locations, work arrangement
+  1_Skills.py           demand, pairings, interchangeable sets, category mix
+  2_Market.py           roles, employers, locations, how fast roles close
   3_Trends.py           demand over time, movers, new arrivals
-  4_Jobs.py             individual posting search
+  4_Composition.py      industry, department, role category, qualifications
+  5_Jobs.py             individual posting search
 dash_common.py           shared API client for every dashboard page
 jobmarket.bat            the only launcher: scrape → snapshot → API → dashboard
 ```

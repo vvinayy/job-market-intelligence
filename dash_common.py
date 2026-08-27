@@ -229,6 +229,33 @@ def roles() -> list[str]:
     return data["name"].tolist() if not data.empty else []
 
 
+def industry_types() -> pd.DataFrame:
+    """Naukri's Industry Type tag, e.g. "IT Services & Consulting"."""
+    return df("/reference/industry-types")
+
+
+def departments() -> pd.DataFrame:
+    """Naukri's Department tag, e.g. "Engineering - Software & QA"."""
+    return df("/reference/departments")
+
+
+def role_categories() -> pd.DataFrame:
+    """Naukri's own Role Category. Distinct from role_family, which we derive
+    from the title ourselves."""
+    return df("/reference/role-categories")
+
+
+def education_degrees() -> pd.DataFrame:
+    """Accepted degrees, one row each. Naukri's "B.Tech / B.E." is two rows."""
+    return df("/reference/education-degrees")
+
+
+def education_specializations() -> pd.DataFrame:
+    """Accepted fields of study. "Any Specialization" is a real answer here,
+    not a missing value."""
+    return df("/reference/education-specializations")
+
+
 def working_types() -> pd.DataFrame:
     return df("/reference/working-types")
 

@@ -45,6 +45,6 @@ def test_market_page_loads_without_exception():
 
 
 def test_jobs_page_loads_without_exception():
-    at = AppTest.from_file(str(ROOT / "pages" / "4_Jobs.py"), default_timeout=30)
+    at = AppTest.from_file(str(ROOT / "pages" / "5_Jobs.py"), default_timeout=30)
     at.run()
     assert not at.exception
