@@ -172,7 +172,14 @@ ON CONFLICT (fingerprint) DO UPDATE SET
     preferred_skill_ids   = EXCLUDED.preferred_skill_ids,
     skill_groups          = EXCLUDED.skill_groups,
     last_seen_date        = CURRENT_DATE,
-    times_seen            = cleaned_postings.times_seen + 1
+    times_seen            = cleaned_postings.times_seen + 1,
+    -- Literals, not EXCLUDED: these aren't scraped fields, they follow from
+    -- the scrape having succeeded. Naukri just served the page, so a
+    -- previously recorded expiry is void -- and a scrape reaching a posting
+    -- is a liveness check, which keeps it out of the checker's queue.
+    is_expired            = FALSE,
+    expired_on            = NULL,
+    last_checked_on       = CURRENT_DATE
 RETURNING job_id, fingerprint, (xmax = 0) AS was_inserted;
 """
 

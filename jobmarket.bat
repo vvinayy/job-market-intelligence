@@ -17,16 +17,22 @@ REM   jobmarket.bat                 scrape, then start API + dashboard
 REM   jobmarket.bat --skip-scrape   data's already fresh, just start the app
 REM   jobmarket.bat --scrape-only   scrape and exit - this is the mode
 REM                                 Windows Task Scheduler should run
+REM   jobmarket.bat --check-only    check every posting URL for expiry and
+REM                                 exit. Runs as its own scheduled task
+REM                                 (JobMarket Liveness Check, 5pm daily),
+REM                                 kept off the morning path so it cannot
+REM                                 delay the dashboard launch. ~10 min.
 REM ====================================================================
 
 cd /d "C:\Users\Acer\Webscraping_Extraction"
 
 if /i "%~1"=="--skip-scrape"  goto :start_services
 if /i "%~1"=="--scrape-only"  goto :scrape
+if /i "%~1"=="--check-only"   goto :check
 if /i "%~1"==""               goto :scrape
 
 echo Unknown option "%~1".
-echo Usage: jobmarket.bat [--skip-scrape ^| --scrape-only]
+echo Usage: jobmarket.bat [--skip-scrape ^| --scrape-only ^| --check-only]
 exit /b 1
 
 REM --------------------------------------------------------------------
@@ -114,3 +120,31 @@ start "Job Market Dashboard" cmd /k "streamlit run Home.py"
 echo.
 echo Both are launching in their own windows. Streamlit opens your browser
 echo automatically once it's ready.
+exit /b 0
+
+
+REM --------------------------------------------------------------------
+REM STAGE 4 - liveness check. Separate from the scrape on purpose: the
+REM scraper only ever sees postings a search surfaces, so it can never
+REM revisit an expired one. This walks stored URLs directly.
+REM
+REM Its own 5pm task rather than bolted onto the 11am run: the
+REM no-argument path above starts the API and dashboard, which should not
+REM wait ~10 minutes on it. Unlike the scrape this needs no browser, so it
+REM does not require an interactive logon.
+REM --------------------------------------------------------------------
+:check
+if not exist "logs" mkdir logs
+for /f %%i in ('powershell -NoProfile -Command "Get-Date -Format yyyy-MM-dd"') do set LOGDATE=%%i
+set LOGFILE=logs\liveness_%LOGDATE%.log
+
+echo. >> "%LOGFILE%"
+echo ================================================== >> "%LOGFILE%"
+echo Check started: %date% %time% >> "%LOGFILE%"
+echo ================================================== >> "%LOGFILE%"
+
+python liveness_checker.py >> "%LOGFILE%" 2>&1
+
+echo Check finished: %date% %time% >> "%LOGFILE%"
+echo Liveness check complete. Log: %LOGFILE%
+exit /b 0

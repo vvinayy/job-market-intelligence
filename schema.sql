@@ -300,11 +300,27 @@ CREATE TABLE cleaned_postings (
     last_seen_date           DATE NOT NULL DEFAULT CURRENT_DATE,
     times_seen                INT NOT NULL DEFAULT 1,
 
+    -- Liveness, written by liveness_checker.py. A search never surfaces an
+    -- expired posting, so nothing else in the pipeline can ever reach these
+    -- rows -- the checker visits stored URLs directly.
+    -- NULL = never checked, which must stay distinct from FALSE = checked
+    -- and alive. Same three-state shape as is_full_time; never test for
+    -- truthiness.
+    is_expired               BOOLEAN,
+    -- The date we CONFIRMED expiry, not the date it expired -- Naukri never
+    -- says the latter. The gap to last_checked_on is the measurement error.
+    expired_on               DATE,
+    last_checked_on          DATE,
+
     -- Checked against the UNION, not skill_ids alone: a starred skill
     -- can be one of a choice group (12 rows are), in which case it sits
     -- in skill_groups rather than skill_ids.
     CONSTRAINT cleaned_postings_preferred_subset_of_skills
-        CHECK (preferred_skill_ids <@ (skill_ids || skill_group_ids(skill_groups)))
+        CHECK (preferred_skill_ids <@ (skill_ids || skill_group_ids(skill_groups))),
+
+    -- An expiry date on a posting that isn't expired is a bug, not a state.
+    CONSTRAINT cleaned_postings_expired_on_requires_expired
+        CHECK (expired_on IS NULL OR is_expired IS TRUE)
 );
 
 CREATE INDEX IF NOT EXISTS idx_cleaned_postings_accepted_degree_ids
@@ -322,6 +338,11 @@ CREATE INDEX IF NOT EXISTS idx_cleaned_postings_skill_group_ids
     ON cleaned_postings USING GIN (skill_group_ids(skill_groups));
 CREATE INDEX IF NOT EXISTS idx_cleaned_postings_skill_groups
     ON cleaned_postings USING GIN (skill_groups jsonb_path_ops);
+-- Partial: the checker's queue is "not already dead, not already done
+-- today", and the dead half of the table grows without ever being queried.
+CREATE INDEX IF NOT EXISTS idx_cleaned_postings_liveness
+    ON cleaned_postings (last_checked_on)
+    WHERE is_expired IS NOT TRUE;
 
 
 -- ---------------------------------------------------------------------

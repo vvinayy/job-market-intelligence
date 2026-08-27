@@ -37,6 +37,7 @@ import shutil
 from urllib.parse import urlparse
 from datetime import date, datetime, timedelta
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+import liveness
 from skill_taxonomy import extract_skills
 from job_database import (save_records, record_scrape_run, check_field_health,
                           snapshot_daily_skills)
@@ -234,6 +235,14 @@ def discover_job_urls(page, search_url: str, limit: int | None = None) -> list[s
 # ---------------------------------------------------------------------
 def scrape_job_detail(page, url: str, search_url: str | None = None) -> dict | None:
     page.goto(url, wait_until="domcontentloaded", timeout=45000)
+
+    # A posting can expire between URL discovery and this visit. Naukri
+    # redirects those to a search page that never renders a description, so
+    # checking the URL first saves the 20s timeout below — and separates
+    # "expired" from "the selector broke", which otherwise share one message.
+    if liveness.classify(url, page.url, has_description=False) == "expired":
+        print(f"  [expired] Naukri has closed this posting — {url}")
+        return None
 
     try:
         page.wait_for_selector("div.styles_JDC__dang-inner-html__h0K4t", timeout=20000)
