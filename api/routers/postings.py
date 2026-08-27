@@ -32,6 +32,7 @@ SORTABLE = {
     "times_seen": "c.times_seen",
     "first_seen": "c.first_seen_date",
     "last_seen": "c.last_seen_date",
+    "expired_on": "c.expired_on",
     "company": "c.company",
     "title": "c.title",
 }
@@ -74,7 +75,8 @@ BASE_SELECT = """
         ) AS cities,
         c.working_type, c.is_full_time, c.contract_type,
         c.posted_date, c.openings, c.applicant_count, c.applicant_count_qualifier,
-        c.company_rating, c.company_reviews, c.url
+        c.company_rating, c.company_reviews, c.url,
+        c.is_expired, c.expired_on
     FROM cleaned_postings c
     LEFT JOIN role_categories rc ON rc.role_category_id = c.role_category_id
     LEFT JOIN departments d ON d.department_id = c.department_id
@@ -90,6 +92,7 @@ def build_filters(
     experience_min, experience_max, has_salary, salary_min, salary_max,
     working_type, is_full_time, contract_type, qualification_level,
     posted_after, posted_before, seen_after, search, min_openings,
+    is_expired,
 ) -> WhereBuilder:
     """Turn optional query parameters into a parameterised WHERE clause."""
     w = WhereBuilder()
@@ -175,6 +178,9 @@ def build_filters(
     w.add("c.posted_date <= %s", posted_before)
     w.add("c.last_seen_date >= %s", seen_after)
     w.add("c.openings >= %s", min_openings)
+    # add() skips on `is None`, not on falsy, so ?is_expired=false works.
+    # A never-checked posting is neither open nor closed and matches neither.
+    w.add("c.is_expired = %s", is_expired)
 
     if search:
         w.add("(c.title ILIKE %s OR c.company ILIKE %s)", f"%{search}%", f"%{search}%")
@@ -222,6 +228,11 @@ def list_postings(
     posted_before: date | None = Query(None),
     seen_after: date | None = Query(None, description="Still listed on or after this date"),
 
+    # --- liveness ---
+    is_expired: bool | None = Query(
+        None, description="true for postings Naukri has closed, false for still-open; "
+                    "omit for both. Postings never checked are excluded either way."),
+
     # --- other ---
     min_openings: int | None = Query(None, ge=1),
 
@@ -239,6 +250,7 @@ def list_postings(
         experience_min, experience_max, has_salary, salary_min, salary_max,
         working_type, is_full_time, contract_type, qualification_level,
         posted_after, posted_before, seen_after, search, min_openings,
+        is_expired,
     )
 
     total = fetch_value(
@@ -286,6 +298,7 @@ def get_posting(job_id: int):
                    '{}'
                ) AS preferred_skills,
                c.first_seen_date, c.last_seen_date, c.times_seen,
+        c.is_expired, c.expired_on, c.last_checked_on,
                (c.last_seen_date - c.first_seen_date) AS days_listed
         FROM cleaned_postings c
         WHERE c.job_id = %s

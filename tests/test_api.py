@@ -325,3 +325,43 @@ def test_closures_ranks_by_rate_not_percentage(client):
     rows = client.get("/analytics/closures?dimension=role_family").json()
     rates = [row["per_100_posting_days"] for row in rows]
     assert rates == sorted(rates, reverse=True)
+
+
+# ---------------------------------------------------------------------
+# Expiry on /postings. The tri-state is the whole point: a posting nobody
+# has checked is neither open nor closed and must match neither filter.
+# ---------------------------------------------------------------------
+def test_postings_expiry_filter_partitions_the_table(client):
+    total = client.get("/postings?page_size=1").json()["total"]
+    open_only = client.get("/postings?page_size=1&is_expired=false").json()["total"]
+    closed_only = client.get("/postings?page_size=1&is_expired=true").json()["total"]
+    unchecked = client.get("/analytics/summary").json()["never_checked"]
+    # The two filters plus the never-checked remainder must account for
+    # everything; if they over-count, one of them is catching NULLs.
+    assert open_only + closed_only + unchecked == total
+
+
+def test_postings_expose_expiry_fields(client):
+    items = client.get("/postings?page_size=5&is_expired=true").json()["items"]
+    for row in items:
+        assert row["is_expired"] is True
+        assert row["expired_on"] is not None, "a closed posting must carry its date"
+
+
+def test_postings_sortable_by_expired_on(client):
+    r = client.get("/postings?is_expired=true&sort_by=expired_on&order=desc&page_size=5")
+    assert r.status_code == 200
+
+
+def test_posting_detail_carries_liveness(client):
+    closed = client.get("/postings?page_size=1&is_expired=true").json()["items"]
+    if not closed:
+        return
+    detail = client.get(f"/postings/{closed[0]['job_id']}").json()
+    assert detail["is_expired"] is True
+    assert detail["last_checked_on"] is not None
+
+
+def test_summary_liveness_never_conflates_unchecked_with_open(client):
+    s = client.get("/analytics/summary").json()
+    assert s["still_open"] + s["closed"] + s["never_checked"] == s["total_postings"]

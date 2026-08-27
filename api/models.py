@@ -52,6 +52,10 @@ class PostingSummary(BaseModel):
     company_rating: float | None = None
     company_reviews: int | None = None
     url: str | None = None
+    # Three states: True closed, False open, None never checked. Never test
+    # for truthiness -- an unchecked posting is not an open one.
+    is_expired: bool | None = None
+    expired_on: date | None = None
 
 
 class Qualification(BaseModel):
@@ -86,6 +90,9 @@ class PostingDetail(PostingSummary):
     last_seen_date: date | None = None
     times_seen: int | None = None
     days_listed: int | None = None
+    is_expired: bool | None = None
+    expired_on: date | None = None
+    last_checked_on: date | None = None
 
 
 class PostingPage(BaseModel):
@@ -138,6 +145,13 @@ class Summary(BaseModel):
     total_postings: int
     active_last_7_days: int
     new_postings_7d: int
+    # Checked directly against Naukri, unlike active_last_7_days which only
+    # says a search surfaced the posting. never_checked must stay its own
+    # number: it is not the same as open.
+    still_open: int = 0
+    closed: int = 0
+    never_checked: int = 0
+    last_liveness_check: date | None = None
     companies: int
     distinct_skills: int
     distinct_roles: int

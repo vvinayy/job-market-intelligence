@@ -53,6 +53,13 @@ def summary():
                                                                    AS active_last_7_days,
             COUNT(*) FILTER (WHERE first_seen_date >= CURRENT_DATE - 7)::int
                                                                    AS new_postings_7d,
+            -- Verified liveness, not a coverage proxy. active_last_7_days
+            -- above means "a search surfaced it recently", which says as much
+            -- about what we scraped as about the posting.
+            COUNT(*) FILTER (WHERE is_expired IS FALSE)::int        AS still_open,
+            COUNT(*) FILTER (WHERE is_expired)::int                 AS closed,
+            COUNT(*) FILTER (WHERE is_expired IS NULL)::int         AS never_checked,
+            MAX(last_checked_on)                                    AS last_liveness_check,
             COUNT(DISTINCT company)::int                           AS companies,
             COUNT(DISTINCT role_family)::int                       AS distinct_roles,
             COUNT(*) FILTER (WHERE salary_min IS NOT NULL)::int     AS postings_with_salary,

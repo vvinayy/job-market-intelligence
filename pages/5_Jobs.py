@@ -25,6 +25,13 @@ role_family = f2.multiselect("Role", dc.roles(), key="jobs_role")
 cities_df = dc.cities_reference()
 city = f3.multiselect("City", cities_df["city_name"].tolist() if not cities_df.empty else [], key="jobs_city")
 
+status = st.radio(
+    "Listing status", ["All", "Still open", "Closed"], horizontal=True, key="jobs_status",
+    help="Checked daily against Naukri. 'Closed' means Naukri now redirects the "
+         "posting as expired — it does not mean the role was filled.",
+)
+is_expired = {"All": None, "Still open": False, "Closed": True}[status]
+
 seniority_level = st.multiselect(
     "Seniority (inferred from title)",
     ["Intern/Trainee", "Junior", "Associate", "Senior", "Lead/Principal", "Manager/Leadership"],
@@ -44,7 +51,8 @@ f7, f8, f9 = st.columns(3)
 search = f7.text_input("Search title or company", key="jobs_search")
 sort_by = f8.selectbox(
     "Sort by",
-    ["posted_date", "experience_min", "salary_max", "openings", "applicant_count", "times_seen", "company", "title"],
+    ["posted_date", "expired_on", "experience_min", "salary_max", "openings",
+     "applicant_count", "times_seen", "company", "title"],
     key="jobs_sort",
 )
 order = f9.radio("Order", ["desc", "asc"], horizontal=True, key="jobs_order")
@@ -66,6 +74,7 @@ filters = dict(
     working_type=working_type or None, has_salary=True if has_salary else None,
     qualification_level=qualification_level or None,
     search=search or None,
+    is_expired=is_expired,
 )
 signature = (tuple(sorted((k, tuple(v) if isinstance(v, list) else v) for k, v in filters.items())),
              sort_by, order, page_size)
@@ -106,10 +115,12 @@ display["experience"] = display.apply(
 display["salary"] = display.apply(
     lambda r: f"{r.salary_min:g}-{r.salary_max:g} LPA" if pd.notna(r.salary_min) else "Not disclosed",
     axis=1)
+display["status"] = display["is_expired"].map(
+    {True: "Closed", False: "Open"}).fillna("Not checked")
 display["cities"] = display["cities"].apply(lambda c: ", ".join(c) if c else "Not stated")
 display["skills"] = display["skills"].apply(lambda s: ", ".join(s[:6]) + (f" +{len(s)-6} more" if len(s) > 6 else ""))
 
-cols = ["title", "company", "role_family", "experience", "cities", "working_type",
+cols = ["status", "title", "company", "role_family", "experience", "cities", "working_type",
         "salary", "skills", "posted_date", "url"]
 
 event = st.dataframe(
@@ -119,6 +130,7 @@ event = st.dataframe(
     height=min(600, 60 + 36 * len(display)),
     column_config={
         "url": st.column_config.LinkColumn("Listing", display_text="Open ↗"),
+        "status": "Status",
         "role_family": "Role",
         "working_type": "Arrangement",
         "posted_date": "Posted",
@@ -146,6 +158,16 @@ if selected_rows:
             reviews_text = f", {reviews:,} reviews" if reviews else ""
             company_line += f" (★ {detail['company_rating']}{reviews_text})"
         st.subheader(f"{detail.get('title') or 'Untitled'} — {company_line}")
+
+        if detail.get("is_expired"):
+            st.error(
+                f"**Naukri has closed this posting** — confirmed "
+                f"{detail.get('expired_on')}. That is the date we checked and "
+                "found it gone, not necessarily the day it closed, and it does "
+                "not tell us whether anyone was hired."
+            )
+        elif detail.get("is_expired") is False and detail.get("last_checked_on"):
+            st.success(f"Still listed as of {detail['last_checked_on']}.")
 
         if detail.get("company_badges"):
             st.caption(" · ".join(detail["company_badges"]))

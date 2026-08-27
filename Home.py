@@ -81,10 +81,27 @@ with s1:
     st.caption(f"{fresher} of {total} allow 0–1 years of experience.")
 
 with s2:
-    active = int(facts.get("active_last_7_days") or 0)
-    st.markdown(f"### {active} of {total}")
-    st.markdown("**postings still active this week**")
-    st.caption("Listed again in the last 7 days — the rest haven't reappeared since.")
+    # Verified against Naukri, not inferred from whether a search happened to
+    # surface the posting. The old figure here was active_last_7_days, which
+    # read 207 the day this changed while 454 were genuinely still open --
+    # it was measuring scraper coverage and reporting it as market activity.
+    still_open = int(facts.get("still_open") or 0)
+    closed = int(facts.get("closed") or 0)
+    checked_on = facts.get("last_liveness_check")
+
+    if still_open or closed:
+        st.markdown(f"### {still_open} of {total}")
+        st.markdown("**postings are still open**")
+        st.caption(
+            f"Every listing re-checked against Naukri"
+            + (f" on {checked_on}" if checked_on else "")
+            + f". {closed} have since closed — which means Naukri no longer "
+            "shows them, not that anyone was hired."
+        )
+    else:
+        st.markdown(f"### {total}")
+        st.markdown("**postings collected**")
+        st.caption("Liveness checking hasn't run yet.")
 
 with s3:
     st.markdown(f"### {facts.get('avg_skills_per_posting')}")
