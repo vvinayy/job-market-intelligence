@@ -265,6 +265,38 @@ a `naukri.com` URL before queuing it — a defensive guard against a stray off-s
 scraped with Naukri's own selectors, which would silently produce garbage output (wrong title,
 wrong company) rather than a caught error.
 
+**Liveness tracking is the one thing that reads URLs from the table, not from a search.**
+The scraper's worklist comes entirely from `discover_job_urls()`, and an expired posting drops
+out of search results — so it is never re-surfaced, never corrected, and never marked. The rows
+that most need updating are precisely the ones the scraper cannot reach.
+`liveness_checker.py` closes that loop: it reads stored URLs and writes `is_expired` /
+`expired_on` / `last_checked_on`, nothing else. It deliberately does **not** touch
+`last_seen_date`, which means "a search surfaced this" — conflating the two would destroy the
+ability to tell scraper coverage from direct verification. Runs as its own 5pm scheduled task
+(`jobmarket.bat --check-only`), off the morning path so it can't delay the dashboard.
+
+Two rules hold it together. **Expiry needs positive evidence**: Naukri answers an expired
+posting with a 302 whose `Location` carries `expJD=true`, and only that counts. A 403, a
+timeout, a 404 or a redirect elsewhere is `unknown` and writes nothing — without that, one
+block would write off the whole table and afterwards be indistinguishable from a real market
+event. And **two safety valves abort the run**: >30% expired ("everything died") or >25%
+inconclusive ("nothing answered"). Both write nothing at all rather than partial results.
+
+`expired_on` uses `COALESCE(expired_on, CURRENT_DATE)` so re-confirming a dead posting doesn't
+push the date forward daily — the date means *when we confirmed it*, never when Naukri closed
+it, which is unobservable. `is_expired` is a three-state nullable boolean like `is_full_time`:
+NULL means never checked and must not collapse into "live".
+
+**The checker uses HEAD, not a browser — a deliberate exception to the throttle rule above.**
+Measured 40/40 against a full browser census of all 495 URLs: the redirect is a real HTTP 302,
+so nothing needs rendering. That makes a check 0.11s instead of 0.85s and downloads no page
+bodies, and it's why the checker throttles at 0.8–1.5s rather than 3–6s. This is not a
+weakening of etiquette: a rendered page pulls ~40 subrequests every 4.5s (~9 req/s in bursts),
+where the checker makes exactly one request per second. It also needs no interactive logon,
+since a headed browser was the only reason that was ever required. If Naukri ever moves to a
+JS-driven redirect, HEAD would read an expired posting as live — re-verify against a browser
+run before trusting a sudden drop in the expiry rate.
+
 ## Conventions
 
 - Module docstrings explain *why* the file exists and what it deliberately doesn't do.
