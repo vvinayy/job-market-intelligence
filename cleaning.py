@@ -127,7 +127,7 @@ SKILL_ALIASES = {
     # 2026-08-25; these keep them converged. Canonical spellings are the
     # surviving row's name, so trend history in skill_daily_counts continues
     # under the name it already has.
-    "ai ml": "Aiml", "ai/ml": "Aiml", "ai-ml": "Aiml",
+    "ai ml": "AI/ML", "ai/ml": "AI/ML", "ai-ml": "AI/ML", "aiml": "AI/ML",
     "back end": "Backend",
     "cicd": "CI/CD",
     "ci / cd tools": "Ci/Cd Tools", "ci cd tools": "Ci/Cd Tools",
@@ -138,7 +138,7 @@ SKILL_ALIASES = {
     "full stack development": "Fullstack Development",
     "java full stack": "Java Fullstack",
     "object oriented programming": "Object-Oriented Programming",
-    "pl/sql": "Plsql", "pl sql": "Plsql",
+    "pl/sql": "PL/SQL", "pl sql": "PL/SQL", "plsql": "PL/SQL",
 }
 
 
