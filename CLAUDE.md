@@ -1,390 +1,217 @@
 # CLAUDE.md
 
-Guidance for AI assistants working in this repository.
+An introduction to this repository, for a person or an AI assistant seeing it
+for the first time. It is a summary, not a rulebook — where it disagrees with
+the code, the code is right. Deeper design records live in
+`docs/superpowers/specs/`.
 
 ## What this is
 
-A job market intelligence pipeline over Indian IT postings scraped from Naukri.com:
+A job market intelligence pipeline over Indian IT postings scraped from
+Naukri.com. Data flows one way:
 
 ```
-Naukri.com → Playwright scraper → Python cleaning (in-process)
+Naukri.com → Playwright scraper → cleaning (in-process)
            → PostgreSQL → FastAPI → Streamlit dashboard
 ```
 
-Single-developer project, Windows-first (PowerShell, `.bat` launchers, Windows Task
-Scheduler). Python 3.13, PostgreSQL 18 at `C:\Program Files\PostgreSQL\18\bin\psql.exe`.
+A separate daily job re-visits stored URLs to find postings Naukri has expired,
+which the scraper itself can never see (explained below).
 
-## Layout
+Single-developer project, Windows-first: PowerShell, `.bat` launchers, Windows
+Task Scheduler. Python 3.13, PostgreSQL 18 at
+`C:\Program Files\PostgreSQL\18\bin\psql.exe`.
 
-| Path | Role |
-| --- | --- |
-| `naukri_collector.py` | Playwright scraper: URL discovery + per-posting DOM extraction. CLI entry point. |
-| `skill_taxonomy.py` | Regex vocabulary for mining skills/certifications out of description text. |
-| `cleaning.py` | The cleaning layer. `clean_record()` is the single entry point. |
-| `job_database.py` | Postgres writer: `save_records()` cleans, upserts, resolves skill ids. |
-| `schema.sql` | All table shapes. Run first. |
-| `trends_setup.sql` | `skill_daily_counts`, `snapshot_daily_skills()`, delta views. Run second. |
-| `api/main.py` | FastAPI app; connection pool opened/closed in the lifespan handler. |
-| `api/database.py` | Pooled cursor helpers (`fetch_all/one/value`) and `WhereBuilder`. |
-| `api/models.py` | Pydantic response models — the API's documented contract. |
-| `api/routers/` | `postings`, `reference`, `analytics`, `trends`. |
-| `Home.py`, `pages/` | Streamlit multipage dashboard (`1_Skills`, `2_Market`, `3_Trends`, `4_Jobs`). |
-| `dash_common.py` | The only dashboard file that talks HTTP. Named wrappers + Plotly palette. |
-| `jobmarket.bat` | The only launcher: scrape → API → wait for `/health` → dashboard. `--skip-scrape` / `--scrape-only` select a stage. |
-| `logs/`, `naukri_jobs.json`, `.auth/` | Generated/secret. Gitignored, never edit or commit. |
-| `tests/` | pytest suite — pure-function units, API contract tests, dashboard smoke tests. |
-| `bench_skill_storage.py` | Reproduces the rejected skill-column merge at ~100k rows. Not a test; not collected by pytest. Read-only against `cleaned_postings`. |
-
-## Commands
+## Getting it running
 
 ```powershell
 pip install -r requirements.txt; pip install -r api/requirements.txt
 playwright install chromium
 
-# one-time DB setup, in this order
+# one-time database setup, in this order
 & "C:\Program Files\PostgreSQL\18\bin\psql.exe" -U postgres -d jobmarket -f schema.sql
 & "C:\Program Files\PostgreSQL\18\bin\psql.exe" -U postgres -d jobmarket -f trends_setup.sql
 
-uvicorn api.main:app --reload     # terminal 1 — docs at /docs
-streamlit run Home.py             # terminal 2
+.\jobmarket.bat                # scrape, then start API + dashboard
+.\jobmarket.bat --skip-scrape  # data is fresh, just start the app
+.\jobmarket.bat --scrape-only  # scrape and exit (the 11am scheduled task)
+.\jobmarket.bat --check-only   # find expired postings (the 5pm task)
 
-python naukri_collector.py "https://www.naukri.com/python-developer-jobs-in-hyderabad" --limit 20
-.\jobmarket.bat                   # scrape, then API + dashboard
-.\jobmarket.bat --skip-scrape     # both services, no re-scrape
-.\jobmarket.bat --scrape-only     # scrape + snapshot only (Task Scheduler runs this)
+# or run the two services by hand
+uvicorn api.main:app --reload   # terminal 1 — docs at /docs
+streamlit run Home.py           # terminal 2
 
-pytest                             # full suite
-pytest tests/test_cleaning.py tests/test_skill_taxonomy.py tests/test_naukri_parsers.py
-                                    # pure-function units only — no DB, no server, <1s
+pytest                          # everything
+pytest tests/test_cleaning.py tests/test_skill_taxonomy.py \
+       tests/test_naukri_parsers.py tests/test_liveness.py   # fast, no I/O
 ```
 
-There is **no linter and no formatter** configured. A `pytest` suite exists in `tests/`
-(see below) but doesn't cover everything — schema changes, new selectors, and dashboard
-behavior still need a manual pass: run a small scrape, hit `/health`, query Postgres, or
-open the dashboard. Don't claim a change is verified without actually doing one of those
-in addition to a green test run.
+Configuration is environment variables only, never files: `PGDATABASE`
+(default `jobmarket`), `PGUSER` (`postgres`), `PGPASSWORD`, `PGHOST`, `PGPORT`.
+The API also accepts `DATABASE_URL`; the dashboard accepts `API_BASE_URL`
+(default `http://localhost:8000`).
 
-The suite has three layers, and only the first is dependency-free:
-- `test_cleaning.py`, `test_skill_taxonomy.py`, `test_naukri_parsers.py` — pure functions,
-  no I/O. Always run these after touching `cleaning.py`, `skill_taxonomy.py`, or a parser
-  in `naukri_collector.py`.
-- `test_api.py` — hits every endpoint through `TestClient(app)` (in-process, no server
-  needed) against whatever's in the real local Postgres. Read-only; skips itself if the
-  DB isn't reachable. There is no mock/staging DB in this project — see "No raw/staging
-  table" below — so this is intentional, not a shortcut.
-- `test_dashboard_smoke.py` — `AppTest` on a few dashboard pages, needs a real `uvicorn`
-  process already running at `API_BASE_URL` (dashboard pages talk real HTTP, not
-  `TestClient`). Skips itself if nothing's listening. Slow (~15s/page) — don't add pages
-  to it reflexively, a handful of representative ones is enough to catch a broken import
-  or a renamed field.
+## Where things are
 
-Config is environment variables only, never files: `PGDATABASE` (default `jobmarket`),
-`PGUSER` (`postgres`), `PGPASSWORD`, `PGHOST`, `PGPORT`. The API also accepts
-`DATABASE_URL`; the dashboard accepts `API_BASE_URL` (default `http://localhost:8000`).
+| Path | Role |
+| --- | --- |
+| `naukri_collector.py` | The scraper. Finds job URLs from a search, then reads each posting. |
+| `skill_taxonomy.py` | Regex vocabulary for finding skills and certifications in description text. |
+| `cleaning.py` | Turns raw scraped text into clean values. `clean_record()` is the way in. |
+| `job_database.py` | Writes to Postgres. `save_records()` cleans, inserts-or-updates, resolves ids. |
+| `liveness.py` | Decides whether a posting URL is still live. Pure functions, no I/O. |
+| `liveness_checker.py` | Visits stored URLs daily to find expired postings. |
+| `notify.py` | Windows toast notifications, so unattended runs are not silent. |
+| `schema.sql` | Every table. Run first. |
+| `trends_setup.sql` | Daily skill snapshots and the views over them. Run second. |
+| `api/` | FastAPI. `main.py` app, `database.py` query helpers, `models.py` response shapes, `routers/` endpoints. |
+| `Home.py`, `pages/` | Streamlit dashboard (Skills, Market, Trends, Jobs). |
+| `dash_common.py` | The only dashboard file that makes HTTP calls. |
+| `jobmarket.bat` | The single launcher. |
+| `tests/` | pytest suite. |
+| `docs/superpowers/specs/` | Design records for decisions worth keeping. |
+| `logs/`, `naukri_jobs.json`, `.auth/` | Generated or secret. Gitignored — never edit or commit. |
 
-## Architecture rules that matter
+## How to verify a change
 
-**One direction of dependency.** Dashboard pages → `dash_common` → HTTP → API → Postgres.
-Pages never import `psycopg2` and never know a table or column name; `dash_common` knows
-only JSON shapes. A schema change should be absorbable in `api/routers/*.py` alone.
+There is no linter and no formatter. The test suite has three layers, and only
+the first runs anywhere:
 
-**No raw/staging table.** The scraper cleans in-process and writes straight into
-`cleaned_postings`. Nothing scraped is ever stored unprocessed. Do not add a
-`raw_postings` table — it was deliberately removed (`fb4f8a3`).
+- **Pure functions** (`test_cleaning`, `test_skill_taxonomy`, `test_naukri_parsers`,
+  `test_liveness`) — no database, no network, milliseconds.
+- **API contract** (`test_api`) — hits every endpoint in-process against your real
+  local Postgres. Read-only; skips itself if the database is unreachable.
+- **Dashboard smoke** (`test_dashboard_smoke`) — needs a real `uvicorn` already
+  running. Slow, skips itself if nothing is listening.
 
-**No AI in the pipeline.** Extraction is DOM selectors; skills are regex taxonomy.
-Missing labels report the `"not found"` sentinel, which `cleaning.py::_clean()` turns
-into SQL `NULL`. Never introduce a model call or a guess to fill a gap.
+**A green test run is not enough on its own.** Schema changes, new selectors and
+dashboard behaviour need a manual pass too: run a small scrape, hit `/health`,
+query Postgres, or open the dashboard.
 
-**Honest precision.** Where the source is imprecise, store nothing rather than invent:
-`"30+ days ago"` → `posted_date = NULL` (raw text kept in `posted_raw`), `"100+"`
-applicants stored as the floor. Keep this rule when adding fields.
+## The ideas behind the design
 
-The rule is easiest to break in a *fallback*. `normalize_working_type()` returned
-`"On-site"` when nothing matched, which put a fabricated value on 372 of 495 rows —
-Naukri's work-mode badge (`wfhmode`) only renders when a remote arrangement exists, so
-its absence means "not stated", never "office". The column read 100% populated while the
-scraper's own `field_found_counts` said 25%; that mismatch is the tell, and
-`/analytics/scrape-health` is where to look for it. A classifier fallback over a value
-that *is* present is fine by contrast — `classify_role()` returning `"Other"` describes a
-real title that matched no pattern, and invents nothing.
+**Honest precision — the one that matters most.** Where the source is vague,
+store nothing rather than invent something. `"30+ days ago"` becomes a NULL date
+with the original text kept alongside; `"100+"` applicants is stored as 100 and
+flagged as a floor.
 
-**Dedup is by fingerprint.** SHA-256 of company + title + location + experience
-(`cleaning.py::make_fingerprint`). A repeat sighting `ON CONFLICT DO UPDATE`s every
-field to its latest value, preserves `first_seen_date`, bumps `last_seen_date` and
-`times_seen`. Add new columns to *both* the INSERT list and the SET clause in
-`UPSERT_SQL` — omitting one means that field silently goes stale on repeat sightings.
-Batches are deduped in Python first, since Postgres can't update the same row twice in
-one statement.
+This is easiest to break in a *fallback*. `normalize_working_type()` used to
+return `"On-site"` when it found nothing, which put a fabricated value on 372 of
+495 rows — Naukri only shows a work-mode badge when a remote arrangement exists,
+so its absence means "not stated", never "office". A fallback over a value that
+*is* present is fine by contrast: `classify_role()` returning `"Other"` describes
+a real title that matched no pattern, and invents nothing.
 
-**Skills are a dictionary table.** `skills(skill_id, skill_name, category)`, one row per
-distinct normalized name. `posting_skills` is one row per *posting* with `skill_ids INT[]`
-(GIN-indexed); analytics `unnest()` at query time. `category` is seeded from
-`cleaning.py::SKILL_CATEGORIES` only when a skill is first registered and never
-overwritten, so `UPDATE skills SET category = ...` is a durable data fix, not a code
-change. Array elements can't carry an FK — referential integrity there is an application
-guarantee in `job_database.py`.
+**No AI in the pipeline.** Extraction is DOM selectors; skills are regex.
+Missing labels become NULL. Never add a model call or a guess to fill a gap.
 
-**The skills pattern generalizes to any normalized fact.** `role_categories`, `departments`,
-`industry_types`, and the education taxonomy (`education_degrees`, `education_specializations`,
-`education_degree_specializations`) all use the same get-or-create resolution as skills
-(`job_database.py::_resolve_reference_ids` / `_resolve_degree_ids`) — an unseen value auto-registers
-rather than being dropped or rejected. Cities are the deliberate exception: `cleaning.py::CITY_ALIASES`
-is a curated map, not auto-registering, because `cities.state` is `NOT NULL` and can't be derived from
-a bare city fragment — a genuinely new city needs a human to add it (`resolve_locations()`). That backlog is surfaced, not silently dropped: `job_database.py::pending_locations()` lists fragments awaiting a curated entry, the scraper prints them at the end of every run, and `/analytics/scrape-health` returns them as `pending_locations`. It filters out state names and non-places (`pan india`), which should stay unmapped rather than become cities.
+**One direction of dependency.** Dashboard pages → `dash_common` → HTTP → API →
+Postgres. Pages never import `psycopg2` and never know a table or column name. A
+schema change should be absorbable in `api/routers/` alone.
 
-**Multi-valued normalized facts are array-of-ids, one row per posting.** Same shape as
-`posting_skills(job_id, skill_ids INT[])`: `posting_qualification_degrees`,
-`posting_qualification_specializations`. Never one row per value — that was tried and reverted once
-already. A *nested* relationship (a degree's own specializations) that can't fit a flat array without
-losing the pairing gets its own small dictionary table for the pairing itself
-(`education_degree_specializations`), so the per-posting table still stays one row per posting.
+**The sample is not the market.** Postings come from a fixed set of searches and
+cities — mostly Hyderabad. That caveat is surfaced in the API description, the
+dashboard, and the README. Keep it in anything new.
 
-**`cleaned_postings` duplicates every normalized array onto itself.** `city_ids`, `skill_ids`,
-`preferred_skill_ids`, `accepted_degree_ids`, `accepted_degree_specialization_ids` all live directly
-on `cleaned_postings` *and* in their own normalized table — production computation reads
-`cleaned_postings` directly, so a fact that only exists in the normalized table is invisible to it.
-Add new columns to the UPSERT in both places or they go stale on a repeat sighting.
+**Nothing is stored unprocessed.** The scraper cleans in memory and writes
+straight into `cleaned_postings`. Do not add a `raw_postings` table; it existed
+once and was deliberately removed.
 
-**`skill_ids` and `skill_groups` are DISJOINT, and the union is the real skill set.**
-`skill_ids` holds only what a posting requires outright; a skill it offers as one of several
-alternatives ("AWS, Azure, or GCP") lives in `skill_groups JSONB` — `[[96,476,614]]` — and is
-deliberately *not* repeated in `skill_ids`, so no skill is ever listed twice. Anything meaning
-"every skill this posting involves" must therefore read
-`skill_ids || skill_group_ids(skill_groups)`: the API's `skills` field, both skill filters, the
-`preferred_skill_ids` subset CHECK, and `snapshot_daily_skills()` all do. Reading `skill_ids`
-alone silently drops 58 AWS postings and would have broken trend continuity permanently.
-`skill_group_ids()` is an IMMUTABLE SQL function because a CHECK constraint can't hold a
-subquery. Groups come from `skill_taxonomy.py::find_skill_choice_groups()`, which reads the
-sentence rather than assuming any two cloud names are alternatives — roughly 3 in 4 groups are
-right, `[]` means none were *found*, not that none exist, and it's recomputable from
-`description` at any time.
+**Duplicates are caught by fingerprint** — a hash of company + title + location +
+experience. Seeing a posting again updates every field, keeps `first_seen_date`,
+and bumps `last_seen_date` and `times_seen`. **When you add a column, add it to
+both the INSERT list and the UPDATE clause** in `UPSERT_SQL`, or it will quietly
+go stale whenever a posting is seen again.
 
-**Merging the three skill columns into one — measured and deferred, not unexamined.**
-Collapsing `skill_ids` + `preferred_skill_ids` + `skill_groups` into a single column keeps
-coming back as an idea. It has been measured properly; `bench_skill_storage.py` reproduces
-the whole thing at ~100k rows. Summary so you don't have to re-derive it:
+**Open-ended vocabularies get their own table; fixed ones get a CHECK.** Skills,
+degrees, departments and industries auto-register when something new appears.
+`working_type` and `contract_type` are small fixed sets, so a `CHECK` constraint
+is enough. Cities are the deliberate exception — they need a curated entry
+because `cities.state` cannot be guessed from a city name, so unrecognised
+locations are surfaced rather than invented.
 
-- *JSONB loses, in every arrangement.* An object `{"r":..,"c":..}` is +60% and 1.8× slower;
-  a mixed array `[7, 273, [613,639]]` is +53%. JSONB stores each integer self-describingly
-  and repeats key names in every row, where `INT[]` packs 4 bytes and names the column once
-  in the catalog. Tagged encodings (`tag << 24 | skill_id`), 2-D NULL-padded arrays, and
-  full normalization all lose too — anything needing a function to decode pays that function
-  once per row, forever.
-- *The one form that wins is negative sentinels in a plain `INT[]`*:
-  `[required…, -1, preferred…, (-2, group)…]`. Every `skill_id` is a positive SERIAL, so
-  negatives are unreachable and the array stays natively queryable — `&&`, `@>` and a GIN
-  index directly on the column, no decode function. `-2` even becomes a searchable token, so
-  "does this posting offer a choice" is an index lookup.
-- *What it actually buys, against what is shipped today:* `?skill=` 4.7×, `?skills_all=` 45×,
-  storage a wash (−1%). It does **not** speed everything up — the daily snapshot is ~10%
-  *slower* merged, because the array holds occurrences where the old columns held sets, and
-  the required `DISTINCT` costs more than the concatenation saved.
-- *Its one sharp edge*, which cost two wrong numbers during the evaluation: **the array holds
-  occurrences, not sets.** 48 postings name the same skill in more than one group (job 1364
-  has Azure in four). `skill_group_ids()` is `array_agg(DISTINCT …)` and collapses them; a
-  bare `unnest` does not. Any "how many postings" aggregate over the merged form needs
-  `COUNT(DISTINCT job_id)` or it silently over-counts.
-- *Writes can be made safe*; reads cannot. A `CHECK` calling one IMMUTABLE `wellformed()`
-  refuses all 9 malformed shapes tried (missing `-1`, doubled `-1`, group before the divider,
-  empty group, group of one, a skill both required and grouped, stray `-3`, a zero, empty
-  array) and would enforce the disjointness that is currently only an application guarantee.
-  No constraint can stop a correct array being *queried* wrongly, and `cardinality()`,
-  `MIN`/`SUM`, and a forgotten `WHERE v > 0` all return plausible wrong answers.
+**Three-state booleans are real.** `is_full_time` and `is_expired` are TRUE,
+FALSE, *and* NULL for "we don't know". Never test them for truthiness.
 
-**Trigger to revisit:** when the daily snapshot exceeds ~500 ms or `cleaned_postings` passes
-~100k rows. It runs in ~4.5 ms today. Deferred because the gain is real but unrealised at
-1.4 MB, and the current shape's self-describing property — `skill_ids` contains skill ids,
-and the obvious reading is correct — is worth more than the storage until then. If it is ever
-done, the `CHECK`, the unpacking view, and a test diffing all six statistics old-vs-new belong
-in the *same* commit, not deferred behind it.
+**Every query is parameterised.** Use `WhereBuilder`. Anything that cannot be
+parameterised — a sort column, a grouping dimension — is checked against an
+allowlist. Never put caller input directly into SQL.
 
-**Related, still open:** `?skills_all=` tests `(skill_ids || skill_group_ids(skill_groups)) @>`
-and **no index covers that concatenation** — 350 ms at 100k rows versus 35 ms with one added.
-Immaterial at today's size (~0.3 ms), and left unadded on the same reasoning as above, but it
-is the first thing to fix at scale if the merge isn't done.
+**Scraper etiquette.** One visible browser for the whole run (Naukri blocks
+headless), and a random 3–6 second pause between pages. Don't go headless, don't
+parallelise, don't remove the pause.
 
-**Array-column semantics aren't visible from the type.** `skill_ids` on a posting means "all of these
-together" (AND); `accepted_degree_ids` means "any one of these satisfies the requirement" (OR) — same
-`INT[]` type, opposite real-world meaning. The `accepted_` prefix exists specifically to make the OR
-reading unambiguous from the column name alone; keep using it (or an equivalent) for new OR-semantics
-arrays rather than adding a second qualifier column, unless the semantics are genuinely more complex
-than a single AND/OR (a real dual-degree AND requirement has been checked for live on Naukri and not
-found — the array is OR by construction, not by omission).
+**Expiry needs proof.** The scraper only ever sees postings a search returns, so
+it can never revisit an expired one — that is why `liveness_checker.py` reads
+URLs from the database instead. Naukri answers an expired posting with a
+redirect carrying `expJD=true`, and **only that counts as expired.** A timeout,
+a block, or a 404 is "unknown" and writes nothing; otherwise a single bad night
+would write off the whole table. The checker uses a plain HEAD request rather
+than a browser — measured 40/40 against a browser census — which is why it is
+allowed a shorter pause than the scraper.
 
-**Derived text is recomputed, not stored.** `responsibilities_text` / `requirements_text`
-were columns until they were shown to be a pure function of `description` — byte-identical
-on all 447 rows — so they duplicated ~24% of the table to hold nothing new.
-`api/routers/postings.py` now calls `cleaning.py::split_description_sections()` per posting
-at read time (the detail endpoint handles one row, so this is cheap) and the API contract is
-unchanged. This is the API's one import from outside `api/`. Don't re-add them as columns;
-apply the same test to any new derived column — if it recomputes exactly, don't store it.
+Fuller versions of several of these live in `docs/superpowers/specs/`, including
+why the three skill columns were not merged into one.
 
-**Repeat sightings bloat the table.** Every re-sighting is an `UPDATE`, and Postgres writes
-a new row version each time — 1,211 updates across 447 rows left the table at more than
-double its live size. `VACUUM FULL ANALYZE cleaned_postings` reclaimed 3416 kB → 1424 kB
-(58%), which also cleared the accumulated dropped-column overhead. Autovacuum reclaims
-*reusable* space but never returns it to the OS; plan a periodic rewrite. At production
-scale use `pg_repack` instead — `VACUUM FULL` takes an exclusive lock for the whole rewrite,
-which is instant at 447 rows and very much not at millions.
+## Things that will trip you up
 
-**A closed, stable vocabulary is `TEXT` + `CHECK`, not a reference table.** `working_type`
-(3 values) and `contract_type` (5) are small fixed sets that Python already collapses to one
-canonical spelling per category (`cleaning.py::EMPLOYMENT_TYPES`/`CONTRACT_TYPES` map every
-spelling Naukri uses — `"full-time"`, `"Full Time"` — to a single output). A
-`CHECK (col IN (...))` constraint on `cleaned_postings` enforces that against bugs, with no
-JOIN and no get-or-create resolution step. Reach for a reference table only when the
-vocabulary is open-ended (skills, degrees) or Naukri-tag-driven and genuinely growing
-(`role_category`/`department`/`industry_type`) — not for a column that will only ever hold a
-handful of known values.
+- **`schema.sql` starts by dropping the postings tables.** Running it wipes
+  collected data. Never run it just to check something.
+- **`snapshot_daily_skills()` must run after each day's scrape.** A day not
+  snapshotted is gone forever — `cleaned_postings` only shows the present. The
+  scraper calls it automatically now, but if you change `posting_skills` you
+  must re-apply `trends_setup.sql`, because the function is not updated
+  automatically. Three days were lost this way once, and the error went into a
+  log nobody read.
+- **Batch files must be ASCII with CRLF line endings.** `cmd.exe` mis-parses
+  LF-only `.bat` files and silently eats characters rather than erroring.
+  `.gitattributes` enforces this; keep em dashes and smart quotes out.
+- **`jobmarket.bat` hardcodes the project path and the psql path.**
+- **Postings are updated only when a search surfaces them again.** An expired
+  posting never reappears, which is the entire reason the liveness checker
+  exists.
+- **`naukri_role` is a recruiter-picked dropdown, not derived from the job
+  description.** Verified noisy — the same title gets different values, and it
+  occasionally contradicts the posting outright. Use it as a raw signal, never
+  as ground truth.
+- **Repeat sightings bloat the table.** Every update writes a new row version.
+  Plan a periodic `VACUUM FULL ANALYZE` (or `pg_repack` at real scale — `VACUUM
+  FULL` locks the table for the whole rewrite).
 
-**Exactly two values is a boolean, not a two-member CHECK.** `is_full_time BOOLEAN` replaced
-`employment_type TEXT CHECK (IN ('Full Time','Part Time'))`. The bar is *no prospect of a
-third value* — `contract_type` looks binary in the current data (468 Permanent, 10 NULL) but
-its vocabulary already carries five, and a boolean would silently fold Contract, Temporary,
-Internship and Freelance into `false` the first time one is scraped. Three states still
-exist and must stay distinct: `TRUE`, `FALSE`, and `NULL` for "Naukri said nothing" — so
-never test a column like this for truthiness, and note `WhereBuilder.add()` correctly skips
-on `is None` rather than on falsy, which is what lets `?is_full_time=false` work at all.
-`EMPLOYMENT_TYPES` still normalises the spellings; the collapse happens *before* the
-True/False decision, not instead of it. `/reference/employment-types` keeps returning
-`Full Time` / `Part Time` / `Not stated` labels so filter controls are unaffected.
+## Style
 
-**Every query is parameterised.** Values go to psycopg2 separately; use `WhereBuilder`.
-Anything that can't be parameterised (sort columns) is validated against an allowlist —
-see `SORTABLE` in `api/routers/postings.py`. Never interpolate caller input into SQL.
-
-**The sample is not the market.** Postings come from a fixed set of searches and cities.
-That caveat is surfaced in the API description, the dashboard (`dc.sampling_note()`), and
-the README. Preserve it in any new user-facing summary.
-
-**Scraper etiquette.** One visible browser reused for the entire run (Naukri blocks
-headless), randomized 3–6s throttle between detail pages. Don't switch to headless, don't
-parallelize, don't remove the throttle. `discover_job_urls()` also rejects any href that isn't
-a `naukri.com` URL before queuing it — a defensive guard against a stray off-site link being
-scraped with Naukri's own selectors, which would silently produce garbage output (wrong title,
-wrong company) rather than a caught error.
-
-**Liveness tracking is the one thing that reads URLs from the table, not from a search.**
-The scraper's worklist comes entirely from `discover_job_urls()`, and an expired posting drops
-out of search results — so it is never re-surfaced, never corrected, and never marked. The rows
-that most need updating are precisely the ones the scraper cannot reach.
-`liveness_checker.py` closes that loop: it reads stored URLs and writes `is_expired` /
-`expired_on` / `last_checked_on`, nothing else. It deliberately does **not** touch
-`last_seen_date`, which means "a search surfaced this" — conflating the two would destroy the
-ability to tell scraper coverage from direct verification. Runs as its own 5pm scheduled task
-(`jobmarket.bat --check-only`), off the morning path so it can't delay the dashboard.
-
-Two rules hold it together. **Expiry needs positive evidence**: Naukri answers an expired
-posting with a 302 whose `Location` carries `expJD=true`, and only that counts. A 403, a
-timeout, a 404 or a redirect elsewhere is `unknown` and writes nothing — without that, one
-block would write off the whole table and afterwards be indistinguishable from a real market
-event. And **two safety valves abort the run**: >30% expired ("everything died") or >25%
-inconclusive ("nothing answered"). Both write nothing at all rather than partial results.
-
-`expired_on` uses `COALESCE(expired_on, CURRENT_DATE)` so re-confirming a dead posting doesn't
-push the date forward daily — the date means *when we confirmed it*, never when Naukri closed
-it, which is unobservable. `is_expired` is a three-state nullable boolean like `is_full_time`:
-NULL means never checked and must not collapse into "live".
-
-**The checker uses HEAD, not a browser — a deliberate exception to the throttle rule above.**
-Measured 40/40 against a full browser census of all 495 URLs: the redirect is a real HTTP 302,
-so nothing needs rendering. That makes a check 0.11s instead of 0.85s and downloads no page
-bodies, and it's why the checker throttles at 0.8–1.5s rather than 3–6s. This is not a
-weakening of etiquette: a rendered page pulls ~40 subrequests every 4.5s (~9 req/s in bursts),
-where the checker makes exactly one request per second. It also needs no interactive logon,
-since a headed browser was the only reason that was ever required. If Naukri ever moves to a
-JS-driven redirect, HEAD would read an expired posting as live — re-verify against a browser
-run before trusting a sudden drop in the expiry rate.
-
-## Conventions
-
-- Module docstrings explain *why* the file exists and what it deliberately doesn't do.
-  Inline comments justify non-obvious decisions (`NULLS LAST`, the `skills_all` count
-  guard, `ping` instead of `timeout` in the `.bat`) — **but keep them to one or two
-  lines.** State the reason, not the story: what would go wrong without this, or what
-  was measured. Drop the narrative of how it was discovered, what it replaced, and what
-  was considered and rejected — that belongs in the commit message, which is where the
-  history is meant to live. A comment longer than the code it explains is a smell.
-- Section banners: `# ===...===` blocks in Python, `-- ---...---` in SQL.
-- Modern typing throughout: `str | None`, `list[dict]`. No `Optional`/`typing.List`.
-- Every endpoint declares a `response_model` and a `summary=`; add the Pydantic model in
-  `api/models.py` rather than returning bare dicts.
-- Dashboard charts use `dc.PALETTE` / `dc.SCALE` / `**dc.TRANSPARENT`. New API access
-  goes through a named wrapper in `dash_common.py`, not a `requests` call in a page.
-- `api_get` caches for 5 minutes and takes params as a **tuple of pairs** (dicts aren't
-  hashable for `st.cache_data`); repeated filters are repeated tuple entries.
-- Commit messages: imperative, one line, no body, no trailing metadata
-  ("Remove full-text description search", "Add skill category mix, crossed with role").
-
-## Gotchas
-
-- `schema.sql` starts with `DROP TABLE` on the postings tables — running it wipes
-  collected data. Never run it to "check" something.
-- `cleaned_postings` column order is deliberate (identity → education → skills → the rest,
-  matching how a JD is actually read) and `schema.sql` matches the live table exactly.
-  Postgres cannot reorder columns in place, so that order was applied by rebuilding the
-  table. `ALTER TABLE ADD COLUMN` appends to the end and will drift from `schema.sql`'s
-  order — cosmetic only, since every query names its columns, but rebuild if it matters.
-  A rebuild must restore, by name: 4 CHECK constraints, 3 outgoing FKs, the PK, the UNIQUE
-  on `fingerprint`, 6 indexes, the `job_id` sequence, and the **5 incoming FKs** from
-  `posting_cities` / `posting_skills` / `posting_qualifications` /
-  `posting_qualification_degrees` / `posting_qualification_specializations`. Do it in one
-  transaction (Postgres DDL is transactional) and compare a per-column `md5(string_agg(...))`
-  before committing — a row count alone won't catch a mis-ordered copy. Watch for a
-  duplicate index: an inline `UNIQUE` in `CREATE TABLE` already creates one, so also
-  issuing `CREATE UNIQUE INDEX` for the same column leaves two.
-- `snapshot_daily_skills()` must run after the day's scrape. A day not snapshotted is
-  gone permanently; `cleaned_postings` only ever shows the present. It is now called from
-  `naukri_collector.py::_snapshot_today()` at the end of **every** scrape, not only from
-  `jobmarket.bat` — a scrape launched any other way used to skip it silently. The
-  SQL function recalculates on a same-day re-run, so calling it once per search URL is
-  safe. Failure prints a loud `[SNAPSHOT FAILED ...]` line: three days (Aug 18–20 2026)
-  were lost because the function still referenced `posting_skills.skill` after that table
-  moved to `skill_ids INT[]`, and the error went into a log nobody reads. If you change
-  `posting_skills`, re-apply `trends_setup.sql` — the function is not updated automatically.
-- The skill blocklist filters trend *views* only, not the snapshot, so history survives a
-  later change of mind.
-- `jobmarket.bat` hardcodes `C:\Users\Acer\Webscraping_Extraction` and the psql path. It
-  replaced the old `run_daily_scrape.bat` + `start_demo.bat` pair — a Windows Task
-  Scheduler entry pointing at either old name needs updating to
-  `jobmarket.bat --scrape-only`.
-- **Batch files must be ASCII with CRLF line endings.** `cmd.exe` mis-parses LF-only `.bat`
-  files — `goto` targets and multi-line `if (...)` blocks break, and it silently eats
-  leading characters off lines rather than erroring. Most editors and the write tooling
-  here default to LF, so check after editing: `[System.IO.File]::WriteAllText($p, ($t
-  -replace "\`r\`n","\`n" -replace "\`n","\`r\`n"), [Text.Encoding]::ASCII)`. Keep em
-  dashes and smart quotes out of `.bat` files for the same reason.
-- `.claude/settings.local.json` is gitignored and already allowlists the common psql and
-  health-check commands.
-- `naukri_role` is a recruiter-picked dropdown value on Naukri's own posting form, not
-  something derived from the JD text — verified noisy against real data: the same title
-  ("SQL Developer", "Machine Learning Engineer") gets different `naukri_role` values on
-  different postings, sometimes "Other", and occasionally something the JD flatly
-  contradicts (a "Forward Deployed Engineer" tagged "Pre Sales Engineer"). Useful as a raw
-  signal, not as ground truth for anything.
-- `resolve_locations()` strips a parenthetical locality suffix before matching
-  (`"Hyderabad( Raidurgam )"` → `Hyderabad`) — a real fragment seen in production, not a
-  hypothetical. Fragments like `"pan india"` or a bare state name (`"Telangana"`) are left
-  in `unmapped_locations` on purpose; they aren't cities and shouldn't become one.
+- Module docstrings explain *why* the file exists and what it deliberately does
+  not do.
+- Inline comments give the reason, in one or two lines — what would go wrong
+  without this, or what was measured. The story of how it was discovered belongs
+  in the commit message. A comment longer than the code it explains is a smell.
+- Section banners: `# ===...===` in Python, `-- ---...---` in SQL.
+- Modern typing: `str | None`, `list[dict]`. No `Optional` or `typing.List`.
+- Every endpoint declares a `response_model` and a `summary=`, with the model in
+  `api/models.py`.
+- Dashboard charts use `dc.PALETTE` / `dc.SCALE` / `**dc.TRANSPARENT`. New API
+  calls go through a named wrapper in `dash_common.py`.
+- Commit messages: imperative, one line, then a body explaining *why* if the
+  reason is not obvious.
 
 ## Known open items
 
-- **Cross-company duplicate-description anomaly.** One group of 5 postings (2 companies, 2
-  unrelated titles — Cisco "Software Engineer" and Fractal Analytics "Full stack Developer")
-  shares identical, unrelated description text (an "IoT Intern / Drone Technology / Indore"
-  JD that matches neither posting). The other duplicate-description groups are legitimate
-  same-company reposts, so this looks like a rare glitch rather than a systemic bug, but
-  root cause is unconfirmed — Naukri 403s non-browser requests (confirmed via WebFetch), so
-  verifying live needs an actual headed Playwright run against one of the affected URLs,
-  which hasn't been done yet. Find the group with:
+- **Cross-company duplicate descriptions.** Five postings from two unrelated
+  companies share identical description text that matches neither. Other
+  duplicate groups are legitimate same-company reposts, so this looks like a
+  rare glitch rather than a systemic bug, but the cause is unconfirmed. Find
+  them with:
 
   ```sql
   SELECT md5(description), COUNT(*), COUNT(DISTINCT company) FROM cleaned_postings
    WHERE description IS NOT NULL GROUP BY 1 HAVING COUNT(DISTINCT company) > 1;
   ```
 
-  There is no `description_hash` column — it was dropped once it was clear dedup runs off
-  `fingerprint` and the hash only ever served this one ad-hoc query, whose index was never
-  scanned. Postgres cannot btree-index `description` directly (rows exceed the 2704-byte
-  limit), so index `md5(description)` as an expression if this ever needs to be fast.
+- **Two location fragments** (`Hyderabad( Raidurgam )`, `Hyderabad( Hitec City )`)
+  are unmapped despite `resolve_locations()` stripping parenthetical suffixes.
+  Either they predate that fix or it has a gap.
+- **Closure metrics are limited to experience band and role.** Department,
+  industry and education look ready but are not: those fields only began being
+  collected on 19 Aug, so their "not stated" group is really "collected
+  earlier", and earlier postings have had longer to close. Revisit once older
+  postings are a small minority.
