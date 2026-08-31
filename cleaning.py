@@ -45,8 +45,15 @@ def _clean(value):
     a value worth keeping any more than "not found" is."""
     if value in (None, NOT_FOUND, ""):
         return None
-    if isinstance(value, str) and not _HAS_CONTENT_RE.search(value):
-        return None
+    if isinstance(value, str):
+        # Postgres cannot store a NUL byte in a text column: psycopg2 raises
+        # ValueError at execute time, which kills the whole batch rather than
+        # the one record carrying it. Strip it here, where a single bad
+        # character costs a character instead of a run.
+        if "\x00" in value:
+            value = value.replace("\x00", "")
+        if not _HAS_CONTENT_RE.search(value):
+            return None
     return value
 
 

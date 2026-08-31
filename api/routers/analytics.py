@@ -469,7 +469,14 @@ def skill_flexibility(
         swaps AS (
             SELECT a.skill_id,
                    array_agg(b.skill_name ORDER BY b.n DESC, b.skill_name) AS swaps
-            FROM (SELECT DISTINCT sk.skill_id FROM skills sk) a
+            -- Driven by the skills that actually appear in a choice group, not
+            -- by every known skill. The LATERAL below scans cleaned_postings
+            -- once per driver row, so the old `SELECT DISTINCT skill_id FROM
+            -- skills` ran 1,265 full table scans to produce 185 rows: 1,080 of
+            -- them found nothing. Measured 1,645ms -> 359ms, same output.
+            FROM (SELECT DISTINCT s AS skill_id
+                  FROM cleaned_postings c,
+                       unnest(skill_group_ids(c.skill_groups)) s) a
             JOIN LATERAL (
                 SELECT other.skill_name, COUNT(*) AS n
                 FROM cleaned_postings c, LATERAL jsonb_array_elements(c.skill_groups) grp

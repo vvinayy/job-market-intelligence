@@ -177,11 +177,39 @@ ON CONFLICT (fingerprint) DO UPDATE SET
     -- the scrape having succeeded. Naukri just served the page, so a
     -- previously recorded expiry is void -- and a scrape reaching a posting
     -- is a liveness check, which keeps it out of the checker's queue.
+    -- A search returning this posting IS evidence it is live, so these two
+    -- are honest. last_checked_on is NOT set here: that column means "the
+    -- liveness checker requested this URL", and writing it from a scrape
+    -- conflates coverage with verification -- the same conflation
+    -- liveness_checker.py refuses to make in the other direction by never
+    -- touching last_seen_date. It also made the evening run skip every
+    -- posting the morning scrape had re-surfaced.
     is_expired            = FALSE,
-    expired_on            = NULL,
-    last_checked_on       = CURRENT_DATE
+    expired_on            = NULL
 RETURNING job_id, fingerprint, (xmax = 0) AS was_inserted;
 """
+
+
+def is_identifiable(posting: dict) -> bool:
+    """Does this posting have enough of an identity to be worth storing?
+
+    The fingerprint hashes company + title + location + experience, so a
+    record missing all four hashes the same as every other one, and ON
+    CONFLICT folds the whole batch onto a single row. Measured: 40 distinct
+    postings with 40 distinct URLs went in, 1 row came out, and the run still
+    reported storage_ok.
+
+    That input is reachable. scrape_job_detail() keeps a posting whenever the
+    DESCRIPTION selector renders, while title and company come from
+    safe_text(), which returns None instead of raising -- deliberately, so one
+    missing field cannot kill a run. A Naukri markup change hitting one
+    selector and not the other produces exactly this.
+
+    Title OR company is enough. Requiring both, or requiring location and
+    experience, would discard real postings: Naukri omits those often. The bar
+    is identity, not completeness.
+    """
+    return bool(posting.get("title") or posting.get("company"))
 
 
 def save_records(records: list[dict]) -> tuple[int, int]:
@@ -205,7 +233,33 @@ def save_records(records: list[dict]) -> tuple[int, int]:
             cur.execute("SELECT skill FROM skill_blocklist")
             skill_blocklist = {row["skill"] for row in cur.fetchall()}
 
-        cleaned = [clean_record(r, city_name_to_id, skill_blocklist) for r in records]
+        # Per record, not a list comprehension over the batch. clean_record can
+        # raise on a malformed field, and one bad record must cost one record
+        # rather than every posting scraped that run.
+        cleaned = []
+        malformed = 0
+        for r in records:
+            try:
+                cleaned.append(clean_record(r, city_name_to_id, skill_blocklist))
+            except Exception as exc:
+                malformed += 1
+                print(f"  [malformed] Skipped a record that could not be cleaned: "
+                      f"{type(exc).__name__}: {exc}")
+        if malformed:
+            print(f"  WARNING: {malformed} of {len(records)} record(s) could not be cleaned.")
+
+        # A record with neither title nor company has no identity, and every
+        # such record shares one fingerprint -- so writing them collapses the
+        # batch onto a single row instead of erroring. Drop them loudly.
+        unidentifiable = [c for c in cleaned if not is_identifiable(c["posting"])]
+        if unidentifiable:
+            cleaned = [c for c in cleaned if is_identifiable(c["posting"])]
+            print(f"  WARNING: {len(unidentifiable)} of {len(records)} record(s) had no "
+                  f"title and no company, so they cannot be told apart. Not written.")
+            if not cleaned:
+                # Nothing survived. That is a broken selector, not a quiet day.
+                print("  WARNING: NO record in this batch was identifiable. "
+                      "The title/company selectors have almost certainly changed.")
 
         # Postgres can't ON CONFLICT DO UPDATE one row twice in a statement, so
         # dedupe first. Naukri does repeat a job on a single search page.
