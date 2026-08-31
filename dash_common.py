@@ -284,8 +284,15 @@ def movers(limit: int = 25, skills: list[str] | None = None) -> tuple[pd.DataFra
     return data, mode
 
 
-def new_skills(limit: int = 40) -> pd.DataFrame:
-    return df("/trends/new-skills", (("limit", limit),))
+def new_skills(limit: int = 40, since: str | None = None) -> pd.DataFrame:
+    """Pass `since` when you want a COUNT of what is new rather than a sample
+    of it. Filtering a limited page client-side reports the limit, not the
+    count -- the weekly digest said "40 skills" for weeks when the real figure
+    was 121."""
+    params = [("limit", limit)]
+    if since:
+        params.append(("since", since))
+    return df("/trends/new-skills", tuple(params))
 
 
 def search_postings(page: int = 1, page_size: int = 25,

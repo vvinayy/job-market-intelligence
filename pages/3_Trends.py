@@ -1,5 +1,7 @@
 """Trends — how demand shifts over time. Needs accumulated history."""
 
+from datetime import date, timedelta
+
 import streamlit as st
 import plotly.express as px
 
@@ -11,10 +13,22 @@ st.title("Trends over time")
 coverage = dc.trends_coverage()
 days = int(coverage.get("days_recorded") or 0)
 
+missing = int(coverage.get("days_missing") or 0)
+
 c1, c2, c3 = st.columns(3)
-c1.metric("Days recorded", days)
+c1.metric("Days recorded", days,
+          help="Snapshots taken. A snapshot only happens when the machine is on.")
 c2.metric("Earliest", coverage.get("earliest") or "—")
 c3.metric("Skills tracked", int(coverage.get("distinct_skills") or 0))
+
+if missing:
+    st.caption(
+        f"**{missing} day(s) in that span were never snapshotted** and cannot be "
+        f"recovered — {days} recorded across "
+        f"{int(coverage.get('calendar_days_spanned') or 0)} calendar days. "
+        "Comparisons below step over those gaps, so each one carries the interval "
+        "it actually covers."
+    )
 
 st.divider()
 
@@ -36,31 +50,60 @@ with tab0:
     facts = dc.summary()
     new_postings = int(facts.get("new_postings_7d") or 0)
     active = int(facts.get("active_last_7_days") or 0)
+    still_open = int(facts.get("still_open") or 0)
+    closed = int(facts.get("closed") or 0)
 
     movers, mode = dc.movers(limit=3)
-    fresh = dc.new_skills(limit=40)
-    new_this_week = fresh[fresh["days_present"] <= 7] if not fresh.empty else fresh
+    # Asked for by date, not sliced out of a limited page. The old form fetched
+    # 40 rows and filtered them, so the digest reported the page size as a
+    # count -- "40 skills" when 121 qualified. The limit here is the endpoint
+    # ceiling, and saturation is stated rather than hidden.
+    NEW_SKILL_CAP = 500
+    new_this_week = dc.new_skills(
+        limit=NEW_SKILL_CAP,
+        since=str(date.today() - timedelta(days=7)))
     top_skill = dc.skill_demand(limit=1)
 
     d1, d2, d3 = st.columns(3)
     d1.metric("New postings", new_postings, help="First seen in the last 7 days")
-    d2.metric("Still active", active, help="Seen again in the last 7 days")
-    d3.metric("New skills spotted", len(new_this_week))
+    d2.metric("Seen again this week", active,
+              help="Any posting a search surfaced in the last 7 days, new or old. "
+                   "A coverage figure: it says what we scraped, not what is open.")
+    saturated = len(new_this_week) >= NEW_SKILL_CAP
+    d3.metric("New skills spotted",
+              f"{NEW_SKILL_CAP}+" if saturated else len(new_this_week),
+              help="First recorded in the last 7 calendar days.")
 
     st.markdown("#### This week, in sentences")
-    lines = [f"**{new_postings} new postings** were collected this week, of which **{active}** are still showing up in the latest scrape."]
+    # The old second half read "of which N are still showing up", which was
+    # wrong twice: active_last_7_days counts the whole table, so it is not a
+    # subset of the new postings and was routinely the larger number, and
+    # "showing up" is scrape coverage rather than liveness. The liveness
+    # columns answer what the sentence was reaching for.
+    lines = [
+        f"**{new_postings} new postings** were collected this week. "
+        f"Of everything collected so far, **{still_open} are confirmed still open** "
+        f"and **{closed} have closed**."
+    ]
 
     if not movers.empty:
         biggest = movers.sort_values("change", key=abs, ascending=False).iloc[0]
         direction = "up" if biggest["change"] > 0 else "down"
-        comparison = "vs. its 7-day average" if mode == "rolling_7d" else "vs. yesterday"
+        if mode == "rolling_7d":
+            comparison = (f"vs. its 7-day average "
+                          f"(built from {int(biggest['baseline_days'])} snapshot(s))")
+        else:
+            gap = int(biggest["days_since_previous"])
+            comparison = "vs. yesterday" if gap == 1 else f"vs. {gap} days earlier"
         lines.append(f"The biggest mover was **{biggest['skill']}**, {direction} {abs(biggest['change']):.0f} postings {comparison}.")
 
     if not new_this_week.empty:
         names = ", ".join(new_this_week["skill"].head(5).tolist())
         more = len(new_this_week) - 5
         suffix = f", and {more} more" if more > 0 else ""
-        lines.append(f"**{len(new_this_week)} skill(s)** were recorded for the first time this week: {names}{suffix}.")
+        count = (f"at least {NEW_SKILL_CAP}" if saturated
+                 else str(len(new_this_week)))
+        lines.append(f"**{count} skill(s)** were recorded for the first time this week: {names}{suffix}.")
 
     if not top_skill.empty:
         lines.append(f"Overall, **{top_skill.iloc[0]['skill']}** remains the single most requested skill across every posting collected so far.")
@@ -104,7 +147,7 @@ with tab2:
             "Showing simple day-over-day change instead — noisier, since a skill can "
             "move purely from different postings appearing in that day's sample."
         )
-        label = "change vs yesterday"
+        label = "change vs the previous day"
     else:
         label = "change vs 7-day average"
 
@@ -120,6 +163,23 @@ with tab2:
                           margin=dict(l=0, r=20, t=10, b=0), coloraxis_showscale=False,
                           xaxis_title=label, yaxis_title=None, **dc.TRANSPARENT)
         st.plotly_chart(fig, use_container_width=True)
+
+        if mode == "previous_day":
+            st.caption(
+                "Only genuine one-day moves are shown. A skill missing from a "
+                "snapshot has no row that day, so its previous point can sit weeks "
+                "back — ranking that against a one-day move would just be giving it "
+                "a longer clock."
+            )
+        else:
+            thin = int((data["baseline_days"] < 3).sum())
+            if thin:
+                st.caption(
+                    f"{thin} of these have a baseline built from fewer than 3 "
+                    "snapshots — the window is 7 calendar days, but only the "
+                    "snapshots inside it are averaged. See `baseline_days` below."
+                )
+
         st.dataframe(data, use_container_width=True, hide_index=True)
 
 

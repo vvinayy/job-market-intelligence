@@ -152,6 +152,10 @@ class Summary(BaseModel):
     closed: int = 0
     never_checked: int = 0
     last_liveness_check: date | None = None
+    # When closure detection began. Every exposure-adjusted rate is scoped to
+    # this date onward; NULL means no run has been recorded and no such rate
+    # can be computed honestly.
+    liveness_started_on: date | None = None
     companies: int
     distinct_skills: int
     distinct_roles: int
@@ -203,13 +207,23 @@ class ExperienceFlexibility(BaseModel):
 
 
 class ClosureRate(BaseModel):
-    """How fast postings in one group stop being listed.
+    """How fast postings in one group stop being listed, over the window in
+    which closures could actually be detected.
 
-    `per_100_posting_days` is the figure to rank on, not `pct_closed`.
-    Exposure differs between groups -- a posting first seen two weeks ago has
-    had twice as long to close as one seen last week -- so a raw percentage
-    partly measures when we happened to scrape. Adjusting moved one department
-    from second place to first when this was checked against real data.
+    Every figure here is scoped to that window, which opens at the first
+    recorded liveness run -- see `/analytics/summary.liveness_started_on`.
+    Before it nothing was checking, so a posting could not have been observed
+    closing; counting those earlier days was measured at 8,280 posting-days
+    against 1,806 real ones and reordered the whole role ranking.
+
+    For the same reason `postings` counts only postings *at risk* during the
+    window: ones already expired when it opened are excluded outright, since
+    they closed at an unknown earlier date and were never at risk of closing
+    inside it.
+
+    `per_100_posting_days` is the figure to rank on, not `pct_closed`. Groups
+    are watched for different lengths of time, so a raw percentage partly
+    measures when we happened to scrape.
 
     `closed` counts postings Naukri now redirects as expired. It never means
     "filled": withdrawn, cancelled and expired-unfilled look identical from
@@ -247,6 +261,11 @@ class Coverage(BaseModel):
     distinct_skills: int
     daily_delta_available: bool
     baseline_delta_available: bool
+    # days_recorded on its own reads as an unbroken run. Snapshots only happen
+    # when the machine is on, so it usually is not: 17 recorded across 25
+    # calendar days when this was added. The missing days cannot be recovered.
+    calendar_days_spanned: int = 0
+    days_missing: int = 0
 
 
 class TrendPoint(BaseModel):
@@ -256,6 +275,18 @@ class TrendPoint(BaseModel):
 
 
 class Mover(BaseModel):
+    """A skill's movement between two points, with the interval attached.
+
+    `days_since_previous` is not decoration. A skill missing from a snapshot
+    has no row that day, so the previous point can be far older than the
+    previous day: measured on one date, 204 skills had a true one-day
+    comparison while a tail ran to 4, 6, 14 and 24 days. Ranking those
+    together compares a month of drift against a day of it, so
+    `previous_day` mode filters on this and never mixes intervals.
+
+    In `rolling_7d` mode `baseline_days` carries the same warning: the window
+    is seven calendar days, but only the snapshots inside it are averaged, and
+    a baseline of one point is not a baseline."""
     skill: str
     snapshot_date: date
     posting_count: int
@@ -263,12 +294,21 @@ class Mover(BaseModel):
     change: float | None = None
     pct_change: float | None = None
     comparison: str = Field(description="'previous_day' or 'rolling_7d'")
+    previous_date: date | None = None
+    days_since_previous: int | None = None
+    baseline_days: int | None = None
 
 
 class FirstAppearance(BaseModel):
+    """`days_present` counts snapshots the skill appeared in, NOT its age.
+    The two diverge badly across gaps -- 740 skills had days_present <= 7
+    while being over a week old, some by 24 days -- so filtering on it to mean
+    "new this week" is wrong. Use `days_since_first_seen` for age;
+    `days_present` still answers "how consistently has it appeared"."""
     skill: str
     first_seen: date
     days_present: int
+    days_since_first_seen: int = 0
 
 
 # ---------------------------------------------------------------------

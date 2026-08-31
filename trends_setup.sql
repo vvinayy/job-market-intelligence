@@ -103,16 +103,31 @@ $$ LANGUAGE plpgsql;
 -- =====================================================================
 
 -- ---------------------------------------------------------------------
--- Day-over-day change.
--- Simple, but noisy at small scrape volumes: a skill can swing purely
--- because different postings happened to be on the search page.
+-- Change since the previous snapshot.
+--
+-- NOT day-over-day, and that is why previous_date and
+-- days_since_previous are here. Two separate gaps stack up.
+--
+-- Snapshots only happen when the machine is on -- 17 days recorded
+-- across 25 calendar days, five gaps, the largest three. On top of
+-- that, a skill absent from a snapshot has no row that day at all, so
+-- LAG reaches back to whenever it last appeared. Measured on 31 Aug:
+-- 204 skills had a genuine one-day comparison, 121 spanned two days,
+-- and a tail ran to 4, 6, 14 and 24 days.
+--
+-- So the interval is NOT shared across skills on a date, and a 24-day
+-- change ranked against a one-day change is not a fair comparison.
+-- Consumers must filter on days_since_previous; /trends/movers does.
 -- ---------------------------------------------------------------------
-CREATE OR REPLACE VIEW skill_delta_daily AS
+DROP VIEW IF EXISTS skill_delta_daily;
+CREATE VIEW skill_delta_daily AS
 SELECT
     s.skill,
     s.snapshot_date,
     s.posting_count,
     LAG(s.posting_count) OVER w AS previous_count,
+    LAG(s.snapshot_date)  OVER w AS previous_date,
+    (s.snapshot_date - LAG(s.snapshot_date) OVER w)::int AS days_since_previous,
     s.posting_count - LAG(s.posting_count) OVER w AS change,
     ROUND(
         100.0 * (s.posting_count - LAG(s.posting_count) OVER w)
@@ -126,30 +141,46 @@ WINDOW w AS (PARTITION BY s.skill ORDER BY s.snapshot_date);
 -- ---------------------------------------------------------------------
 -- Change against a 7-day trailing average.
 -- Asks "is today unusual for the past week?" rather than "is today
--- different from yesterday?" — far less sensitive to sampling noise.
+-- different from yesterday?" -- far less sensitive to sampling noise.
 --
--- The window EXCLUDES today (1 PRECEDING, not CURRENT ROW). Including
--- it would let a spike average against itself and understate its size.
+-- RANGE over an interval, not ROWS. ROWS BETWEEN 7 PRECEDING averages
+-- the last seven recorded snapshots, which is only a week if every day
+-- was recorded; with the real gaps that window spanned 20-31 Aug, so an
+-- eleven-day average was being reported as a seven-day one. RANGE walks
+-- calendar dates instead and simply averages fewer points across a gap.
+--
+-- baseline_days says how many points that was. A baseline built from
+-- two snapshots is not the same claim as one built from seven, and
+-- without this column the two are indistinguishable.
+--
+-- The window EXCLUDES today (1 day PRECEDING, not CURRENT ROW).
+-- Including it would let a spike average against itself and understate
+-- its size.
 -- ---------------------------------------------------------------------
-CREATE OR REPLACE VIEW skill_delta_vs_baseline AS
+DROP VIEW IF EXISTS skill_delta_vs_baseline;
+CREATE VIEW skill_delta_vs_baseline AS
 WITH rolling AS (
     SELECT
         skill,
         snapshot_date,
         posting_count,
-        AVG(posting_count) OVER (
-            PARTITION BY skill
-            ORDER BY snapshot_date
-            ROWS BETWEEN 7 PRECEDING AND 1 PRECEDING
-        ) AS baseline_7d
+        AVG(posting_count) OVER w AS baseline_7d,
+        COUNT(*)           OVER w AS baseline_days
     FROM skill_daily_counts
     WHERE skill NOT IN (SELECT skill FROM skill_blocklist)
+    WINDOW w AS (
+        PARTITION BY skill
+        ORDER BY snapshot_date
+        RANGE BETWEEN INTERVAL '7 days' PRECEDING
+                  AND INTERVAL '1 day'  PRECEDING
+    )
 )
 SELECT
     skill,
     snapshot_date,
     posting_count,
     ROUND(baseline_7d, 1) AS baseline_7d,
+    baseline_days::int    AS baseline_days,
     ROUND(posting_count - baseline_7d, 1) AS change_vs_baseline,
     ROUND(100.0 * (posting_count - baseline_7d) / NULLIF(baseline_7d, 0), 1) AS pct_vs_baseline
 FROM rolling
@@ -157,17 +188,27 @@ WHERE baseline_7d IS NOT NULL;
 
 
 -- ---------------------------------------------------------------------
--- First appearances — skills showing up for the very first time.
+-- First appearances -- skills showing up for the very first time.
 --
 -- Needs its own view: the rolling-baseline view silently excludes these
 -- (no history means no baseline), so a brand-new skill would never
 -- surface there despite being the most interesting signal.
+--
+-- days_present counts snapshots, NOT elapsed days, and the two diverge
+-- badly across gaps: 740 skills have days_present <= 7 while being more
+-- than a week old, some by 24 days. Filtering on it to mean "new this
+-- week" is wrong, which is what the weekly digest was doing.
+-- days_since_first_seen is the calendar age and is what that question
+-- actually wants; days_present stays because "seen on 5 of 17 days" is
+-- a different and useful fact.
 -- ---------------------------------------------------------------------
-CREATE OR REPLACE VIEW skill_first_appearances AS
+DROP VIEW IF EXISTS skill_first_appearances;
+CREATE VIEW skill_first_appearances AS
 SELECT
     skill,
-    MIN(snapshot_date) AS first_seen,
-    COUNT(*)           AS days_present
+    MIN(snapshot_date)                       AS first_seen,
+    COUNT(*)                                 AS days_present,
+    (CURRENT_DATE - MIN(snapshot_date))::int AS days_since_first_seen
 FROM skill_daily_counts
 WHERE skill NOT IN (SELECT skill FROM skill_blocklist)
 GROUP BY skill
@@ -178,10 +219,15 @@ ORDER BY first_seen DESC;
 -- How much history exists so far. Run this to check whether the trend
 -- views have enough data to say anything yet.
 -- ---------------------------------------------------------------------
-CREATE OR REPLACE VIEW snapshot_coverage AS
+DROP VIEW IF EXISTS snapshot_coverage;
+CREATE VIEW snapshot_coverage AS
 SELECT
     COUNT(DISTINCT snapshot_date) AS days_recorded,
     MIN(snapshot_date)            AS earliest,
     MAX(snapshot_date)            AS latest,
-    COUNT(DISTINCT skill)         AS distinct_skills
+    COUNT(DISTINCT skill)         AS distinct_skills,
+    -- days_recorded alone reads as an unbroken run. It is not: snapshots
+    -- only happen when the machine is on. The difference between these
+    -- two is how many days are missing, permanently.
+    (MAX(snapshot_date) - MIN(snapshot_date) + 1)::int AS calendar_days_spanned
 FROM skill_daily_counts;
