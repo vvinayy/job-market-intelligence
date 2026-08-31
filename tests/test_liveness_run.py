@@ -9,8 +9,8 @@ worked perfectly when called directly, but main() closed the connection in a
 "connection already closed". The function was tested; its position in main()
 was not. That is exactly the seam this file covers.
 
-Nothing here writes: _apply is stubbed out and the HTTP check is replaced, so
-the database is only ever read.
+Nothing here writes: _apply and _record_run are both stubbed out and the HTTP
+check is replaced, so the database is only ever read.
 """
 
 import pytest
@@ -47,14 +47,25 @@ def real_targets(monkeypatch):
 
 @pytest.fixture
 def no_writes_no_toasts(monkeypatch):
-    """Neutralise every side effect: no UPDATE, no notification, no sleeping."""
+    """Neutralise every side effect: no UPDATE, no run row, no notification, no
+    sleeping.
+
+    _record_run has to be stubbed as well as _apply. It writes to a different
+    table, so an earlier version of this fixture let it through and three
+    fabricated rows -- including one claiming three postings expired -- landed
+    in liveness_runs on every test run. Nothing here may write."""
     applied = {}
 
     def fake_apply(conn, expired, live):
         applied["expired"] = list(expired)
         applied["live"] = list(live)
 
+    def fake_record(conn, started, checked, expired, live, unknown, aborted=None):
+        applied["recorded"] = dict(checked=checked, expired=expired,
+                                   live=live, unknown=unknown, aborted=aborted)
+
     monkeypatch.setattr(liveness_checker, "_apply", fake_apply)
+    monkeypatch.setattr(liveness_checker, "_record_run", fake_record)
     monkeypatch.setattr(liveness_checker.notify, "toast", lambda *a, **k: True)
     monkeypatch.setattr(liveness_checker.time, "sleep", lambda *_: None)
     return applied
@@ -73,6 +84,11 @@ def test_main_can_log_expired_postings_without_a_closed_connection(
 
     assert rc == 0, "a run that found expiries should succeed, not crash"
     assert no_writes_no_toasts.get("expired"), "expected the stub to receive job_ids"
+    # The run row is what dates the observation window; a run that wrote
+    # results but recorded nothing would silently shorten it.
+    recorded = no_writes_no_toasts.get("recorded")
+    assert recorded and recorded["aborted"] is None, "clean run should be recorded"
+    assert recorded["expired"] == 3
 
 
 def test_main_survives_a_run_with_no_expiries(

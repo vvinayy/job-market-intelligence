@@ -22,8 +22,14 @@ the ones that came back inconclusive, so logs/liveness_<date>.log answers
 "what closed today" without a query. Inconclusive rows matter most: a dead
 link or the start of a block, which a bare count would hide.
 
-Writes only is_expired / expired_on / last_checked_on. It never touches
-posting content, and never bumps last_seen_date -- that column means "a search
+Also appends one row per run to liveness_runs. That table exists for a single
+number: MIN(started_at) is the date closure detection began, and every
+exposure-adjusted rate depends on it -- days before it are not exposure,
+because nothing was checking then. Measured against first_seen_date instead,
+the denominator came out 8,280 posting-days against 1,806 real ones.
+
+On cleaned_postings it writes only is_expired / expired_on / last_checked_on.
+It never touches posting content, and never bumps last_seen_date -- that column means "a search
 surfaced this", and conflating it with "we verified the URL" would destroy the
 ability to tell scraper coverage from direct verification.
 
@@ -184,6 +190,35 @@ def _log_unknown(unknown: list[tuple[int, str]]) -> None:
         print(f"    ... and {len(unknown) - 50} more")
 
 
+def _record_run(conn, started, checked, expired, live, unknown, aborted=None) -> None:
+    """Log the run itself, separately from its results.
+
+    MIN(started_at) over this table is the date closure detection began, and
+    every exposure-adjusted rate needs it: days before it are not exposure,
+    because nothing was checking and no closure could have been observed.
+    Inferring it from MIN(expired_on) instead breaks the moment the oldest
+    closure is deleted, and silently -- the rate just quietly inflates.
+
+    Aborted runs are recorded too. Observation did not stop because a safety
+    valve discarded that night's results; the window stayed open.
+
+    Its own transaction, and failures here are swallowed. A run that checked
+    500 postings and wrote them correctly has not failed because its bookkeeping
+    row did not land.
+    """
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """INSERT INTO liveness_runs
+                           (started_at, finished_at, checked, expired, live,
+                            unknown, aborted_reason)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                    (started, datetime.now(), checked, expired, live, unknown, aborted))
+    except psycopg2.Error as exc:
+        print(f"[liveness] Could not record the run: {exc}")
+
+
 def main(limit: int | None) -> int:
     started = datetime.now()
     conn = _connect()
@@ -232,6 +267,9 @@ def main(limit: int | None) -> int:
               f"({len(unknown)/total:.0%}). That usually means we are being blocked or "
               f"the redirect shape changed. Nothing was written.")
         _log_unknown(unknown)
+        _record_run(conn, started, total, len(expired), len(live), len(unknown),
+                    aborted=f"{len(unknown)}/{total} inconclusive - likely blocked "
+                            f"or the redirect shape changed")
         notify.toast("Liveness check ABORTED",
                      f"{len(unknown)} of {total} checks were inconclusive "
                      f"({len(unknown)/total:.0%}). Likely blocked, or the redirect "
@@ -246,6 +284,9 @@ def main(limit: int | None) -> int:
         print(f"[LIVENESS ABORTED] {len(expired)} of {decided} came back expired "
               f"({len(expired)/decided:.0%}). That is implausible - assuming a block "
               f"or a layout change. Nothing was written.")
+        _record_run(conn, started, total, len(expired), len(live), len(unknown),
+                    aborted=f"{len(expired)}/{decided} expired - implausible; "
+                            f"assumed a block or a layout change")
         notify.toast("Liveness check ABORTED",
                      f"{len(expired)} of {decided} came back expired "
                      f"({len(expired)/decided:.0%}) - implausibly many. Assuming a block "
@@ -259,6 +300,8 @@ def main(limit: int | None) -> int:
             _apply(conn, expired, live)
     except psycopg2.Error as exc:
         print(f"[LIVENESS FAILED] Could not write results: {exc}")
+        _record_run(conn, started, total, len(expired), len(live), len(unknown),
+                    aborted=f"write failed: {exc}")
         notify.toast("Liveness check FAILED",
                      f"Checked {decided} postings but could not write the results: {exc}",
                      urgent=True)
@@ -273,6 +316,8 @@ def main(limit: int | None) -> int:
     # Its failures are caught separately and are not fatal: the run succeeded,
     # and being unable to print a list must not report it as failed or skip
     # the notification below.
+    _record_run(conn, started, total, len(expired), len(live), len(unknown))
+
     try:
         _log_expired(conn, expired)
     except psycopg2.Error as exc:

@@ -69,6 +69,8 @@ def summary():
         FROM cleaned_postings
     """) or {}
 
+    row["liveness_started_on"] = fetch_value(
+        "SELECT MIN(started_at)::date FROM liveness_runs")
     row["distinct_skills"] = fetch_value(
         "SELECT COUNT(DISTINCT s) FROM posting_skills, unnest(skill_ids) AS s") or 0
     row["cities_covered"] = fetch_value(
@@ -103,11 +105,24 @@ def skill_demand(
     experience_max: int | None = Query(None, ge=0),
     posted_after: str | None = Query(None),
     company: str | None = Query(None),
+    open_only: bool = Query(False,
+        description="Count only postings not known to have closed. Default "
+                    "counts everything ever collected, closed included."),
 ):
+    """Demand counted over every posting ever collected, closed ones included,
+    unless open_only is set.
+
+    Both are legitimate: cumulative demand answers "what has this market asked
+    for", live demand answers "what can I apply to today". Measured at 17%
+    closed the two rankings were nearly identical -- top 8 unchanged, Java 11
+    to 9 -- so the default is left cumulative, but that gap widens as closures
+    accumulate."""
     w = scope(role_family, city, state, experience_min, experience_max,
               posted_after, company)
     if not include_blocked:
         w.add_raw("sk.skill_name NOT IN (SELECT skill FROM skill_blocklist)")
+    if open_only:
+        w.add_raw("c.is_expired IS NOT TRUE")
 
     return fetch_all(f"""
         SELECT sk.skill_name AS name, COUNT(*)::int AS postings
@@ -131,8 +146,12 @@ def role_distribution(
     total = fetch_value(
         f"SELECT COUNT(*) FROM cleaned_postings c {w.sql}", w.values) or 1
 
+    # 'Not recorded', not 'Other'. classify_role() returns a real 'Other' for a
+    # title that matched no pattern, which is a finding; a NULL means the field
+    # was never set, which is an absence. Merging them makes the second
+    # invisible. No NULLs exist today, so this is a guard, not a fix.
     return fetch_all(f"""
-        SELECT COALESCE(c.role_family, 'Other') AS bucket,
+        SELECT COALESCE(c.role_family, 'Not recorded') AS bucket,
                COUNT(*)::int AS postings,
                ROUND(100.0 * COUNT(*) / {total}, 2)::float AS share_pct
         FROM cleaned_postings c {w.sql}
@@ -140,11 +159,19 @@ def role_distribution(
     """, w.values)
 
 
-@router.get("/seniority", response_model=list[Bucket], summary="Seniority mix, inferred from title")
+@router.get("/seniority", response_model=list[Bucket],
+            summary="Seniority mix among the ~20% of titles that state one")
 def seniority_distribution(
     city: list[str] | None = Query(None),
     state: list[str] | None = Query(None),
 ):
+    """Seniority is read from the job title, and most titles do not carry one:
+    118 of 548 postings when this was measured. Shares are of that fifth, NOT
+    of the market, and the fifth is self-selected -- an employer who writes
+    "Senior" is not a random employer. The dashboard dropped this chart for
+    that reason and uses experience bands, which are stated on 97%.
+
+    Kept as an endpoint because the counts themselves are real."""
     # Denominator is postings whose title carried a seniority word, not all
     # postings — most carry none. Same reasoning as qualification_distribution().
     w = scope(None, city, state, None, None, None, None)
@@ -198,14 +225,20 @@ def location_distribution(
     if role_family:
         w.add("c.role_family = ANY(%s)", list(role_family))
 
+    # Denominator is distinct POSTINGS, not posting_cities rows. A posting can
+    # list several cities -- 1,015 city rows across 546 postings when this was
+    # written -- so dividing by rows made "Hyderabad 60%" mean 60% of
+    # city-mentions while reading as 60% of postings. Shares deliberately do
+    # not sum to 100%: the dimension is not disjoint, and forcing it to sum
+    # would mean splitting a posting across the cities it names.
     total = fetch_value(
-        f"SELECT COUNT(*) FROM posting_cities pc "
+        f"SELECT COUNT(DISTINCT pc.job_id) FROM posting_cities pc "
         f"JOIN cleaned_postings c ON c.job_id = pc.job_id {w.sql}", w.values) or 1
 
     column = "ci.city_name" if by == "city" else "ci.state"
     return fetch_all(f"""
-        SELECT {column} AS bucket, COUNT(*)::int AS postings,
-               ROUND(100.0 * COUNT(*) / {total}, 2)::float AS share_pct
+        SELECT {column} AS bucket, COUNT(DISTINCT pc.job_id)::int AS postings,
+               ROUND(100.0 * COUNT(DISTINCT pc.job_id) / {total}, 2)::float AS share_pct
         FROM posting_cities pc
         JOIN cities ci ON ci.city_id = pc.city_id
         JOIN cleaned_postings c ON c.job_id = pc.job_id
@@ -547,23 +580,54 @@ def closures(
     bucket_sql = CLOSURE_DIMENSIONS[dimension]
     w = scope(role_family, city, state, None, None, None, None)
 
+    # A closure can only be observed once something is checking. Before the
+    # first liveness run there was no observation at all, so days before it are
+    # not exposure, and closures dated to that first run are not events inside
+    # the window -- they are a backlog that died at unknown earlier dates and
+    # merely surfaced on day one. Measured: 8,280 posting-days counted this way
+    # against 1,806 real ones, which reordered the entire role ranking.
+    observed_from = fetch_value("SELECT MIN(started_at)::date FROM liveness_runs")
+    if observed_from is None:
+        # No recorded run means no window and no honest rate. Falling back to
+        # the first_seen_date denominator would restore the exact error this
+        # was rewritten to remove, so return nothing and let the caller say so.
+        return []
+
     # is_expired IS NULL means never checked, which is neither open nor
     # closed -- counting it either way would be inventing an observation.
+    #
+    # Parameter order matters: psycopg2 binds %s by position, and two of the
+    # three date placeholders sit above the WHERE clause, one below it.
     return fetch_all(f"""
+        WITH observed AS (
+            SELECT
+                {bucket_sql} AS bucket,
+                -- Exposure opens when the posting appeared or when checking
+                -- began, whichever is later, and closes when the posting did.
+                GREATEST(
+                    LEAST(COALESCE(c.expired_on, CURRENT_DATE), CURRENT_DATE)
+                    - GREATEST(c.first_seen_date, %s::date), 0) AS exposure_days,
+                (c.is_expired AND c.expired_on > %s::date) AS closed_in_window
+            FROM cleaned_postings c
+            {w.sql}{" AND" if w.sql else "WHERE"} c.is_expired IS NOT NULL
+              -- Already expired when the window opened: never at risk inside
+              -- it, so it belongs to neither numerator nor denominator.
+              -- Keeping it would date an unknown-age closure to day one and
+              -- count it as an event of the window's length.
+              AND (c.expired_on IS NULL OR c.expired_on > %s::date)
+        )
         SELECT
-            {bucket_sql} AS bucket,
+            bucket,
             COUNT(*)::int AS postings,
-            COUNT(*) FILTER (WHERE c.is_expired)::int AS closed,
-            ROUND(100.0 * COUNT(*) FILTER (WHERE c.is_expired)
+            COUNT(*) FILTER (WHERE closed_in_window)::int AS closed,
+            ROUND(100.0 * COUNT(*) FILTER (WHERE closed_in_window)
                   / COUNT(*), 1)::float AS pct_closed,
-            ROUND(AVG(CURRENT_DATE - c.first_seen_date), 1)::float
-                AS mean_exposure_days,
-            ROUND(100.0 * COUNT(*) FILTER (WHERE c.is_expired)
-                  / NULLIF(SUM(CURRENT_DATE - c.first_seen_date), 0), 2)::float
+            ROUND(AVG(exposure_days), 1)::float AS mean_exposure_days,
+            ROUND(100.0 * COUNT(*) FILTER (WHERE closed_in_window)
+                  / NULLIF(SUM(exposure_days), 0), 2)::float
                 AS per_100_posting_days
-        FROM cleaned_postings c
-        {w.sql}{" AND" if w.sql else "WHERE"} c.is_expired IS NOT NULL
+        FROM observed
         GROUP BY bucket
         HAVING COUNT(*) >= {int(min_postings)}
         ORDER BY per_100_posting_days DESC NULLS LAST
-    """, w.values)
+    """, [observed_from, observed_from] + list(w.values) + [observed_from])

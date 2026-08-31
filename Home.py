@@ -89,14 +89,23 @@ with s2:
     closed = int(facts.get("closed") or 0)
     checked_on = facts.get("last_liveness_check")
 
+    # Denominator is postings actually checked, not the whole table. Against
+    # `total` the card invited reading every remaining posting as closed, when
+    # some were simply never checked -- the same NULL-is-not-False mistake
+    # is_expired exists to avoid.
+    never_checked = int(facts.get("never_checked") or 0)
+    checked = still_open + closed
+
     if still_open or closed:
-        st.markdown(f"### {still_open} of {total}")
-        st.markdown("**postings are still open**")
+        st.markdown(f"### {still_open} of {checked}")
+        st.markdown("**checked postings are still open**")
         st.caption(
             f"Every listing re-checked against Naukri"
             + (f" on {checked_on}" if checked_on else "")
             + f". {closed} have since closed — which means Naukri no longer "
             "shows them, not that anyone was hired."
+            + (f" {never_checked} have not been checked yet and count as neither."
+               if never_checked else "")
         )
     else:
         st.markdown(f"### {total}")

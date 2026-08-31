@@ -67,6 +67,30 @@ def tail_note(minor, noun: str) -> None:
     )
 
 
+TOTAL_POSTINGS = int(dc.summary().get("total_postings") or 0)
+
+
+def coverage_note(covered: int, field: str, added: str | None = None) -> None:
+    """Say what share of the collection a chart actually speaks for.
+
+    Every chart on this page is drawn from a field that is missing on a large
+    minority of postings, and the bars give no hint of it -- Department and
+    Industry Type sit on 296 of 548. Worse, the gap is not random: the scraper
+    only began capturing these on 18 Aug, so coverage runs 18% before that date
+    and 88% after. A reader seeing only the bars would take them for the whole
+    collection.
+    """
+    if not TOTAL_POSTINGS or covered >= TOTAL_POSTINGS:
+        return
+    pct = round(100 * covered / TOTAL_POSTINGS)
+    st.caption(
+        f"Drawn from the **{covered} of {TOTAL_POSTINGS} postings** ({pct}%) that "
+        f"carry {field}"
+        + (f" — the scraper began capturing it on {added}, so earlier postings "
+           "have none and the missing ones are not a random sample." if added else ".")
+    )
+
+
 tab1, tab2 = st.tabs(["Who is hiring", "Qualifications accepted"])
 
 
@@ -90,6 +114,8 @@ with tab1:
                 "happening: mostly at IT services firms, but a real share of it "
                 "inside pharma, finance and logistics companies."
             )
+            coverage_note(int(industries["postings"].sum()),
+                          "an Industry Type tag", "18 Aug")
             tail_note(minor, "sectors")
 
     st.divider()
@@ -112,6 +138,8 @@ with tab1:
                 "entries are mostly mis-tagged IT jobs rather than genuinely "
                 "different work."
             )
+            coverage_note(int(departments["postings"].sum()),
+                          "a Department tag", "18 Aug")
             tail_note(minor, "departments")
 
 
@@ -140,6 +168,8 @@ with tab2:
                 "sum to the number of postings. Naukri writes some as a pair "
                 "(\"B.Tech / B.E.\"); those are split into one row each here."
             )
+            coverage_note(int(dc.summary().get("postings_with_education") or 0),
+                          "any stated education requirement", "18 Aug")
             tail_note(minor, "degrees")
 
     st.divider()
@@ -161,5 +191,7 @@ with tab2:
             "the finding: most postings that mention education at all are saying "
             "the field does not matter. Named fields are named by very few."
         )
+        coverage_note(int(dc.summary().get("postings_with_education") or 0),
+                      "any stated education requirement", "18 Aug")
 
 dc.sampling_note()

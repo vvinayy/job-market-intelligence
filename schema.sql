@@ -533,3 +533,34 @@ CREATE TABLE IF NOT EXISTS scrape_runs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_scrape_runs_started_at ON scrape_runs (started_at);
+
+
+-- ---------------------------------------------------------------------
+-- liveness_runs -- one row per liveness_checker.py run.
+--
+-- Exists for one number: MIN(started_at) is the date closure detection
+-- began, and every exposure-adjusted rate needs it. Without it the only
+-- available proxy is first_seen_date, which counts days before anything
+-- was checking as if a closure could have been detected then -- measured
+-- at 8,280 posting-days against 1,806 actually observed, a 4.6x inflated
+-- denominator that reordered the entire role ranking.
+--
+-- Deliberately not IF NOT EXISTS-free like the postings tables: this
+-- must survive a schema.sql re-run, because losing the start date
+-- silently restores the wrong denominator rather than erroring.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS liveness_runs (
+    run_id          BIGSERIAL PRIMARY KEY,
+    started_at      TIMESTAMP NOT NULL,
+    finished_at     TIMESTAMP,
+    checked         INT,
+    expired         INT,
+    live            INT,
+    unknown         INT,
+    -- NULL on a clean run. Set when a safety valve fired or the write
+    -- failed, so an aborted run is still dated -- observation did not
+    -- stop just because that night's results were discarded.
+    aborted_reason  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_liveness_runs_started_at ON liveness_runs (started_at);
