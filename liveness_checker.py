@@ -264,10 +264,22 @@ def main(limit: int | None) -> int:
                      urgent=True)
         conn.close()
         return 1
+
+    # The write is committed by here. _log_expired still needs the connection
+    # to name the postings, so it has to run BEFORE the close -- an earlier
+    # version closed in a `finally` and then logged, which raised
+    # "connection already closed" on every run that found an expiry.
+    #
+    # Its failures are caught separately and are not fatal: the run succeeded,
+    # and being unable to print a list must not report it as failed or skip
+    # the notification below.
+    try:
+        _log_expired(conn, expired)
+    except psycopg2.Error as exc:
+        print(f"[liveness] Wrote results, but could not list them: {exc}")
     finally:
         conn.close()
 
-    _log_expired(conn, expired)
     _log_unknown(unknown)
 
     took = (datetime.now() - started).total_seconds()
