@@ -12,9 +12,10 @@ from ..database import fetch_all, fetch_one, fetch_value, WhereBuilder
 from ..models import (
     Summary, Bucket, SkillPair, SkillSuggestion, NamedCount,
     ScrapeHealthReport, ScrapeRunSummary, FieldHealthWarning, PendingLocation,
-    SkillChoice, SkillFlexibility, ExperienceFlexibility, ClosureRate,
+    DescriptionMismatch, SkillChoice, SkillFlexibility, ExperienceFlexibility,
+    ClosureRate,
 )
-from job_database import check_field_health, pending_locations
+from job_database import check_field_health, pending_locations, mismatched_descriptions
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
@@ -404,6 +405,7 @@ def scrape_health(lookback: int = Query(20, ge=1, le=100)):
         warnings=[FieldHealthWarning(**w) for w in warnings],
         recent_runs=[ScrapeRunSummary(**r) for r in runs],
         pending_locations=[PendingLocation(**p) for p in pending_locations()],
+        mismatched_descriptions=[DescriptionMismatch(**m) for m in mismatched_descriptions()],
     )
 
 

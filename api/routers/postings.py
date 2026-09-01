@@ -76,7 +76,8 @@ BASE_SELECT = """
         c.working_type, c.is_full_time, c.contract_type,
         c.posted_date, c.openings, c.applicant_count, c.applicant_count_qualifier,
         c.company_rating, c.company_reviews, c.url,
-        c.is_expired, c.expired_on
+        c.is_expired, c.expired_on,
+        COALESCE(c.description_foreign_cities, '{}') AS description_foreign_cities
     FROM cleaned_postings c
     LEFT JOIN role_categories rc ON rc.role_category_id = c.role_category_id
     LEFT JOIN departments d ON d.department_id = c.department_id
@@ -92,7 +93,7 @@ def build_filters(
     experience_min, experience_max, has_salary, salary_min, salary_max,
     working_type, is_full_time, contract_type, qualification_level,
     posted_after, posted_before, seen_after, search, min_openings,
-    is_expired,
+    is_expired, description_flagged,
 ) -> WhereBuilder:
     """Turn optional query parameters into a parameterised WHERE clause."""
     w = WhereBuilder()
@@ -182,6 +183,13 @@ def build_filters(
     # A never-checked posting is neither open nor closed and matches neither.
     w.add("c.is_expired = %s", is_expired)
 
+    # A flag, not a verdict: these postings are stored in full like any
+    # other and only marked, so this filter exists to review them, never to
+    # hide them. Default is None -- flagged postings appear in normal
+    # results unless a caller deliberately asks otherwise.
+    if description_flagged is not None:
+        w.add("(c.description_foreign_cities <> '{}') = %s", description_flagged)
+
     if search:
         w.add("(c.title ILIKE %s OR c.company ILIKE %s)", f"%{search}%", f"%{search}%")
 
@@ -233,6 +241,13 @@ def list_postings(
         None, description="true for postings Naukri has closed, false for still-open; "
                     "omit for both. Postings never checked are excluded either way."),
 
+    # --- description quality ---
+    description_flagged: bool | None = Query(
+        None, description="true for postings whose description names only cities "
+                    "the posting is not in -- it may belong to a different job. "
+                    "Omit for both. Roughly half are benign: a recruiter naming "
+                    "another office in the body."),
+
     # --- other ---
     min_openings: int | None = Query(None, ge=1),
 
@@ -250,7 +265,7 @@ def list_postings(
         experience_min, experience_max, has_salary, salary_min, salary_max,
         working_type, is_full_time, contract_type, qualification_level,
         posted_after, posted_before, seen_after, search, min_openings,
-        is_expired,
+        is_expired, description_flagged,
     )
 
     total = fetch_value(
@@ -299,6 +314,7 @@ def get_posting(job_id: int):
                ) AS preferred_skills,
                c.first_seen_date, c.last_seen_date, c.times_seen,
         c.is_expired, c.expired_on, c.last_checked_on,
+        COALESCE(c.description_foreign_cities, '{}') AS description_foreign_cities,
                (c.last_seen_date - c.first_seen_date) AS days_listed
         FROM cleaned_postings c
         WHERE c.job_id = %s

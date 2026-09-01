@@ -98,6 +98,68 @@ END;
 $$ LANGUAGE plpgsql;
 
 
+-- ---------------------------------------------------------------------
+-- CORRECTIONS — a ledger over the snapshot, never an edit to it.
+--
+-- A recorded day cannot be recomputed: snapshot_daily_skills() reads
+-- cleaned_postings, which only ever shows the present. So when a day
+-- turns out to have been recorded from bad input, the raw row stays
+-- exactly as observed and the adjustment is written here instead. The
+-- observation and the judgement about it stay separable.
+--
+-- Why this exists: Naukri served an unrelated job description on up to
+-- four postings a day over 2026-08-12..17, and the skills mined out of
+-- it were snapshotted before anything could notice. C++ was recorded at
+-- 9 on 12 Aug against a true 5, and at 3 on 14 Aug against a true 0 --
+-- a ninefold spike and a week-long decay that never happened, sitting
+-- in the one table this project cannot rebuild.
+--
+-- Deltas SUM, so one day can carry several corrections and each keeps
+-- its own reason. Nothing is ever written here automatically: every row
+-- is a deliberate entry with evidence behind it.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS skill_daily_corrections (
+    correction_id SERIAL PRIMARY KEY,
+    snapshot_date DATE NOT NULL,
+    skill         TEXT NOT NULL,
+    delta         INT  NOT NULL CHECK (delta <> 0),
+    reason        TEXT NOT NULL,
+    recorded_on   DATE NOT NULL DEFAULT CURRENT_DATE
+);
+
+CREATE INDEX IF NOT EXISTS idx_skill_corrections
+    ON skill_daily_corrections (snapshot_date, skill);
+
+
+-- The three delta views read this rather than the raw table. Dropped
+-- here first because they depend on it and it cannot be replaced while
+-- they exist; each is recreated further down anyway.
+DROP VIEW IF EXISTS skill_delta_daily;
+DROP VIEW IF EXISTS skill_delta_vs_baseline;
+DROP VIEW IF EXISTS skill_first_appearances;
+DROP VIEW IF EXISTS skill_daily_counts_corrected;
+
+-- A skill corrected to zero drops out entirely, which is what the
+-- snapshot itself would hold had the bad postings never been written:
+-- the table only ever stores skills that actually appeared that day.
+-- raw_count and correction stay visible so a reader can always see what
+-- was observed and what was adjusted.
+CREATE VIEW skill_daily_counts_corrected AS
+SELECT
+    s.snapshot_date,
+    s.skill,
+    s.posting_count + COALESCE(c.delta, 0) AS posting_count,
+    s.posting_count                        AS raw_count,
+    COALESCE(c.delta, 0)                   AS correction
+FROM skill_daily_counts s
+LEFT JOIN (
+    SELECT snapshot_date, skill, SUM(delta) AS delta
+    FROM skill_daily_corrections
+    GROUP BY snapshot_date, skill
+) c ON c.snapshot_date = s.snapshot_date AND c.skill = s.skill
+WHERE s.posting_count + COALESCE(c.delta, 0) > 0;
+
+
 -- =====================================================================
 -- DELTA VIEWS — query these by name once history accumulates.
 -- =====================================================================
@@ -133,7 +195,7 @@ SELECT
         100.0 * (s.posting_count - LAG(s.posting_count) OVER w)
         / NULLIF(LAG(s.posting_count) OVER w, 0), 1
     ) AS pct_change
-FROM skill_daily_counts s
+FROM skill_daily_counts_corrected s
 WHERE s.skill NOT IN (SELECT skill FROM skill_blocklist)
 WINDOW w AS (PARTITION BY s.skill ORDER BY s.snapshot_date);
 
@@ -166,7 +228,7 @@ WITH rolling AS (
         posting_count,
         AVG(posting_count) OVER w AS baseline_7d,
         COUNT(*)           OVER w AS baseline_days
-    FROM skill_daily_counts
+    FROM skill_daily_counts_corrected
     WHERE skill NOT IN (SELECT skill FROM skill_blocklist)
     WINDOW w AS (
         PARTITION BY skill
@@ -209,7 +271,7 @@ SELECT
     MIN(snapshot_date)                       AS first_seen,
     COUNT(*)                                 AS days_present,
     (CURRENT_DATE - MIN(snapshot_date))::int AS days_since_first_seen
-FROM skill_daily_counts
+FROM skill_daily_counts_corrected
 WHERE skill NOT IN (SELECT skill FROM skill_blocklist)
 GROUP BY skill
 ORDER BY first_seen DESC;
@@ -218,6 +280,10 @@ ORDER BY first_seen DESC;
 -- ---------------------------------------------------------------------
 -- How much history exists so far. Run this to check whether the trend
 -- views have enough data to say anything yet.
+--
+-- Reads the RAW table, unlike the three views above: this answers "which
+-- days were recorded", which a correction never changes. A day whose
+-- counts were wrong was still a day we observed.
 -- ---------------------------------------------------------------------
 DROP VIEW IF EXISTS snapshot_coverage;
 CREATE VIEW snapshot_coverage AS

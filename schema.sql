@@ -216,6 +216,18 @@ CREATE TABLE cleaned_postings (
     city_ids                INT[],
     unmapped_locations      TEXT[],
 
+    -- Cities the description names when it names none of this posting's own
+    -- -- the signature of a description belonging to a different job, which
+    -- nothing else here can see: company, title, location and experience all
+    -- stay correct when only the body is wrong. NULL/empty means no conflict.
+    --
+    -- A flag, never a rejection. Roughly half of what it catches is a
+    -- recruiter naming a different office in the body, so the posting is
+    -- always written in full and marked, and a human decides. Recomputed on
+    -- every sighting, so it clears itself the moment Naukri serves the right
+    -- description.
+    description_foreign_cities TEXT[],
+
     -- Closed, stable vocabularies -- cleaning.py already collapses every
     -- spelling Naukri uses down to one canonical value per category
     -- (normalize_working_type / EMPLOYMENT_TYPES / CONTRACT_TYPES), so a

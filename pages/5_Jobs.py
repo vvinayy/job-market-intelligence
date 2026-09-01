@@ -169,6 +169,20 @@ if selected_rows:
         elif detail.get("is_expired") is False and detail.get("last_checked_on"):
             st.success(f"Still listed as of {detail['last_checked_on']}.")
 
+        # Says "may" and names the evidence on purpose. Roughly half of these
+        # are a recruiter writing a different office into the body, so the
+        # reader has to be able to judge it rather than take a verdict.
+        flagged_cities = detail.get("description_foreign_cities") or []
+        if flagged_cities:
+            own = ", ".join(detail.get("cities") or []) or "not stated"
+            st.warning(
+                f"**This description may belong to a different posting.** It "
+                f"mentions {', '.join(flagged_cities)} and none of this posting's "
+                f"own locations ({own}). Everything else here — company, title, "
+                "experience, dates — is read separately and is unaffected. Skills "
+                "found in the description text may not be this job's."
+            )
+
         if detail.get("company_badges"):
             st.caption(" · ".join(detail["company_badges"]))
 

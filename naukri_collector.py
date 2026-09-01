@@ -487,7 +487,12 @@ def main(search_url: str, limit: int | None):
         # Snapshot here, not only in jobmarket.bat — a scrape
         # started any other way would otherwise never record the day,
         # and an unsnapshotted day can't be recovered afterwards.
+        # Description check BEFORE the snapshot, deliberately. The snapshot
+        # is the one write here that cannot be undone or recomputed, and it
+        # mines the descriptions this check is judging -- warning after it
+        # is warning after the door has shut.
         if storage_ok:
+            _report_mismatched_descriptions()
             _snapshot_today()
             _report_pending_locations()
 
@@ -533,6 +538,26 @@ def _report_pending_locations():
                 print(f"    {p['fragment']}  ({p['postings']} posting(s))")
     except Exception as e:
         print(f"[pending-location check failed: {e}]")
+
+
+def _report_mismatched_descriptions():
+    """A description that belongs to a different job leaves every other field
+    correct, so nothing else in the pipeline can see it — one went unnoticed
+    for nineteen days. Warns only: about half of what this flags is a
+    recruiter naming a different location in the body, which is not a bug."""
+    try:
+        from job_database import mismatched_descriptions
+        flagged = mismatched_descriptions()
+        if flagged:
+            print(f"\n[DESCRIPTIONS THAT MAY BELONG TO ANOTHER POSTING — {len(flagged)}]")
+            for f in flagged[:10]:
+                print(f"    job {f['job_id']} {f['company']} / {f['title']}")
+                print(f"      description names {', '.join(f['cities_named'])}; "
+                      f"posting is in {', '.join(f['own_cities'])}")
+            if len(flagged) > 10:
+                print(f"    ...and {len(flagged) - 10} older — /analytics/scrape-health has all of them")
+    except Exception as e:
+        print(f"[description check failed: {e}]")
 
 
 def _snapshot_today():

@@ -169,6 +169,70 @@ def test_resolve_locations_strips_parenthetical_locality():
 
 
 # ---------------------------------------------------------------------
+# Descriptions that belong to another posting
+# ---------------------------------------------------------------------
+DRONE_JD = (
+    "We are looking for a highly motivated and enthusiastic IoT Intern to "
+    "join our team in Indore, specializing in Drone Technology. Develop and "
+    "implement algorithms using Python, C++, or other programming languages."
+)
+
+
+def test_foreign_cities_flags_a_description_from_another_posting():
+    # The real case: Naukri served this JD on Cisco and Fractal postings in
+    # Hyderabad for six days. Every other field was correct, so this city
+    # disagreement was the only observable difference.
+    assert cleaning.foreign_cities(DRONE_JD, ["Bengaluru", "Hyderabad"]) == ["Indore"]
+
+
+def test_foreign_cities_silent_when_the_description_agrees():
+    text = "Hybrid role based in Hyderabad, with occasional travel to Indore."
+    assert cleaning.foreign_cities(text, ["Hyderabad"]) == []
+
+
+def test_foreign_cities_matches_aliases_not_just_canonical_names():
+    # A posting in Bengaluru whose description says "Bangalore" agrees; the
+    # alias table is the only place that knows the two are one city.
+    assert cleaning.foreign_cities("Office is in Bangalore.", ["Bengaluru"]) == []
+    assert cleaning.foreign_cities("Office is in Bangalore.", ["Hyderabad"]) == ["Bengaluru"]
+
+
+def test_foreign_cities_needs_a_city_on_both_sides():
+    # No city named, or none resolved on the posting, means nothing to
+    # compare — silence, not a flag.
+    assert cleaning.foreign_cities("Remote, anywhere in India.", ["Hyderabad"]) == []
+    assert cleaning.foreign_cities(DRONE_JD, []) == []
+    assert cleaning.foreign_cities(None, ["Hyderabad"]) == []
+
+
+def test_clean_record_carries_the_flag_onto_the_posting():
+    # The flag must be written in the same statement as the description it
+    # describes, so the two can never disagree. A flagged posting is still
+    # cleaned in full -- this marks, it never rejects.
+    raw = {"title": "Software Engineer", "company": "Cisco",
+           "location": "Hyderabad", "experience": "7 - 12 years",
+           "description": DRONE_JD}
+    cleaned = cleaning.clean_record(raw, {"Hyderabad": 1}, set())
+    assert cleaned["posting"]["description_foreign_cities"] == ["Indore"]
+    assert cleaned["posting"]["description"] == DRONE_JD
+    assert cleaned["posting"]["company"] == "Cisco"
+
+
+def test_clean_record_leaves_the_flag_empty_when_nothing_conflicts():
+    raw = {"title": "Software Engineer", "company": "Cisco",
+           "location": "Hyderabad", "experience": "7 - 12 years",
+           "description": "Backend work in Hyderabad on Python services."}
+    cleaned = cleaning.clean_record(raw, {"Hyderabad": 1}, set())
+    assert cleaned["posting"]["description_foreign_cities"] == []
+
+
+def test_foreign_cities_does_not_match_inside_a_longer_word():
+    # "Punejobs" is not Pune. Word boundaries, or common substrings would
+    # flag postings at random.
+    assert cleaning.foreign_cities("Punelike conditions apply.", ["Hyderabad"]) == []
+
+
+# ---------------------------------------------------------------------
 # Skills
 # ---------------------------------------------------------------------
 def test_merge_skills_dedupes_and_normalizes():

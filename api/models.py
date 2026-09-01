@@ -56,6 +56,12 @@ class PostingSummary(BaseModel):
     # for truthiness -- an unchecked posting is not an open one.
     is_expired: bool | None = None
     expired_on: date | None = None
+    description_foreign_cities: list[str] = Field(
+        default=[],
+        description="Cities the description names when it names none of this "
+                    "posting's own. Non-empty means the description may belong to "
+                    "a different job -- a flag for a human, not a verdict: about "
+                    "half are recruiters naming another office in the body.")
 
 
 class Qualification(BaseModel):
@@ -343,6 +349,19 @@ class PendingLocation(BaseModel):
     postings: int
 
 
+class DescriptionMismatch(BaseModel):
+    """A posting whose description names cities but none of its own — the
+    signature of a description that belongs to a different job.
+
+    Needs a human read: a recruiter naming a different primary location in
+    the body produces the same shape as a genuinely foreign description."""
+    job_id: int
+    company: str | None = None
+    title: str | None = None
+    own_cities: list[str] = []
+    cities_named: list[str] = []
+
+
 class ScrapeHealthReport(BaseModel):
     latest_run: ScrapeRunSummary | None = None
     warnings: list[FieldHealthWarning] = []
@@ -350,3 +369,6 @@ class ScrapeHealthReport(BaseModel):
     pending_locations: list[PendingLocation] = Field(
         default=[],
         description="Location fragments awaiting a CITY_ALIASES entry and a state.")
+    mismatched_descriptions: list[DescriptionMismatch] = Field(
+        default=[],
+        description="Postings whose description may belong to a different job.")

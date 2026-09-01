@@ -163,6 +163,13 @@ why the three skill columns were not merged into one.
   must re-apply `trends_setup.sql`, because the function is not updated
   automatically. Three days were lost this way once, and the error went into a
   log nobody read.
+- **A wrong snapshot day is corrected, never edited.** `skill_daily_counts`
+  rows stay exactly as observed; adjustments go in `skill_daily_corrections`
+  as reasoned rows whose deltas sum, and the trend views read
+  `skill_daily_counts_corrected`. `snapshot_coverage` stays on the raw table
+  on purpose — a correction does not change which days were recorded. Twenty-
+  four corrections exist for 12–17 Aug, where a foreign job description
+  inflated C++ ninefold.
 - **Batch files must be ASCII with CRLF line endings.** `cmd.exe` mis-parses
   LF-only `.bat` files and silently eats characters rather than erroring.
   `.gitattributes` enforces this; keep em dashes and smart quotes out.
@@ -196,16 +203,24 @@ why the three skill columns were not merged into one.
 
 ## Known open items
 
-- **Cross-company duplicate descriptions.** Five postings from two unrelated
-  companies share identical description text that matches neither. Other
-  duplicate groups are legitimate same-company reposts, so this looks like a
-  rare glitch rather than a systemic bug, but the cause is unconfirmed. Find
-  them with:
+- **Naukri sometimes serves a description belonging to a different job.**
+  Five rows (644, 645, 815 Cisco; 713, 885 Fractal Analytics) hold an
+  IoT/drone/Indore JD that matches neither. Diagnosed, not a scraper bug: the
+  scrape logs record the wrong text arriving already mined on six consecutive
+  days, and a re-visit on 31 Aug found exactly one JD container per page —
+  Cisco corrected at source, Fractal still wrong nineteen days on. Only the
+  description and what is mined from it are affected; the fingerprint fields
+  are all correct, which is why nothing else could see it. Left in place
+  deliberately.
 
-  ```sql
-  SELECT md5(description), COUNT(*), COUNT(DISTINCT company) FROM cleaned_postings
-   WHERE description IS NOT NULL GROUP BY 1 HAVING COUNT(DISTINCT company) > 1;
-  ```
+  **A flagged posting is still stored in full, and marked.** The source cannot
+  be adjudicated automatically — about half of what the check catches is a
+  recruiter naming another office in the body — so nothing is ever rejected or
+  hidden. `cleaned_postings.description_foreign_cities` carries the evidence,
+  refreshed on every sighting so it clears itself when Naukri corrects the
+  description; `?description_flagged=` filters on it, and the Jobs detail
+  panel says so in words. See
+  `docs/superpowers/specs/2026-08-31-foreign-description-detection.md`.
 
 - **Two location fragments** (`Hyderabad( Raidurgam )`, `Hyderabad( Hitec City )`)
   are unmapped despite `resolve_locations()` stripping parenthetical suffixes.

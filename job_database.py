@@ -22,7 +22,7 @@ import os
 import psycopg2
 from psycopg2.extras import execute_values, RealDictCursor, Json
 
-from cleaning import clean_record, categorize_skill
+from cleaning import clean_record, categorize_skill, foreign_cities
 
 
 def _resolve_reference_ids(conn, table: str, id_col: str, name_col: str, names: set[str]) -> dict[str, int]:
@@ -129,7 +129,8 @@ UPSERT_SQL = """
 INSERT INTO cleaned_postings (
     fingerprint, url, title, company, description,
     experience_min, experience_max, salary_min, salary_max,
-    city_ids, unmapped_locations, working_type, is_full_time, contract_type,
+    city_ids, unmapped_locations, description_foreign_cities,
+    working_type, is_full_time, contract_type,
     role_family, seniority_level, role_category_id, naukri_role, industry_type_id, department_id,
     posted_date, posted_raw, openings, applicant_count, applicant_count_qualifier,
     company_rating, company_reviews, company_badges, source_search, certifications,
@@ -147,6 +148,7 @@ ON CONFLICT (fingerprint) DO UPDATE SET
     salary_max            = EXCLUDED.salary_max,
     city_ids              = EXCLUDED.city_ids,
     unmapped_locations    = EXCLUDED.unmapped_locations,
+    description_foreign_cities = EXCLUDED.description_foreign_cities,
     working_type          = EXCLUDED.working_type,
     is_full_time          = EXCLUDED.is_full_time,
     contract_type         = EXCLUDED.contract_type,
@@ -376,6 +378,7 @@ def save_records(records: list[dict]) -> tuple[int, int]:
                 c["posting"]["experience_min"], c["posting"]["experience_max"],
                 c["posting"]["salary_min"], c["posting"]["salary_max"],
                 c["posting"]["city_ids"], c["posting"]["unmapped_locations"],
+                c["posting"]["description_foreign_cities"],
                 c["posting"]["working_type"], c["posting"]["is_full_time"],
                 c["posting"]["contract_type"], c["posting"]["role_family"], c["posting"]["seniority_level"],
                 role_category_to_id.get(c["posting"]["role_category"]), c["posting"]["naukri_role"],
@@ -591,6 +594,48 @@ def pending_locations() -> list[dict]:
                   AND lower(trim(u)) NOT IN ('pan india', 'india', 'remote',
                                              'anywhere', 'work from home')
                 GROUP BY u ORDER BY 2 DESC, 1
+            """)
+            return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def mismatched_descriptions() -> list[dict]:
+    """Postings whose description names cities but none of the posting's own.
+
+    The signature of a description that belongs to a different job. Naukri
+    served an unrelated IoT/drone JD on five Cisco and Fractal postings over
+    2026-08-12..17 and nothing noticed for nineteen days: the fingerprint
+    fields were all correct, so every count, filter and duplicate check saw a
+    healthy posting. Only the description body and what is mined out of it —
+    skills, choice groups, the responsibilities split — were wrong.
+
+    Judgement required, so this reports rather than acts: seven of today's
+    twelve flags are recruiters naming a different primary location in the
+    body than in Naukri's location field, which is not a defect.
+
+    Newest first: known flags stay in the list until the posting heals or is
+    re-scraped, so an ascending order would push each new one to the bottom,
+    behind a backlog that only grows.
+
+    Reads the flag off the row rather than recomputing it. cleaning.py writes
+    description_foreign_cities in the same statement as the description, so
+    the two can never disagree — recomputing here would let a taxonomy change
+    report something different from what is stored. 6 ms against the 152 ms
+    the recompute cost.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT c.job_id, c.company, c.title,
+                       c.description_foreign_cities AS cities_named,
+                       ARRAY(SELECT ci.city_name FROM cities ci
+                              WHERE ci.city_id = ANY(c.city_ids)
+                              ORDER BY ci.city_name) AS own_cities
+                FROM cleaned_postings c
+                WHERE c.description_foreign_cities <> '{}'
+                ORDER BY c.job_id DESC
             """)
             return [dict(r) for r in cur.fetchall()]
     finally:

@@ -447,6 +447,41 @@ def resolve_locations(raw_location: str | None, city_name_to_id: dict[str, int])
     return sorted(city_ids), unmapped
 
 
+# Every spelling that means a city, so a description written "Bangalore"
+# counts as naming Bengaluru. One alternation rather than a pattern per city:
+# over 546 descriptions, 26 patterns cost 567ms against this form's 129ms,
+# for identical output. Longest spelling first, so "greater noida" beats
+# "noida".
+_CITY_BY_SPELLING = {**CITY_ALIASES,
+                     **{c.lower(): c for c in CITY_ALIASES.values()}}
+_CITY_MENTION_RE = re.compile(
+    "|".join(r"\b" + re.escape(s) + r"\b"
+             for s in sorted(_CITY_BY_SPELLING, key=len, reverse=True)), re.I)
+
+
+def foreign_cities(description: str | None, own_city_names: list[str]) -> list[str]:
+    """Cities a description names when it names none of the posting's own.
+
+    Catches a description that belongs to a different job. Nothing else can:
+    the fingerprint reads company, title, location and experience, all of
+    which stay correct when only the description body is wrong, so the
+    posting looks entirely healthy from every other angle.
+
+    Measured over 548 postings: 12 flagged. Five are Cisco and Fractal
+    postings Naukri served an unrelated IoT/drone JD for; seven are
+    recruiters naming a different primary location in the body than in
+    Naukri's own location field. Both halves are real, which is why this
+    warns and never rejects.
+    """
+    if not description or not own_city_names:
+        return []
+    named = {_CITY_BY_SPELLING[m.group(0).lower()]
+             for m in _CITY_MENTION_RE.finditer(description)}
+    if not named or named & set(own_city_names):
+        return []
+    return sorted(named)
+
+
 # =====================================================================
 # ROLE CLASSIFICATION — lower priority number wins; most-specific
 # patterns are given the lowest numbers so they beat generic catch-alls
@@ -854,6 +889,11 @@ def clean_record(raw: dict, city_name_to_id: dict[str, int],
         "salary_min": parse_range_min(salary),
         "salary_max": parse_range_max(salary),
         "city_ids": city_ids,
+        # Computed here rather than by a later sweep, so the flag is written in
+        # the same statement as the description it describes and can never
+        # disagree with it. Empty list, not None: "checked, nothing wrong".
+        "description_foreign_cities": foreign_cities(
+            description, [n for n, i in city_name_to_id.items() if i in city_ids]),
         "unmapped_locations": unmapped,
         "working_type": normalize_working_type(_clean(raw.get("working_type"))),
         "is_full_time": parse_is_full_time(_clean(raw.get("employment_type"))),
