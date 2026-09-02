@@ -74,40 +74,15 @@ with tab1:
                           **dc.TRANSPARENT)
         st.plotly_chart(fig, use_container_width=True)
 
-    st.divider()
-    # Replaced the seniority mix chart, which could only speak for the ~20% of
-    # postings whose title happened to carry "Senior"/"Lead"/"Manager".
-    # experience_min is stated on 97%, so this axis covers nearly everything.
-    st.subheader("How negotiable are the requirements?")
-    flex = dc.flexibility_by_experience()
-
-    if flex.empty:
-        st.info("No experience bands with enough postings yet.")
-    else:
-        order = ["0-1 years", "2-3 years", "4-6 years", "7-10 years", "10+ years", "Not stated"]
-        flex["bucket"] = flex["bucket"].astype("category").cat.set_categories(order, ordered=True)
-        flex = flex.sort_values("bucket", ascending=False)
-
-        fig = px.bar(flex, x="pct_offering_a_choice", y="bucket", orientation="h",
-                     text=flex["pct_offering_a_choice"].map(lambda v: f"{v:.0f}%"),
-                     color="pct_offering_a_choice", color_continuous_scale=dc.SCALE,
-                     custom_data=["postings", "offering_a_choice"])
-        fig.update_traces(
-            textposition="outside", cliponaxis=False,
-            hovertemplate="%{y}<br>%{customdata[1]} of %{customdata[0]} postings "
-                          "offer a choice<extra></extra>")
-        fig.update_layout(height=280, margin=dict(l=0, r=48, t=10, b=0),
-                          coloraxis_showscale=False, yaxis_title=None,
-                          xaxis_title="% of postings offering an either/or skill",
-                          **dc.TRANSPARENT)
-        st.plotly_chart(fig, use_container_width=True)
-        st.caption(
-            "The share of postings at each experience level that name alternatives — "
-            "\"Angular or React\" rather than demanding both. Notably it does not rise "
-            "with seniority: entry-level roles are the most rigid of all. Alternatives "
-            "are read from the description wording, so trust the ordering more than "
-            "the exact percentages."
-        )
+    # The "How negotiable are the requirements?" chart was removed here. It
+    # measured description length more than negotiability: alternatives are
+    # detected from sentence structure, so a short posting has nowhere to put
+    # one. Zero of the 47 postings under 500 characters register a choice,
+    # rising to 55% over 3,000 — and each band's score tracked its average
+    # description length, with 0-1 years shortest (2,075 chars) and lowest,
+    # 10+ years longest (3,592) and highest. Controlling for length flattens
+    # every band above entry level to ~50%, so the chart's shape was mostly an
+    # artifact. /analytics/flexibility-by-experience still serves the figures.
 
     # The "Work arrangement" chart was removed here. Naukri badges work mode on
     # only ~25% of postings, so the chart was three-quarters "Not stated" — a

@@ -355,7 +355,7 @@ def prefetch() -> None:
                  contract_types, skill_demand, role_distribution,
                  experience_distribution, location_distribution,
                  qualification_distribution, openings_distribution,
-                 skill_category_mix, flexibility_by_experience, cities_reference):
+                 skill_category_mix, cities_reference):
         try:
             call()
         except Exception:
