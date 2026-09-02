@@ -171,6 +171,20 @@ def list_skills(
     """, tuple(params))
 
 
+@router.get("/sources", response_model=list[NamedCount],
+            summary="Job boards represented in the data")
+def list_sources():
+    """Which boards the collection actually spans, and how much of it each is.
+
+    Counts are the point, not decoration: the sample is overwhelmingly one
+    board, and a filter control that does not say so invites reading a
+    20-posting slice as a market."""
+    return fetch_all("""
+        SELECT source AS name, COUNT(*)::int AS postings
+        FROM cleaned_postings GROUP BY source ORDER BY postings DESC
+    """)
+
+
 @router.get("/working-types", response_model=list[NamedCount])
 def list_working_types():
     return fetch_all("""

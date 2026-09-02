@@ -63,6 +63,7 @@ The API also accepts `DATABASE_URL`; the dashboard accepts `API_BASE_URL`
 | `liveness_checker.py` | Visits stored URLs daily to find expired postings. |
 | `notify.py` | Windows toast notifications, so unattended runs are not silent. |
 | `schema.sql` | Every table. Run first. |
+| `migrations/` | Dated, idempotent `ALTER`s for a database that already has data — `schema.sql` drops the postings tables, so it cannot bring an existing one forward. |
 | `trends_setup.sql` | Daily skill snapshots and the views over them. Run second. |
 | `api/` | FastAPI. `main.py` app, `database.py` query helpers, `models.py` response shapes, `routers/` endpoints. |
 | `Home.py`, `pages/` | Streamlit dashboard (Skills, Market, Trends, Jobs). |
@@ -116,6 +117,14 @@ dashboard, and the README. Keep it in anything new.
 **Nothing is stored unprocessed.** The scraper cleans in memory and writes
 straight into `cleaned_postings`. Do not add a `raw_postings` table; it existed
 once and was deliberately removed.
+
+**Which board a posting came from is a stored column, not a URL match.**
+`cleaned_postings.source` is `naukri`, `hirist` or `other`, written by
+`cleaning.source_from_url()` on every insert *and* every update. It used to be
+re-derived with an ILIKE in each place that needed it, which meant two copies
+of the same rule; `snapshot_daily_skills()` and the liveness queue now both
+read the column. An unrecognised host records as `other` rather than being
+folded into the dominant board.
 
 **Duplicates are caught by fingerprint** — a hash of company + title + location +
 experience. Seeing a posting again updates every field, keeps `first_seen_date`,

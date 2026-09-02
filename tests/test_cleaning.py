@@ -338,3 +338,46 @@ def test_clean_record_handles_missing_optional_fields():
     assert result["posting"]["city_ids"] == []
     assert result["skills"] == []
     assert result["preferred_skills"] == []
+
+
+# =====================================================================
+# SOURCE — which job board a posting came from
+# =====================================================================
+def test_source_recognises_naukri_and_hirist():
+    assert cleaning.source_from_url(
+        "https://www.naukri.com/job-listings-data-engineer-acme-hyderabad-123") == "naukri"
+    assert cleaning.source_from_url(
+        "https://www.hirist.tech/j/data-engineer-python-1667157") == "hirist"
+
+
+def test_source_treats_hirist_com_and_tech_as_one_board():
+    # Info Edge serves the same postings on both domains -- splitting them
+    # would put one board in two buckets and make every per-source figure
+    # depend on which spelling the search happened to return.
+    assert cleaning.source_from_url(
+        "https://www.hirist.com/j/frontend-developer-1439211.html") == "hirist"
+
+
+def test_source_unknown_host_is_other_not_guessed():
+    # The whole point of 'other': folding an unrecognised host into the
+    # dominant board would invent a fact, the same failure as the old
+    # working_type fallback that wrote "On-site" onto 372 rows.
+    assert cleaning.source_from_url("https://www.linkedin.com/jobs/view/12345") == "other"
+    assert cleaning.source_from_url("https://example.com/careers/1") == "other"
+
+
+def test_source_missing_url_is_other_never_none():
+    # source is NOT NULL on cleaned_postings, so this must never return None.
+    assert cleaning.source_from_url(None) == "other"
+    assert cleaning.source_from_url("") == "other"
+
+
+def test_source_is_case_insensitive():
+    assert cleaning.source_from_url("HTTPS://WWW.NAUKRI.COM/JOB-123") == "naukri"
+
+
+def test_clean_record_carries_source():
+    result = cleaning.clean_record(
+        _raw_posting(url="https://www.hirist.tech/j/data-engineer-1667157"),
+        city_name_to_id={"Hyderabad": 1})
+    assert result["posting"]["source"] == "hirist"

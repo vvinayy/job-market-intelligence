@@ -78,6 +78,38 @@ def make_fingerprint(company: str | None, title: str | None,
 
 
 # =====================================================================
+# SOURCE — which job board a posting came from.
+#
+# Read off the URL, the one field every posting has and that no scrape can
+# leave blank. source_search would seem the natural home but is NULL on every
+# row collected before it existed, and a search URL is a per-run detail rather
+# than an identity.
+#
+# An unrecognised host records as 'other' rather than being folded into an
+# existing board: guessing 'naukri' for a host nobody has taught this function
+# about would invent a fact, and 'other' is a real answer that shows up in
+# /reference/sources the moment a third board appears.
+# =====================================================================
+SOURCE_HOSTS = {
+    "naukri": "naukri.com",
+    "hirist": "hirist",       # hirist.tech and hirist.com are the same board
+}
+OTHER_SOURCE = "other"
+
+
+def source_from_url(url: str | None) -> str:
+    """Which job board this posting came from. Never None -- `url` is NOT NULL
+    on cleaned_postings, and a row that somehow has none is still 'other'."""
+    if not url:
+        return OTHER_SOURCE
+    lowered = url.lower()
+    for source, marker in SOURCE_HOSTS.items():
+        if marker in lowered:
+            return source
+    return OTHER_SOURCE
+
+
+# =====================================================================
 # SKILL NORMALIZATION — ported from skill_aliases.
 # =====================================================================
 SKILL_ALIASES = {
@@ -881,6 +913,7 @@ def clean_record(raw: dict, city_name_to_id: dict[str, int],
     posting = {
         "fingerprint": make_fingerprint(company, title, _clean(raw.get("location")), experience),
         "url": raw.get("url"),
+        "source": source_from_url(raw.get("url")),
         "title": title,
         "company": company,
         "description": description,

@@ -33,3 +33,6 @@ naukri_jobs.json
 # OS cruft
 .DS_Store
 Thumbs.db
+
+# Playwright MCP session artifacts (page snapshots, console logs)
+.playwright-mcp/

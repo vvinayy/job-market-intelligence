@@ -154,6 +154,16 @@ CREATE TABLE cleaned_postings (
     job_id                 BIGSERIAL PRIMARY KEY,
     fingerprint            TEXT NOT NULL UNIQUE,
     url                    TEXT NOT NULL,
+    -- Which job board this came from, derived from `url` by
+    -- cleaning.source_from_url() and stored rather than re-derived: every
+    -- aggregate in api/ runs off this table directly, and an ILIKE on a URL
+    -- can use no index. A small closed vocabulary we control -- we write the
+    -- collectors -- so a CHECK is enough, same call as working_type. Adding a
+    -- third board means one entry in SOURCE_HOSTS and one value here.
+    -- 'other' is deliberate: an unrecognised host is a real answer, and
+    -- folding it into 'naukri' would invent one.
+    source                 TEXT NOT NULL DEFAULT 'other'
+                               CHECK (source IN ('naukri', 'hirist', 'other')),
     title                  TEXT,
     company                TEXT,
 
@@ -352,6 +362,8 @@ CREATE INDEX IF NOT EXISTS idx_cleaned_postings_skill_groups
     ON cleaned_postings USING GIN (skill_groups jsonb_path_ops);
 -- Partial: the checker's queue is "not already dead, not already done
 -- today", and the dead half of the table grows without ever being queried.
+CREATE INDEX IF NOT EXISTS idx_cleaned_postings_source
+    ON cleaned_postings (source);
 CREATE INDEX IF NOT EXISTS idx_cleaned_postings_liveness
     ON cleaned_postings (last_checked_on)
     WHERE is_expired IS NOT TRUE;

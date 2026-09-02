@@ -97,13 +97,13 @@ BEGIN
     SELECT
         CURRENT_DATE,
         sk.skill_name,
-        -- Read off the URL, the one field every posting has and that no
-        -- scrape can leave blank -- unlike source_search, which is NULL on
-        -- every row collected before it existed. An unrecognised host records
-        -- as 'other' rather than being folded into an existing source.
-        CASE WHEN c.url ILIKE '%naukri.com%' THEN 'naukri'
-             WHEN c.url ILIKE '%hirist%'     THEN 'hirist'
-             ELSE 'other' END,
+        -- Read the stored column, not the URL. This used to re-derive the
+        -- rule here with its own CASE, which meant two copies of it: one
+        -- here and one in cleaning.source_from_url(). A third job board
+        -- would have had to be added to both, and a snapshot silently
+        -- disagreeing with the postings table is not a mistake anything
+        -- would surface.
+        c.source,
         COUNT(DISTINCT c.job_id)
     FROM cleaned_postings c
     JOIN posting_skills ps ON ps.job_id = c.job_id
@@ -116,7 +116,7 @@ BEGIN
     JOIN LATERAL unnest(ps.skill_ids || skill_group_ids(ps.skill_groups)) AS u(skill_id) ON true
     JOIN skills sk ON sk.skill_id = u.skill_id
     WHERE c.last_seen_date = CURRENT_DATE
-    -- Positional: 2 is skill_name, 3 is the source CASE above.
+    -- Positional: 2 is skill_name, 3 is c.source.
     GROUP BY 2, 3
     ON CONFLICT (snapshot_date, skill, source) DO UPDATE
         SET posting_count = EXCLUDED.posting_count;

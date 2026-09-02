@@ -250,6 +250,11 @@ def education_specializations() -> pd.DataFrame:
     return df("/reference/education-specializations")
 
 
+def sources() -> pd.DataFrame:
+    """Job boards present in the data, with posting counts."""
+    return df("/reference/sources")
+
+
 def working_types() -> pd.DataFrame:
     return df("/reference/working-types")
 

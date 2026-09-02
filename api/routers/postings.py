@@ -75,7 +75,7 @@ BASE_SELECT = """
         ) AS cities,
         c.working_type, c.is_full_time, c.contract_type,
         c.posted_date, c.openings, c.applicant_count, c.applicant_count_qualifier,
-        c.company_rating, c.company_reviews, c.url,
+        c.company_rating, c.company_reviews, c.url, c.source,
         c.is_expired, c.expired_on,
         COALESCE(c.description_foreign_cities, '{}') AS description_foreign_cities
     FROM cleaned_postings c
@@ -93,7 +93,7 @@ def build_filters(
     experience_min, experience_max, has_salary, salary_min, salary_max,
     working_type, is_full_time, contract_type, qualification_level,
     posted_after, posted_before, seen_after, search, min_openings,
-    is_expired, description_flagged,
+    is_expired, description_flagged, source,
 ) -> WhereBuilder:
     """Turn optional query parameters into a parameterised WHERE clause."""
     w = WhereBuilder()
@@ -190,6 +190,10 @@ def build_filters(
     if description_flagged is not None:
         w.add("(c.description_foreign_cities <> '{}') = %s", description_flagged)
 
+    # A stored column, not an ILIKE on the URL -- see cleaning.source_from_url.
+    if source:
+        w.add("c.source = ANY(%s)", list(source))
+
     if search:
         w.add("(c.title ILIKE %s OR c.company ILIKE %s)", f"%{search}%", f"%{search}%")
 
@@ -248,6 +252,13 @@ def list_postings(
                     "Omit for both. Roughly half are benign: a recruiter naming "
                     "another office in the body."),
 
+    # --- provenance ---
+    source: list[str] | None = Query(
+        None, description="Job board: 'naukri', 'hirist', or 'other'. Omit for "
+                    "all. Boards differ in what they publish, so filtering to "
+                    "one is the honest way to compare a field they do not "
+                    "both carry."),
+
     # --- other ---
     min_openings: int | None = Query(None, ge=1),
 
@@ -265,7 +276,7 @@ def list_postings(
         experience_min, experience_max, has_salary, salary_min, salary_max,
         working_type, is_full_time, contract_type, qualification_level,
         posted_after, posted_before, seen_after, search, min_openings,
-        is_expired, description_flagged,
+        is_expired, description_flagged, source,
     )
 
     total = fetch_value(

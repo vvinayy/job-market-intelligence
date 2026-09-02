@@ -127,7 +127,7 @@ def get_connection():
 # after going live, so a narrower SET clause goes stale on repeat sightings.
 UPSERT_SQL = """
 INSERT INTO cleaned_postings (
-    fingerprint, url, title, company, description,
+    fingerprint, url, source, title, company, description,
     experience_min, experience_max, salary_min, salary_max,
     city_ids, unmapped_locations, description_foreign_cities,
     working_type, is_full_time, contract_type,
@@ -139,6 +139,7 @@ INSERT INTO cleaned_postings (
 ) VALUES %s
 ON CONFLICT (fingerprint) DO UPDATE SET
     url                   = EXCLUDED.url,
+    source                = EXCLUDED.source,
     title                 = EXCLUDED.title,
     company               = EXCLUDED.company,
     description           = EXCLUDED.description,
@@ -373,7 +374,8 @@ def save_records(records: list[dict]) -> tuple[int, int]:
 
         rows = [
             (
-                c["posting"]["fingerprint"], c["posting"]["url"], c["posting"]["title"],
+                c["posting"]["fingerprint"], c["posting"]["url"],
+                c["posting"]["source"], c["posting"]["title"],
                 c["posting"]["company"], c["posting"]["description"],
                 c["posting"]["experience_min"], c["posting"]["experience_max"],
                 c["posting"]["salary_min"], c["posting"]["salary_max"],

@@ -52,6 +52,13 @@ class PostingSummary(BaseModel):
     company_rating: float | None = None
     company_reviews: int | None = None
     url: str | None = None
+    source: str | None = Field(
+        None, description="Which job board this posting came from: 'naukri', "
+                          "'hirist', or 'other' for a host the pipeline does "
+                          "not recognise. Derived from the URL at collection "
+                          "time. The boards differ in what they publish, so a "
+                          "field being null can mean 'this board never states "
+                          "it' rather than 'this employer did not say'.")
     # Three states: True closed, False open, None never checked. Never test
     # for truthiness -- an unchecked posting is not an open one.
     is_expired: bool | None = None

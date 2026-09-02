@@ -25,12 +25,44 @@ role_family = f2.multiselect("Role", dc.roles(), key="jobs_role")
 cities_df = dc.cities_reference()
 city = f3.multiselect("City", cities_df["city_name"].tolist() if not cities_df.empty else [], key="jobs_city")
 
+sources_df = dc.sources()
+source_counts = (dict(zip(sources_df["name"], sources_df["postings"]))
+                 if not sources_df.empty else {})
+source = st.multiselect(
+    "Job board", list(source_counts), key="jobs_source",
+    format_func=lambda s: f"{s} ({source_counts.get(s, 0)})",
+    help="Where the posting was collected from. Leave empty for all boards.",
+)
+if source_counts:
+    st.caption(
+        "Counts are deliberately on the control: "
+        + ", ".join(f"**{n}** {c}" for n, c in source_counts.items())
+        + ". The boards are not equal shares of this data, and they do not "
+          "publish the same fields — a blank column can mean the board never "
+          "states it rather than the employer not saying."
+    )
+
 status = st.radio(
     "Listing status", ["All", "Still open", "Closed"], horizontal=True, key="jobs_status",
-    help="Checked daily against Naukri. 'Closed' means Naukri now redirects the "
-         "posting as expired — it does not mean the role was filled.",
+    help="Checked daily against Naukri only. 'Closed' means Naukri now "
+         "redirects the posting as expired — it does not mean the role was "
+         "filled. Postings from other boards are never checked, so they are "
+         "'Not checked' and match neither Still open nor Closed.",
 )
 is_expired = {"All": None, "Still open": False, "Closed": True}[status]
+
+# The liveness checker only visits Naukri URLs, so every other board's rows
+# are is_expired NULL -- and NULL matches neither branch of this filter.
+# Combining the two silently returns nothing, which reads as "no such jobs"
+# rather than "nothing here has ever been checked".
+if is_expired is not None and any(s != "naukri" for s in source):
+    st.warning(
+        "**Listing status is only known for Naukri postings.** The daily "
+        "checker visits Naukri URLs and nothing else, so postings from the "
+        "other boards selected here are recorded as never checked — they "
+        "match neither *Still open* nor *Closed*, and will not appear below. "
+        "Set status to *All* to see them."
+    )
 
 seniority_level = st.multiselect(
     "Seniority (inferred from title)",
@@ -75,6 +107,7 @@ filters = dict(
     qualification_level=qualification_level or None,
     search=search or None,
     is_expired=is_expired,
+    source=source or None,
 )
 signature = (tuple(sorted((k, tuple(v) if isinstance(v, list) else v) for k, v in filters.items())),
              sort_by, order, page_size)
@@ -121,7 +154,7 @@ display["cities"] = display["cities"].apply(lambda c: ", ".join(c) if c else "No
 display["skills"] = display["skills"].apply(lambda s: ", ".join(s[:6]) + (f" +{len(s)-6} more" if len(s) > 6 else ""))
 
 cols = ["status", "title", "company", "role_family", "experience", "cities", "working_type",
-        "salary", "skills", "posted_date", "url"]
+        "salary", "skills", "posted_date", "source", "url"]
 
 event = st.dataframe(
     display[cols],
@@ -130,6 +163,7 @@ event = st.dataframe(
     height=min(600, 60 + 36 * len(display)),
     column_config={
         "url": st.column_config.LinkColumn("Listing", display_text="Open ↗"),
+        "source": "Board",
         "status": "Status",
         "role_family": "Role",
         "working_type": "Arrangement",
@@ -266,6 +300,11 @@ if selected_rows:
             st.write(detail.get("description") or "No description available.")
 
         if detail.get("url"):
-            st.link_button("Open on Naukri", detail["url"])
+            # Was hardcoded to "Open on Naukri", which mislabelled every
+            # posting from any other board.
+            board = detail.get("source")
+            label = {"naukri": "Open on Naukri",
+                     "hirist": "Open on hirist"}.get(board, "Open listing")
+            st.link_button(label, detail["url"])
 
 dc.sampling_note()
