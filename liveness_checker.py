@@ -93,6 +93,17 @@ def due_for_check(conn, limit: int | None) -> list[tuple[int, str]]:
               FROM cleaned_postings
              WHERE is_expired IS NOT TRUE
                AND (last_checked_on IS NULL OR last_checked_on < CURRENT_DATE)
+               -- Naukri only. The whole detection rule is one measured fact --
+               -- an expired posting answers with a 302 carrying expJD=true,
+               -- verified 495/495 against Naukri and against nothing else. A
+               -- hirist URL returns 200 whether the job is open or gone, so
+               -- every one would be written as is_expired = FALSE: not merely
+               -- wrong, but an invented observation that then counts as
+               -- exposure in /analytics/closures and depresses every rate.
+               -- hirist publishes hasExpired in its own API; until that is
+               -- wired up and measured the way this rule was, leaving those
+               -- rows NULL says "never checked", which is the truth.
+               AND url ILIKE '%%naukri.com%%'
              ORDER BY last_checked_on ASC NULLS FIRST, job_id
              LIMIT %s
             """,

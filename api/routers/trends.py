@@ -7,7 +7,7 @@ until several days of history exist; /coverage exists so a client can
 check before rendering an empty chart.
 """
 
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Query
 
@@ -48,6 +48,10 @@ def skill_series(
     skill: list[str] = Query(..., description="One or more skills to plot"),
     since: date | None = Query(None),
     until: date | None = Query(None),
+    source: str | None = Query(
+        None, description="Limit to one job board, e.g. 'naukri'. Omit to sum "
+                          "every source, which is what this returned when "
+                          "there was only one."),
 ):
     params: list = [list(skill)]
     clauses = ["skill = ANY(%s)"]
@@ -57,11 +61,18 @@ def skill_series(
     if until:
         clauses.append("snapshot_date <= %s")
         params.append(until)
+    if source:
+        clauses.append("source = %s")
+        params.append(source)
 
+    # SUM rather than a bare select: the snapshot holds one row per
+    # (date, skill, source), so a skill carried by two boards would otherwise
+    # come back as two points on the same date and silently double the line.
     return fetch_all(f"""
-        SELECT snapshot_date, skill, posting_count
+        SELECT snapshot_date, skill, SUM(posting_count)::int AS posting_count
         FROM skill_daily_counts
         WHERE {' AND '.join(clauses)}
+        GROUP BY snapshot_date, skill
         ORDER BY snapshot_date, skill
     """, tuple(params))
 
@@ -144,7 +155,24 @@ def movers(
         ordering = f"ORDER BY ABS({order_col}) DESC"
 
     params.append(limit)
-    return fetch_all(f"{sql} {ordering} LIMIT %s", tuple(params))
+    rows = fetch_all(f"{sql} {ordering} LIMIT %s", tuple(params))
+
+    # Annotate rather than filter. A step caused by the instrument is still a
+    # real recorded change; hiding it would be its own distortion. What a
+    # reader needs is to know which kind they are looking at, because a skill
+    # that was previously invisible steps from zero and can top this ranking
+    # without any employer having changed anything.
+    changes = fetch_all(
+        "SELECT changed_on, summary FROM instrument_changes ORDER BY changed_on", ())
+    for row in rows:
+        # previous_day carries its own interval; rolling_7d spans seven days.
+        start = row.get("previous_date") or (row["snapshot_date"] - timedelta(days=7))
+        crossed = [c for c in changes if start < c["changed_on"] <= row["snapshot_date"]]
+        if crossed:
+            row["crosses_instrument_change"] = True
+            row["instrument_change_note"] = " | ".join(
+                f"{c['changed_on']}: {c['summary']}" for c in crossed)
+    return rows
 
 
 @router.get("/new-skills", response_model=list[FirstAppearance],

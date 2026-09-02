@@ -164,6 +164,22 @@ with tab2:
                           xaxis_title=label, yaxis_title=None, **dc.TRANSPARENT)
         st.plotly_chart(fig, use_container_width=True)
 
+        # A step caused by the measuring reads exactly like a hiring surge, and
+        # ranks at the top precisely because it is large. Said before the
+        # caveats below, because it can invalidate the whole ranking rather
+        # than qualify one row of it.
+        if "crosses_instrument_change" in data and data["crosses_instrument_change"].any():
+            affected = int(data["crosses_instrument_change"].sum())
+            note = data.loc[data["crosses_instrument_change"], "instrument_change_note"].iloc[0]
+            st.warning(
+                f"**{affected} of these {len(data)} span a change to the measuring itself.** "
+                "A skill the pipeline previously could not see records zero every day, "
+                "then steps to its real level the moment it becomes visible — which "
+                "looks identical to a surge in demand, and ranks near the top for the "
+                "same reason. Treat these as the instrument moving, not the market.\n\n"
+                f"{note}"
+            )
+
         if mode == "previous_day":
             st.caption(
                 "Only genuine one-day moves are shown. A skill missing from a "

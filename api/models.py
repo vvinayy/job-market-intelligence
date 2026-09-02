@@ -303,6 +303,15 @@ class Mover(BaseModel):
     previous_date: date | None = None
     days_since_previous: int | None = None
     baseline_days: int | None = None
+    crosses_instrument_change: bool = Field(
+        default=False,
+        description="A change to the measuring itself falls inside this "
+                    "comparison window -- a vocabulary or extraction change, "
+                    "not a market movement. A skill that was previously "
+                    "invisible steps from zero and can top this ranking "
+                    "without any employer changing anything.")
+    instrument_change_note: str | None = Field(
+        default=None, description="What changed, when this flag is set.")
 
 
 class FirstAppearance(BaseModel):

@@ -54,11 +54,32 @@ ON CONFLICT (skill) DO NOTHING;
 CREATE TABLE IF NOT EXISTS skill_daily_counts (
     snapshot_date  DATE NOT NULL,
     skill          TEXT NOT NULL,
+    -- One series per source. Without this, adding a second job board would
+    -- move every count on the day it arrived -- not because demand changed
+    -- but because the population did -- and the snapshot cannot be recomputed
+    -- afterwards to separate the two.
+    source         TEXT NOT NULL DEFAULT 'naukri',
     posting_count  INT  NOT NULL,
-    PRIMARY KEY (snapshot_date, skill)
+    PRIMARY KEY (snapshot_date, skill, source)
 );
 
 CREATE INDEX IF NOT EXISTS idx_skill_date ON skill_daily_counts (skill, snapshot_date);
+
+-- Existing installs predate `source`; both statements below are no-ops once
+-- applied. Every row recorded before this ran came from Naukri and nothing
+-- else, so the DEFAULT labels history truthfully rather than guessing at it.
+ALTER TABLE skill_daily_counts
+    ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'naukri';
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_constraint
+                WHERE conname = 'skill_daily_counts_pkey'
+                  AND array_length(conkey, 1) = 2) THEN
+        ALTER TABLE skill_daily_counts DROP CONSTRAINT skill_daily_counts_pkey;
+        ALTER TABLE skill_daily_counts ADD PRIMARY KEY (snapshot_date, skill, source);
+    END IF;
+END $$;
 
 
 -- ---------------------------------------------------------------------
@@ -72,10 +93,17 @@ CREATE OR REPLACE FUNCTION snapshot_daily_skills() RETURNS INT AS $$
 DECLARE
     affected INT;
 BEGIN
-    INSERT INTO skill_daily_counts (snapshot_date, skill, posting_count)
+    INSERT INTO skill_daily_counts (snapshot_date, skill, source, posting_count)
     SELECT
         CURRENT_DATE,
         sk.skill_name,
+        -- Read off the URL, the one field every posting has and that no
+        -- scrape can leave blank -- unlike source_search, which is NULL on
+        -- every row collected before it existed. An unrecognised host records
+        -- as 'other' rather than being folded into an existing source.
+        CASE WHEN c.url ILIKE '%naukri.com%' THEN 'naukri'
+             WHEN c.url ILIKE '%hirist%'     THEN 'hirist'
+             ELSE 'other' END,
         COUNT(DISTINCT c.job_id)
     FROM cleaned_postings c
     JOIN posting_skills ps ON ps.job_id = c.job_id
@@ -88,8 +116,9 @@ BEGIN
     JOIN LATERAL unnest(ps.skill_ids || skill_group_ids(ps.skill_groups)) AS u(skill_id) ON true
     JOIN skills sk ON sk.skill_id = u.skill_id
     WHERE c.last_seen_date = CURRENT_DATE
-    GROUP BY sk.skill_name
-    ON CONFLICT (snapshot_date, skill) DO UPDATE
+    -- Positional: 2 is skill_name, 3 is the source CASE above.
+    GROUP BY 2, 3
+    ON CONFLICT (snapshot_date, skill, source) DO UPDATE
         SET posting_count = EXCLUDED.posting_count;
 
     GET DIAGNOSTICS affected = ROW_COUNT;
@@ -122,13 +151,62 @@ CREATE TABLE IF NOT EXISTS skill_daily_corrections (
     correction_id SERIAL PRIMARY KEY,
     snapshot_date DATE NOT NULL,
     skill         TEXT NOT NULL,
+    -- A correction belongs to one source's series. The 24 rows written for
+    -- 12-17 Aug all describe Naukri postings, so the DEFAULT is accurate.
+    source        TEXT NOT NULL DEFAULT 'naukri',
     delta         INT  NOT NULL CHECK (delta <> 0),
     reason        TEXT NOT NULL,
     recorded_on   DATE NOT NULL DEFAULT CURRENT_DATE
 );
 
+ALTER TABLE skill_daily_corrections
+    ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'naukri';
+
+DROP INDEX IF EXISTS idx_skill_corrections;
 CREATE INDEX IF NOT EXISTS idx_skill_corrections
-    ON skill_daily_corrections (snapshot_date, skill);
+    ON skill_daily_corrections (snapshot_date, skill, source);
+
+
+-- ---------------------------------------------------------------------
+-- INSTRUMENT CHANGES — dates when the measuring changed, not the market.
+--
+-- Distinct from skill_daily_corrections, and the distinction is the point.
+-- A correction says an observation was WRONG and by how much. These rows say
+-- both numbers were RIGHT and were taken with different instruments, so there
+-- is no delta to record: nothing knows what the old days would have measured
+-- under the new one, because cleaned_postings only ever shows the present.
+--
+-- Without this, a step shows up on /trends/movers as the largest change in
+-- the dataset and reads as a hiring surge. The fourteen skills added on
+-- 2026-09-02 recorded 0 every day before it -- not absent, invisible.
+--
+-- Nothing writes here automatically. A row is added by whoever changes the
+-- instrument, the same discipline skill_daily_corrections depends on.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS instrument_changes (
+    changed_on DATE NOT NULL,
+    component  TEXT NOT NULL,
+    summary    TEXT NOT NULL,
+    PRIMARY KEY (changed_on, component)
+);
+
+INSERT INTO instrument_changes (changed_on, component, summary) VALUES
+    ('2026-08-19', 'extraction',
+     'Department, industry type, role category, Naukri role, applicant count, '
+     'education and source_search began being collected. Coverage of those '
+     'fields goes from roughly 20% to 100% across 18-19 Aug, so a "not stated" '
+     'before this date means "not collected yet", not "the employer was silent".'),
+    ('2026-09-02', 'skill_extraction',
+     'extract_skills() rewritten to tokenise once instead of scanning per '
+     'pattern, and 14 vocabulary entries added (Data Engineering, LLM, '
+     'Generative AI, NoSQL, Big Data, Data Modeling, Data Ingestion, Data '
+     'Pipeline, Data Integration, JPA, Hibernate, Distributed Systems, IICS, '
+     'Matillion). 7.9 to 9.0 skills per description. The 14 recorded 0 every '
+     'day before this because they were invisible, so they step from nothing.'),
+    ('2026-09-02', 'source',
+     'hirist.tech added as a second job board. skill_daily_counts.source keeps '
+     'the series separate, so this affects cross-source totals only.')
+ON CONFLICT (changed_on, component) DO NOTHING;
 
 
 -- The three delta views read this rather than the raw table. Dropped
@@ -138,26 +216,47 @@ DROP VIEW IF EXISTS skill_delta_daily;
 DROP VIEW IF EXISTS skill_delta_vs_baseline;
 DROP VIEW IF EXISTS skill_first_appearances;
 DROP VIEW IF EXISTS skill_daily_counts_corrected;
+DROP VIEW IF EXISTS skill_daily_counts_by_source;
 
--- A skill corrected to zero drops out entirely, which is what the
--- snapshot itself would hold had the bad postings never been written:
--- the table only ever stores skills that actually appeared that day.
--- raw_count and correction stay visible so a reader can always see what
--- was observed and what was adjusted.
-CREATE VIEW skill_daily_counts_corrected AS
+-- Per-source series, corrections applied. Query this to compare platforms.
+--
+-- A skill corrected to zero drops out entirely, which is what the snapshot
+-- itself would hold had the bad postings never been written: the table only
+-- ever stores skills that actually appeared that day. raw_count and
+-- correction stay visible so a reader can always see what was observed and
+-- what was adjusted.
+CREATE VIEW skill_daily_counts_by_source AS
 SELECT
     s.snapshot_date,
     s.skill,
+    s.source,
     s.posting_count + COALESCE(c.delta, 0) AS posting_count,
     s.posting_count                        AS raw_count,
     COALESCE(c.delta, 0)                   AS correction
 FROM skill_daily_counts s
 LEFT JOIN (
-    SELECT snapshot_date, skill, SUM(delta) AS delta
+    SELECT snapshot_date, skill, source, SUM(delta) AS delta
     FROM skill_daily_corrections
-    GROUP BY snapshot_date, skill
-) c ON c.snapshot_date = s.snapshot_date AND c.skill = s.skill
+    GROUP BY snapshot_date, skill, source
+) c ON c.snapshot_date = s.snapshot_date
+   AND c.skill = s.skill
+   AND c.source = s.source
 WHERE s.posting_count + COALESCE(c.delta, 0) > 0;
+
+
+-- Every source combined, in exactly the shape the three delta views below
+-- already expect. This is the seam: because they read a view rather than the
+-- table, adding `source` underneath changed none of them, and with a single
+-- source a SUM over one row returns that row unchanged.
+CREATE VIEW skill_daily_counts_corrected AS
+SELECT
+    snapshot_date,
+    skill,
+    SUM(posting_count)::int AS posting_count,
+    SUM(raw_count)::int     AS raw_count,
+    SUM(correction)::int    AS correction
+FROM skill_daily_counts_by_source
+GROUP BY snapshot_date, skill;
 
 
 -- =====================================================================

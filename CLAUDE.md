@@ -170,6 +170,26 @@ why the three skill columns were not merged into one.
   on purpose — a correction does not change which days were recorded. Twenty-
   four corrections exist for 12–17 Aug, where a foreign job description
   inflated C++ ninefold.
+- **The skill detector changed on 2026-09-02, and the step it puts in the
+  history cannot be corrected away.** `extract_skills()` was rewritten to
+  tokenise a description once and look each 1–3 word window up in a dict,
+  rather than scanning the whole text once per pattern — 6.6 ms to 0.78 ms,
+  and cost is now proportional to description length rather than vocabulary
+  size, so adding skills is free. It also finds ten things the old form
+  missed, all punctuation cases ("R-programming", "AWS: S3"). Fourteen
+  vocabulary entries were added in the same pass, found by using hirist's own
+  tags as ground truth. Together: 7.9 to 9.0 skills per description.
+
+  **Why this is not a `skill_daily_corrections` row.** That ledger records an
+  observation that was *wrong*. Both of these numbers are right — they were
+  measured with different instruments, so there is no delta to write down.
+  Nor can the old days be recomputed: `cleaned_postings` only shows the
+  present, so nothing knows which postings were live on a past date. And
+  `source` does not isolate it the way it isolates a new job board — every
+  source shares one detector, so every series steps at once. The fourteen new
+  skills recorded 0 every day before this and will appear to surge from
+  nothing; on `/trends/movers` they will likely dominate the first run after
+  the change. That is the instrument, not the market.
 - **Batch files must be ASCII with CRLF line endings.** `cmd.exe` mis-parses
   LF-only `.bat` files and silently eats characters rather than erroring.
   `.gitattributes` enforces this; keep em dashes and smart quotes out.

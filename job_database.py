@@ -524,6 +524,20 @@ def check_field_health(current_run_id: int, lookback_runs: int = 10) -> list[dic
     this run's rate fell to under half that average — a real drop, not
     ordinary day-to-day noise.
 
+    Compared only against runs of the SAME job board. Sources publish
+    different fields, so a cross-source average measures the mix of boards
+    rather than the health of a selector: the first hirist run warned that
+    salary had fallen to 15% of a 100% average, when hirist simply hides
+    salary on most postings and Naukri does not. Every field hirist omits --
+    department, industry, education, role, openings, employment type,
+    company reviews, badges -- would have warned on every run, which teaches
+    a reader to ignore the one alarm this project has.
+
+    The host is taken from search_url rather than matched against a list of
+    known boards, so a third source needs no change here. A source with only
+    one recorded run has no history to compare against and returns nothing,
+    which is the honest answer rather than a comparison against strangers.
+
     Returns a list of {field, current_rate, historical_avg_rate} dicts,
     empty when nothing looks wrong."""
     conn = get_connection()
@@ -533,8 +547,14 @@ def check_field_health(current_run_id: int, lookback_runs: int = 10) -> list[dic
                 SELECT field_found_counts, postings_scraped
                 FROM scrape_runs
                 WHERE run_id != %s AND field_found_counts IS NOT NULL AND postings_scraped > 0
+                  -- IS NOT DISTINCT FROM so a run with no search_url compares
+                  -- against other such runs rather than against everything.
+                  AND substring(search_url from '://([^/]+)')
+                      IS NOT DISTINCT FROM
+                      (SELECT substring(search_url from '://([^/]+)')
+                         FROM scrape_runs WHERE run_id = %s)
                 ORDER BY started_at DESC LIMIT %s
-            """, (current_run_id, lookback_runs))
+            """, (current_run_id, current_run_id, lookback_runs))
             history = cur.fetchall()
 
             cur.execute("""
