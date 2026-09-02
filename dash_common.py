@@ -331,8 +331,8 @@ def _filter_params(filters: dict) -> list[tuple]:
 
 def sampling_note():
     st.caption(
-        "Figures describe postings collected from a fixed set of Naukri searches "
-        "and cities, not the Indian IT market as a whole."
+        "Figures describe postings collected from a fixed set of searches and "
+        "cities on Naukri and hirist, not the Indian IT market as a whole."
     )
 
 
