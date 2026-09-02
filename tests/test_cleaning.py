@@ -381,3 +381,56 @@ def test_clean_record_carries_source():
         _raw_posting(url="https://www.hirist.tech/j/data-engineer-1667157"),
         city_name_to_id={"Hyderabad": 1})
     assert result["posting"]["source"] == "hirist"
+
+
+# =====================================================================
+# LOCATION — slash-joined fragments
+# =====================================================================
+_CITY_IDS = {"Gurugram": 1, "Delhi / NCR": 2, "Delhi": 3,
+             "Hyderabad": 4, "Bengaluru": 5, "Mumbai": 6}
+
+
+def test_slash_joined_renamed_city_resolves_to_one_city():
+    # Naukri writes Gurugram as "Gurgaon/Gurugram". Both halves are aliased
+    # to the same canonical name, so this is one city, not two.
+    ids, unmapped = cleaning.resolve_locations("Gurgaon/Gurugram", _CITY_IDS)
+    assert ids == [1]
+    assert unmapped == []
+
+
+def test_delhi_ncr_is_not_split_on_its_own_slash():
+    # The regression this fix could have caused: "Delhi / NCR" is itself a
+    # canonical city name. Splitting eagerly would resolve it to both
+    # Delhi / NCR and Delhi.
+    ids, unmapped = cleaning.resolve_locations("Delhi / NCR", _CITY_IDS)
+    assert ids == [2]
+    assert unmapped == []
+
+
+def test_slash_joined_distinct_cities_resolve_to_both():
+    ids, unmapped = cleaning.resolve_locations("Bangalore/Hyderabad", _CITY_IDS)
+    assert ids == [4, 5]
+    assert unmapped == []
+
+
+def test_slash_fragment_keeps_the_half_nobody_recognises():
+    # Half resolving must not swallow the half that did not -- the posting
+    # named a real place and it stays visible for a curated entry.
+    ids, unmapped = cleaning.resolve_locations("Mumbai/Nashik", _CITY_IDS)
+    assert ids == [6]
+    assert unmapped == ["nashik"]
+
+
+def test_wholly_unmappable_slash_fragment_stays_one_fragment():
+    # Not a city at all. Splitting it would turn one unmappable thing into
+    # two, which reads as two pending locations needing curation.
+    ids, unmapped = cleaning.resolve_locations(
+        "Anywhere in India/Multiple Locations", _CITY_IDS)
+    assert ids == []
+    assert unmapped == ["Anywhere in India/Multiple Locations"]
+
+
+def test_parenthetical_locality_still_resolves():
+    ids, unmapped = cleaning.resolve_locations("Hyderabad( Raidurgam )", _CITY_IDS)
+    assert ids == [4]
+    assert unmapped == []

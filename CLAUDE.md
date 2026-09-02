@@ -251,9 +251,18 @@ why the three skill columns were not merged into one.
   panel says so in words. See
   `docs/superpowers/specs/2026-08-31-foreign-description-detection.md`.
 
-- **Two location fragments** (`Hyderabad( Raidurgam )`, `Hyderabad( Hitec City )`)
-  are unmapped despite `resolve_locations()` stripping parenthetical suffixes.
-  Either they predate that fix or it has a gap.
+- **Four location fragments still need a curated `cities` entry**, and only
+  two of them are cities: `Srinagar` (2 postings) and `Patiala` (2). Both need
+  a state, which is the one thing that cannot be guessed from a city name --
+  and `Srinagar` genuinely names two places, in Jammu & Kashmir and in
+  Uttarakhand. The rest (`Anywhere in India/Multiple Locations`, `Any
+  Location`, `pan india`) are not cities and should stay unmapped.
+
+  The parenthetical pair (`Hyderabad( Raidurgam )`, `Hyderabad( HITEC City )`)
+  is resolved: the parser handled them all along, those rows simply predated
+  the fix. Seven such stale rows -- three of which carried no city at all --
+  were replayed through the alias table by
+  `migrations/2026-09-02-backfill-resolvable-locations.sql`.
 - **Closure metrics are limited to experience band and role.** Department,
   industry and education look ready but are not: those fields only began being
   collected on 19 Aug, so their "not stated" group is really "collected

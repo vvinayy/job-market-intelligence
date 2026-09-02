@@ -430,7 +430,8 @@ CITY_ALIASES = {
     "ahmedabad": "Ahmedabad",
     "bangalore": "Bengaluru", "bangalore rural": "Bengaluru",
     "bengaluru": "Bengaluru", "bengaluru rural": "Bengaluru",
-    "bhubaneswar": "Bhubaneswar",
+    # Both spellings are in use; Naukri writes the second on some postings.
+    "bhubaneswar": "Bhubaneswar", "bhubaneshwar": "Bhubaneswar",
     "chandigarh": "Chandigarh",
     "chennai": "Chennai",
     "coimbatore": "Coimbatore",
@@ -463,17 +464,47 @@ def resolve_locations(raw_location: str | None, city_name_to_id: dict[str, int])
     city_ids: set[int] = set()
     unmapped: list[str] = []
 
+    def normalize(text: str) -> str:
+        # Strip a parenthetical locality — "Hyderabad( Raidurgam )" must still
+        # resolve to Hyderabad rather than fall through to unmapped.
+        return re.sub(r"\(.*?\)", "", text).strip().lower()
+
+    def is_droppable(key: str) -> bool:
+        return key == "india" or "remote" in key
+
     for frag in (raw_location or "").split(","):
         frag = frag.strip()
         if not frag:
             continue
-        # Strip a parenthetical locality — "Hyderabad( Raidurgam )" must still
-        # resolve to Hyderabad rather than fall through to unmapped.
-        key = re.sub(r"\(.*?\)", "", frag).strip().lower()
+
+        key = normalize(frag)
         city_name = CITY_ALIASES.get(key)
         if city_name:
             city_ids.add(city_name_to_id[city_name])
-        elif key != "india" and "remote" not in key:
+            continue
+        if is_droppable(key):
+            continue
+
+        # Naukri writes a renamed city as both names joined by a slash --
+        # "Gurgaon/Gurugram" -- which matched no alias even though each half
+        # is aliased, and landed 3 postings in unmapped_locations.
+        #
+        # The whole fragment is tried FIRST and only split on failure, because
+        # "Delhi / NCR" is itself a canonical city name: splitting it eagerly
+        # would resolve one posting to both Delhi and Delhi / NCR.
+        parts = [p for p in (normalize(p) for p in frag.split("/")) if p]
+        matched = {CITY_ALIASES[p] for p in parts if p in CITY_ALIASES}
+        if matched:
+            city_ids.update(city_name_to_id[n] for n in matched)
+            # A half nobody recognises is still a real place the posting
+            # named, so it stays visible rather than being swallowed by the
+            # half that did resolve.
+            unmapped.extend(p for p in parts
+                            if p not in CITY_ALIASES and not is_droppable(p))
+        else:
+            # Nothing in it resolved, so keep the fragment exactly as written
+            # -- "Anywhere in India/Multiple Locations" is one unmappable
+            # thing, not two.
             unmapped.append(frag)
 
     return sorted(city_ids), unmapped
