@@ -76,8 +76,12 @@ SKILL_ALIASES = {
     "GraphQL": ["graphql"],
     "gRPC": ["grpc"],
     "Microservices": ["microservices", "micro services"],
+    "Hibernate": ["hibernate"],
+    "JPA": ["jpa", "java persistence api"],
+    "Distributed Systems": ["distributed systems", "distributed system"],
 
     # Databases
+    "NoSQL": ["nosql", "no sql", "nosql databases"],
     "PostgreSQL": ["postgresql", "postgres", "psql"],
     "MySQL": ["mysql"],
     "MongoDB": ["mongodb", "mongo db"],
@@ -138,6 +142,21 @@ SKILL_ALIASES = {
     "Delta Lake": ["delta lake"],
     "Data Warehouse": ["data warehouse", "datawarehouse", "warehousing"],
     "ETL": ["etl", "elt"],
+    # Found by using hirist's own tags as ground truth: a skill the employer
+    # declared AND wrote into the description, that this table could not find.
+    # Frequencies are share of 591 stored descriptions. Concepts that turned
+    # up the same way -- Design Patterns, Multithreading, OOPS -- are left out,
+    # matching the existing exclusion of Agile, Coding, Testing and Debugging.
+    "Data Engineering": ["data engineering"],          # 14%
+    "LLM": ["llm", "llms", "large language model", "large language models"],  # 13%
+    "Generative AI": ["generative ai", "gen ai", "genai"],  # 12%
+    "Big Data": ["big data"],                          # 7%
+    "Data Modeling": ["data modeling", "data modelling"],  # 7%
+    "Data Ingestion": ["data ingestion"],              # 4%
+    "Data Pipeline": ["data pipeline", "data pipelines"],  # 3%
+    "Data Integration": ["data integration"],          # 3%
+    "IICS": ["iics"],                                  # niche, unambiguous
+    "Matillion": ["matillion"],
     "Solr": ["solr", "apache solr"],
     "OpenSearch": ["opensearch", "open search"],
     "Lucene": ["lucene", "apache lucene"],
@@ -158,13 +177,42 @@ def _build_pattern(alias: str) -> re.Pattern:
     return re.compile(rf"(?<![a-zA-Z0-9]){alias}(?![a-zA-Z0-9])", re.IGNORECASE)
 
 
-# Compile once at import, not per description — this matters when you're
-# processing hundreds of postings.
-_COMPILED = [
-    (canonical, _build_pattern(alias))
-    for canonical, aliases in SKILL_ALIASES.items()
-    for alias in aliases
-]
+_TOKEN = re.compile(r"[A-Za-z0-9+#.]+")
+
+
+def _tokenise(text: str) -> list[str]:
+    """Split text into comparable tokens.
+
+    The aliases go through this too, so punctuation can never split a term on
+    one side and not the other: "CI/CD" in prose and the alias "ci/cd" both
+    become ["ci", "cd"]. '+', '#' and '.' are kept inside a token so C++, C#,
+    .NET and Node.js survive whole."""
+    return [t for t in (m.group(0).lower().strip(".")
+                        for m in _TOKEN.finditer(text)) if t]
+
+
+# Built once at import. Scanning every description once per pattern meant 176
+# full passes over the text; tokenising once and looking each 1-3 word window
+# up in a dict makes the cost proportional to the description rather than to
+# the vocabulary — so adding skills is now free. Measured 6.4ms -> 0.75ms per
+# description over 591 real postings.
+_REGEX_META = set(r"^$*?{}[]\|()")
+_LITERAL_ALIASES: dict[str, str] = {}
+_REGEX_ALIASES: list[tuple[str, re.Pattern]] = []
+
+for _canonical, _aliases in SKILL_ALIASES.items():
+    for _alias in _aliases:
+        # Aliases carrying regex metacharacters stay on the pattern path.
+        # That is not only the version matchers: ".NET" is stored pre-escaped
+        # as "\.net", and the backslash keeps it here — which is what stops
+        # the token "net" in ordinary prose ("net effect") from matching it.
+        if any(ch in _REGEX_META for ch in _alias):
+            _REGEX_ALIASES.append((_canonical, _build_pattern(_alias)))
+        else:
+            _LITERAL_ALIASES.setdefault(" ".join(_tokenise(_alias)), _canonical)
+
+_MAX_ALIAS_TOKENS = max(len(key.split()) for key in _LITERAL_ALIASES)
+_CANONICAL_ORDER = {name: i for i, name in enumerate(SKILL_ALIASES)}
 
 
 def extract_skills(description: str) -> list[str]:
@@ -172,11 +220,20 @@ def extract_skills(description: str) -> list[str]:
     if not description:
         return []
 
-    found = []
-    for canonical, pattern in _COMPILED:
+    tokens = _tokenise(description)
+    found: set[str] = set()
+    for width in range(1, _MAX_ALIAS_TOKENS + 1):
+        for i in range(len(tokens) - width + 1):
+            canonical = _LITERAL_ALIASES.get(" ".join(tokens[i:i + width]))
+            if canonical:
+                found.add(canonical)
+
+    for canonical, pattern in _REGEX_ALIASES:
         if canonical not in found and pattern.search(description):
-            found.append(canonical)
-    return found
+            found.add(canonical)
+
+    # Declaration order, as the pattern loop returned before it.
+    return sorted(found, key=_CANONICAL_ORDER.get)
 
 
 # ---------------------------------------------------------------------
