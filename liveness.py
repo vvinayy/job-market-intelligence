@@ -14,6 +14,7 @@ A timeout, a block page or a renamed selector is "unknown", never
 afterwards that is indistinguishable from a real market event.
 """
 
+import re
 from urllib.parse import urlparse, parse_qs
 
 # Naukri's own marker on the redirect target. Read as "expired JD".
@@ -83,6 +84,69 @@ def classify_response(requested_url: str, status: int, location: str | None) -> 
             return "expired"
         return "unknown"
     if status == 200:
+        return "live"
+    return "unknown"
+
+
+# ---------------------------------------------------------------------
+# hirist — a different signal entirely, not a variation on the Naukri one.
+#
+# Measured 2026-09-02: hirist carries NOTHING at the HTTP layer. HEAD and GET
+# both answer 200 with no Location for live and expired postings alike, and
+# the "expired" page is drawn in JavaScript after the shell loads. A checker
+# built on status codes would read every hirist posting as alive forever.
+#
+# The signal is `hasExpired` in the detail API hirist_collector.py already
+# calls. Census the same day: 20 stored postings all false, 20 ids sampled
+# from the old range all true, and a clean cutoff by job id -- everything
+# below ~1,626,000 expired, everything above ~1,635,000 live, which is what a
+# fixed listing period produces. Re-observed 2026-09-03 over 60 stored
+# postings, all live.
+#
+# What none of that shows is a posting CROSSING between the two states, which
+# is the thing a checker actually depends on -- a field that merely tracked
+# age would separate those populations just as cleanly. That is why nothing
+# here is wired into liveness_checker.py yet: hirist_liveness_probe.py
+# records the verdict daily without writing it, and the first flip promotes
+# the rule.
+#
+# Do NOT reach for `status` or `active` in that payload. 8 of those 20 expired
+# postings still reported active = 1, so that field would have been wrong 40%
+# of the time while looking authoritative -- the same shape as the old
+# working_type fallback.
+# ---------------------------------------------------------------------
+
+# The job code is the trailing number: .../j/<slug>-1667157 and, on the .com
+# domain, .../j/<slug>-1439211.html. Anchored at the end because slugs carry
+# their own digits ("...-3-5-yrs-1667157").
+_HIRIST_CODE_RE = re.compile(r"-(\d+)(?:\.html)?/?$")
+
+
+def hirist_job_code(url: str | None) -> str | None:
+    """The detail-API key for a hirist posting URL, or None if it has none."""
+    if not url:
+        return None
+    match = _HIRIST_CODE_RE.search(urlparse(url).path)
+    return match.group(1) if match else None
+
+
+def classify_hirist(status: int, payload: dict | None) -> str:
+    """'expired', 'live' or 'unknown' from one detail-API response.
+
+    Same discipline as the Naukri rule: only positive evidence counts. A 404
+    means the job code names nothing, which is not the same as a posting that
+    expired -- and a payload without `hasExpired` is unknown rather than live,
+    so a change to the API's shape degrades into writing nothing.
+    """
+    if status != 200 or not isinstance(payload, dict):
+        return "unknown"
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return "unknown"
+    expired = data.get("hasExpired")
+    if expired is True:
+        return "expired"
+    if expired is False:
         return "live"
     return "unknown"
 

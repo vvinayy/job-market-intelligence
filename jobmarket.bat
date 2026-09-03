@@ -145,6 +145,13 @@ echo ================================================== >> "%LOGFILE%"
 
 python liveness_checker.py >> "%LOGFILE%" 2>&1
 
+REM hirist has no HTTP expiry signal, so liveness_checker skips it. This
+REM records what the hasExpired rule WOULD conclude, into its own table --
+REM it never writes cleaned_postings, so it cannot affect closure metrics.
+REM Running nightly is the point: the rule is trusted once a posting is
+REM observed crossing from live to expired, which one census cannot show.
+python hirist_liveness_probe.py >> "%LOGFILE%" 2>&1
+
 echo Check finished: %date% %time% >> "%LOGFILE%"
 echo Liveness check complete. Log: %LOGFILE%
 exit /b 0

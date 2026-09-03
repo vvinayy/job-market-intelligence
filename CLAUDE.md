@@ -60,7 +60,8 @@ The API also accepts `DATABASE_URL`; the dashboard accepts `API_BASE_URL`
 | `cleaning.py` | Turns raw scraped text into clean values. `clean_record()` is the way in. |
 | `job_database.py` | Writes to Postgres. `save_records()` cleans, inserts-or-updates, resolves ids. |
 | `liveness.py` | Decides whether a posting URL is still live. Pure functions, no I/O. |
-| `liveness_checker.py` | Visits stored URLs daily to find expired postings. |
+| `liveness_checker.py` | Visits stored URLs daily to find expired postings. Naukri only. |
+| `hirist_liveness_probe.py` | Records what a hirist expiry check *would* conclude, into its own table. Writes nothing to `cleaned_postings` — it exists to earn evidence the census could not. |
 | `notify.py` | Windows toast notifications, so unattended runs are not silent. |
 | `schema.sql` | Every table. Run first. |
 | `migrations/` | Dated, idempotent `ALTER`s for a database that already has data — `schema.sql` drops the postings tables, so it cannot bring an existing one forward. |
@@ -149,6 +150,15 @@ allowlist. Never put caller input directly into SQL.
 **Scraper etiquette.** One visible browser for the whole run (Naukri blocks
 headless), and a random 3–6 second pause between pages. Don't go headless, don't
 parallelise, don't remove the pause.
+
+**hirist expiry is measured but not trusted yet.** hirist carries no HTTP
+signal at all — HEAD and GET both answer 200 for live and expired postings
+alike, and the expired page is drawn in JavaScript. The signal is `hasExpired`
+in the detail API the collector already calls (and *not* `status` or `active`,
+which stayed 1 on 8 of 20 expired postings). What no census can show is a
+posting *crossing* between states, so `hirist_liveness_probe.py` records the
+verdict nightly without writing it; the first observed flip promotes the rule
+into `liveness_checker.py`.
 
 **Expiry needs proof.** The scraper only ever sees postings a search returns, so
 it can never revisit an expired one — that is why `liveness_checker.py` reads
