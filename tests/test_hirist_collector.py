@@ -128,6 +128,23 @@ def test_build_record_does_not_report_mandatory_as_preferred():
     assert "preferred_key_skills" not in hc.build_record(PAYLOAD)
 
 
+def test_no_preferred_skill_survives_the_whole_hirist_chain():
+    """The unit test above pins the collector's dict. This pins the result.
+
+    The collector being right was never the weak point -- 19 rows written
+    before it was fixed sat in the database contradicting it, telling readers
+    a mandatory skill was preferred. This asserts the end state a scrape
+    actually produces, so a default reintroduced anywhere between the payload
+    and the row fails here rather than a day later in the data.
+    """
+    import cleaning
+    cleaned = cleaning.clean_record(hc.build_record(PAYLOAD),
+                                    city_name_to_id={"Hyderabad": 1})
+    assert cleaned["preferred_skills"] == []
+    # and the mandatory skills are not lost -- they are ordinary requirements
+    assert "Python" in cleaned["skills"]
+
+
 def test_build_record_marks_absent_fields_not_found():
     record = hc.build_record(PAYLOAD)
     assert record["salary"] == hc.NOT_FOUND
