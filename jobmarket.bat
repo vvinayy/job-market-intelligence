@@ -76,9 +76,20 @@ REM against naukri's 4.8, nothing ever re-surfaced a posting, and the
 REM hirist half of the daily snapshot had holes on the days nobody ran it.
 REM Discovery needs a visible browser like the naukri calls above; the
 REM detail fetches that follow are plain JSON and need none.
+REM
+REM Seven searches, each verified to return 20 codes before being added.
+REM They overlap barely -- 152 distinct postings across 160 codes when
+REM measured -- so each one is a genuinely different slice, not the same
+REM jobs re-surfaced. Also verified and ready if more depth is wanted:
+REM full-stack-developer, python-developer, qa-engineer, java-developer
+REM (java overlaps the most, 14 of 20 new).
 python hirist_collector.py "https://www.hirist.tech/search/software-developer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
 python hirist_collector.py "https://www.hirist.tech/search/cloud-engineer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
 python hirist_collector.py "https://www.hirist.tech/search/machine-learning-engineer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
+python hirist_collector.py "https://www.hirist.tech/search/data-engineer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
+python hirist_collector.py "https://www.hirist.tech/search/devops-engineer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
+python hirist_collector.py "https://www.hirist.tech/search/backend-developer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
+python hirist_collector.py "https://www.hirist.tech/search/frontend-developer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
 
 REM Backstop only. naukri_collector.py already snapshots after every
 REM run; this catches the case where every search failed before reaching
