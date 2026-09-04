@@ -205,7 +205,21 @@ INSERT INTO instrument_changes (changed_on, component, summary) VALUES
      'day before this because they were invisible, so they step from nothing.'),
     ('2026-09-02', 'source',
      'hirist.tech added as a second job board. skill_daily_counts.source keeps '
-     'the series separate, so this affects cross-source totals only.')
+     'the series separate, so this affects cross-source totals only.'),
+    ('2026-09-04', 'skill_identity',
+     'Six skill rows merged into their canonical spelling: Jpa into JPA, Data '
+     'Pipelines into Data Pipeline, Gen Ai into Generative AI, and Llms, Large '
+     'Language Model and Large Language Models into LLM. Each had been '
+     'auto-registered before that name entered the taxonomy, so demand was '
+     'split across up to four ids -- LLM read 62 postings while three other '
+     'rows held 8 more between them. These names step up on merge day without '
+     'any employer having changed anything.'),
+    ('2026-09-04', 'search_coverage',
+     'Four hirist searches added (data engineer, devops engineer, backend '
+     'developer, frontend developer), taking hirist from three searches to '
+     'seven. A skill concentrated in those specialisms jumps the first day '
+     'they run: DevOps went from 2 postings to 21, of which 20 were hirist. '
+     'That is the sample widening, not demand rising.')
 ON CONFLICT (changed_on, component) DO NOTHING;
 
 
