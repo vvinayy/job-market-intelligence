@@ -193,10 +193,18 @@ with tab2:
                 st.caption(
                     f"{thin} of these have a baseline built from fewer than 3 "
                     "snapshots — the window is 7 calendar days, but only the "
-                    "snapshots inside it are averaged. See `baseline_days` below."
+                    "snapshots inside it are averaged, so those comparisons rest "
+                    "on very little."
                 )
 
-        st.dataframe(data, use_container_width=True, hide_index=True)
+        # The raw dataframe used to sit here. It exposed every column the
+        # endpoint returns -- comparison mode, baseline_days, previous_date,
+        # days_since_previous -- next to a chart that already says what moved.
+        # Reading it correctly meant knowing that `None` in previous_date is
+        # right for rolling_7d, that pct_change of 563% can be one new search
+        # rather than a market, and what an instrument change is. The chart
+        # plus the warnings above carry the finding; the table mostly invited
+        # a wrong reading of it.
 
 
 with tab3:
