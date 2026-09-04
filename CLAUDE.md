@@ -7,16 +7,23 @@ the code, the code is right. Deeper design records live in
 
 ## What this is
 
-A job market intelligence pipeline over Indian IT postings scraped from
-Naukri.com. Data flows one way:
+A job market intelligence pipeline over Indian IT postings, scraped from
+Naukri.com and hirist.tech. Data flows one way:
 
 ```
-Naukri.com → Playwright scraper → cleaning (in-process)
-           → PostgreSQL → FastAPI → Streamlit dashboard
+Naukri.com  ┐
+hirist.tech ┴→ Playwright scraper → cleaning (in-process)
+             → PostgreSQL → FastAPI → Streamlit dashboard
 ```
+
+Both boards are scraped by the same 11am task and share every table; which one
+a posting came from is `cleaned_postings.source`. The sample is overwhelmingly
+Naukri — five searches against three — so treat any per-board comparison
+accordingly.
 
 A separate daily job re-visits stored URLs to find postings Naukri has expired,
-which the scraper itself can never see (explained below).
+which the scraper itself can never see (explained below). It covers Naukri
+only; hirist expiry is observed but not yet acted on.
 
 Single-developer project, Windows-first: PowerShell, `.bat` launchers, Windows
 Task Scheduler. Python 3.13, PostgreSQL 18 at

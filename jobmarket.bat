@@ -70,6 +70,16 @@ python naukri_collector.py "https://www.naukri.com/java-full-stack-developer-job
 python naukri_collector.py "https://www.naukri.com/machine-learning-engineer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
 python naukri_collector.py "https://www.naukri.com/python-full-stack-developer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
 
+REM hirist, the second board. Until these were added, every hirist row in
+REM the database came from a hand-run collector: times_seen sat at 1.0
+REM against naukri's 4.8, nothing ever re-surfaced a posting, and the
+REM hirist half of the daily snapshot had holes on the days nobody ran it.
+REM Discovery needs a visible browser like the naukri calls above; the
+REM detail fetches that follow are plain JSON and need none.
+python hirist_collector.py "https://www.hirist.tech/search/software-developer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
+python hirist_collector.py "https://www.hirist.tech/search/cloud-engineer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
+python hirist_collector.py "https://www.hirist.tech/search/machine-learning-engineer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
+
 REM Backstop only. naukri_collector.py already snapshots after every
 REM run; this catches the case where every search failed before reaching
 REM that code. The SQL function recalculates rather than duplicating on

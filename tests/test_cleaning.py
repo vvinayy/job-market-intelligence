@@ -434,3 +434,41 @@ def test_parenthetical_locality_still_resolves():
     ids, unmapped = cleaning.resolve_locations("Hyderabad( Raidurgam )", _CITY_IDS)
     assert ids == [4]
     assert unmapped == []
+
+
+# =====================================================================
+# LOCATION — a parenthetical locality containing a comma
+# =====================================================================
+def test_comma_inside_a_parenthetical_does_not_split_the_city_off():
+    # Naukri writes several localities as "Hyderabad( Gachibowli, HITEC City )".
+    # Splitting on commas first tore this into "Hyderabad( Gachibowli" and
+    # "HITEC City )" -- two fragments matching nothing -- and the posting was
+    # left with NO city, invisible to every location filter.
+    ids, unmapped = cleaning.resolve_locations(
+        "Hyderabad( Gachibowli, HITEC City )", _CITY_IDS)
+    assert ids == [4]
+    assert unmapped == []
+
+
+def test_parenthetical_stripped_across_several_cities():
+    ids, unmapped = cleaning.resolve_locations(
+        "Bengaluru, Hyderabad( Gachibowli, HITEC City ), Mumbai", _CITY_IDS)
+    assert ids == [4, 5, 6]
+    assert unmapped == []
+
+
+def test_bracketed_spelling_still_resolves_after_the_strip():
+    # "Mumbai (All Areas)" used to match a literal alias. Now the bracket is
+    # removed first and it resolves as plain Mumbai -- same answer, and the
+    # alias is no longer load-bearing.
+    ids, _ = cleaning.resolve_locations("Mumbai (All Areas)", _CITY_IDS)
+    assert ids == [6]
+
+
+def test_delhi_ncr_without_a_separator_resolves():
+    # "delhi / ncr", "delhi/ncr" and "ncr" were all mapped; the plain-space
+    # spelling Naukri also writes was not, leaving 3 postings unmapped.
+    for spelling in ("Delhi NCR", "delhi ncr", "Delhi-NCR", "Delhi / NCR"):
+        ids, unmapped = cleaning.resolve_locations(spelling, _CITY_IDS)
+        assert ids == [2], f"{spelling!r} did not resolve"
+        assert unmapped == []

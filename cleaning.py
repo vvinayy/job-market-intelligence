@@ -436,7 +436,10 @@ CITY_ALIASES = {
     "chennai": "Chennai",
     "coimbatore": "Coimbatore",
     "delhi": "Delhi", "new delhi": "Delhi",
+    # Every spelling of the region; "delhi ncr" with no separator is the one
+    # Naukri writes on some postings.
     "delhi / ncr": "Delhi / NCR", "delhi/ncr": "Delhi / NCR", "ncr": "Delhi / NCR",
+    "delhi ncr": "Delhi / NCR", "delhi-ncr": "Delhi / NCR",
     "faridabad": "Faridabad",
     "ghaziabad": "Ghaziabad",
     "greater noida": "Greater Noida",
@@ -459,20 +462,29 @@ CITY_ALIASES = {
 }
 
 
+# A locality in brackets — "Hyderabad( Raidurgam )". Always discarded: the
+# city is the unit cities.city_name records, and a locality has no row to
+# resolve to.
+_PARENTHETICAL_RE = re.compile(r"\([^)]*\)")
+
+
 def resolve_locations(raw_location: str | None, city_name_to_id: dict[str, int]) -> tuple[list[int], list[str]]:
     """Returns (city_ids, unmapped_fragments)."""
     city_ids: set[int] = set()
     unmapped: list[str] = []
 
     def normalize(text: str) -> str:
-        # Strip a parenthetical locality — "Hyderabad( Raidurgam )" must still
-        # resolve to Hyderabad rather than fall through to unmapped.
-        return re.sub(r"\(.*?\)", "", text).strip().lower()
+        return text.strip().lower()
 
     def is_droppable(key: str) -> bool:
         return key == "india" or "remote" in key
 
-    for frag in (raw_location or "").split(","):
+    # Parentheticals go BEFORE the comma split, not after it. Naukri writes a
+    # multi-locality entry as "Hyderabad( Gachibowli, HITEC City )", and
+    # splitting first tore that into "Hyderabad( Gachibowli" and
+    # "HITEC City )" -- two fragments matching nothing, leaving the posting
+    # with no city at all rather than with Hyderabad.
+    for frag in _PARENTHETICAL_RE.sub("", raw_location or "").split(","):
         frag = frag.strip()
         if not frag:
             continue
