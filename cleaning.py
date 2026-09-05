@@ -265,6 +265,12 @@ SKILL_CATEGORIES = {
     # Brokers and task queues are backend plumbing, not devops tooling. Kafka
     # stays Data/ML — it earns that through pipeline use, RabbitMQ doesn't.
     "RabbitMQ": "Backend", "Celery": "Backend",
+    # ORM and the spec behind it -- same layer as Spring above.
+    "Hibernate": "Backend", "JPA": "Backend",
+    # A design specialism rather than a tool, but a specific one. Generic
+    # words like "Architecture" and "Programming" stay uncategorised on
+    # purpose: they would dilute the mix chart rather than describe it.
+    "Distributed Systems": "Backend",
 
     # Database
     "PostgreSQL": "Database", "MySQL": "Database", "MongoDB": "Database", "Redis": "Database",
@@ -293,9 +299,15 @@ SKILL_CATEGORIES = {
     "Agentic AI": "Data/ML",
     "Data Science": "Data/ML", "Data Engineering": "Data/ML", "Data Analytics": "Data/ML",
     "Data Analysis": "Data/ML", "Data Modeling": "Data/ML", "Big Data": "Data/ML",
-    "Hive": "Data/ML", "Data Lake": "Data/ML", "Data Pipelines": "Data/ML",
+    "Hive": "Data/ML", "Data Lake": "Data/ML", "Data Pipeline": "Data/ML",
     "Data Quality": "Data/ML", "Data Visualization": "Data/ML", "Statistical Modeling": "Data/ML",
     "Predictive Modeling": "Data/ML", "MLOps": "Data/ML",
+    # Added to SKILL_ALIASES on 2026-09-02 but missed here, so they registered
+    # uncategorised. Data Pipeline above was the same omission wearing a
+    # plural: the key was "Data Pipelines", which normalize_skill() folds to
+    # the singular, so it matched nothing while 112 postings went unclassified.
+    "Data Ingestion": "Data/ML", "Data Integration": "Data/ML",
+    "IICS": "Data/ML", "Matillion": "Data/ML",
 
     # Testing
     "NUnit": "Testing", "JUnit": "Testing", "pytest": "Testing", "Selenium": "Testing",
