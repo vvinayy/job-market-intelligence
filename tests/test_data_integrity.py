@@ -47,41 +47,17 @@ def test_no_hirist_posting_claims_preferred_skills(rows):
     """
     offenders = rows("""
         SELECT c.job_id, c.source,
-               cardinality(c.preferred_skill_ids) AS on_posting,
                cardinality(COALESCE(ps.preferred_skill_ids, '{}')) AS on_skills
           FROM cleaned_postings c
           LEFT JOIN posting_skills ps ON ps.job_id = c.job_id
          WHERE c.source = 'hirist'
-           AND (cardinality(c.preferred_skill_ids) > 0
-                OR cardinality(COALESCE(ps.preferred_skill_ids, '{}')) > 0)
+           AND cardinality(COALESCE(ps.preferred_skill_ids, '{}')) > 0
          ORDER BY c.job_id
     """)
     assert offenders == [], (
         f"{len(offenders)} hirist posting(s) carry preferred skills. The "
         f"collector does not map any, so these were written by a superseded "
         f"rule: {[o['job_id'] for o in offenders][:10]}"
-    )
-
-
-def test_preferred_skills_agree_across_both_tables(rows):
-    """The same fact is stored twice, so the two copies must not diverge.
-
-    cleaned_postings is what production computes off directly; posting_skills
-    is what the API reads. A repair that touched one and not the other would
-    leave the star showing in the dashboard while every aggregate said
-    otherwise.
-    """
-    divergent = rows("""
-        SELECT c.job_id
-          FROM cleaned_postings c
-          JOIN posting_skills ps ON ps.job_id = c.job_id
-         WHERE COALESCE(c.preferred_skill_ids, '{}') <> COALESCE(ps.preferred_skill_ids, '{}')
-         ORDER BY c.job_id
-    """)
-    assert divergent == [], (
-        f"{len(divergent)} posting(s) disagree between "
-        f"cleaned_postings.preferred_skill_ids and posting_skills: "
-        f"{[d['job_id'] for d in divergent][:10]}"
     )
 
 

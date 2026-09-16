@@ -35,7 +35,9 @@ def real_targets(monkeypatch):
         pytest.skip("database unreachable")
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT job_id, url FROM cleaned_postings ORDER BY job_id LIMIT 3")
+            # posting_state since the 2026-09-15 split -- url lives there now,
+            # alongside the expiry columns this checker writes.
+            cur.execute("SELECT job_id, url FROM posting_state ORDER BY job_id LIMIT 3")
             rows = cur.fetchall()
     finally:
         conn.close()
