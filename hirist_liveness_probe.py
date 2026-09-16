@@ -1,16 +1,33 @@
 """Observes what a hirist liveness check would conclude, without writing it.
 
-The rule in liveness.classify_hirist() is measured but not yet trusted. The
-2026-09-02 census separated 20 live postings from 20 dead ones with no
-exceptions, but it compared two *populations* -- it never watched one posting
-cross from live to expired, and that transition is precisely what a checker
-depends on. A clean split between "postings we scraped yesterday" and "job ids
-from 2021" would also be produced by a field that merely tracks age.
+NO LONGER RUN NIGHTLY, AND THE RULE IT TESTS WILL NOT BE PROMOTED. It was
+built to earn one piece of evidence the 2026-09-02 census could not give: a
+single posting observed crossing from live to expired. That census compared
+two *populations* -- 20 scraped yesterday against 20 job ids from 2021 -- and
+warned that a field which merely tracks age would split them just as cleanly.
 
-This script earns that missing evidence. It runs the real rule against the
-real API and records the verdict in hirist_liveness_observations, one row per
-posting per day. When a posting's verdict changes between two days, that is
-the transition, and the rule can be promoted into liveness_checker.py.
+On 2026-09-08 that suspicion was confirmed directly, and this script did not
+have to wait for it. Sampling job codes from 2019 to 2026 and binary-searching
+the boundary put the flip at exactly 150 days after createdTime: 148 days
+False, 150 days True, no exception in 41 samples. `hasExpired` is a clock.
+
+That also explains five silent nights. 3-7 September recorded 60, 83, 185, 185
+and 188 observations, every one of them `live`, plus a single `unknown` on the
+7th which was an HTTP 504 correctly refusing to call a gateway timeout a
+death. Nothing could have flipped: no stored hirist posting is anywhere near
+150 days old, and when one does reach that age it will flip because of the
+calendar, not because the job closed.
+
+The 150 days are now acted on, but as a delisting rather than a closure:
+liveness_checker.mark_delisted_hirist() does the subtraction from posted_date
+and records expiry_basis = 'delisted', which /analytics/closures excludes. That
+needs no network, so this script is not on the path to it.
+
+Kept, not deleted, for two reasons. The observation table is a real record of
+what the API said on those days, and running this by hand around 2026-11-07 --
+when the oldest stored posted_date, 10 June 2026, crosses day 150 -- would
+confirm the prediction against hirist's own flag rather than against our
+arithmetic. It still never writes cleaned_postings.
 
     python hirist_liveness_probe.py             # observe every hirist posting
     python hirist_liveness_probe.py --limit 5   # smoke test
@@ -77,7 +94,9 @@ def targets(conn, limit: int | None) -> list[tuple[int, str]]:
         cur.execute(
             """
             SELECT job_id, url
-              FROM cleaned_postings
+              -- url and source both live in posting_state since the
+              -- 2026-09-15 split. This still writes nothing here.
+              FROM posting_state
              WHERE source = 'hirist'
              ORDER BY job_id
              LIMIT %s

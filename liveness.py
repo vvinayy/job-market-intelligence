@@ -133,10 +133,31 @@ def hirist_job_code(url: str | None) -> str | None:
 def classify_hirist(status: int, payload: dict | None) -> str:
     """'expired', 'live' or 'unknown' from one detail-API response.
 
-    Same discipline as the Naukri rule: only positive evidence counts. A 404
-    means the job code names nothing, which is not the same as a posting that
-    expired -- and a payload without `hasExpired` is unknown rather than live,
-    so a change to the API's shape degrades into writing nothing.
+    NOT WIRED INTO liveness_checker.py, AND MUST NOT BE. `hasExpired` is a
+    clock, not an expiry event. Measured 2026-09-08 by sampling job codes from
+    2019 to 2026 and binary-searching the boundary: it flips at exactly 150
+    days after createdTime. 148 days reads False, 150 days reads True, no
+    exception in 41 samples. Real closures scatter -- some jobs fill in a
+    week, some run a year -- so a hard boundary on a round number is
+    arithmetic on the calendar, not a signal about the job.
+
+    This is exactly the doubt the 2026-09-02 census could not rule out. That
+    census compared postings scraped yesterday against job ids from 2021, and
+    an age field separates those two populations perfectly while saying
+    nothing about whether anything closed. The 40/40 result was real, and it
+    was measuring the date.
+
+    There is no second signal to corroborate with: `active`, `status` and
+    `state` all stay "1" on an expired posting, `hasExpired` is the only one
+    of 78 fields that differs, and the page's own `redirectedFromExpiredJD`
+    reads false in both states.
+
+    Kept because hirist_liveness_probe.py still calls it and because the rule's
+    shape is right -- it is the input that is worthless. Same discipline as the
+    Naukri rule: only positive evidence counts. A 404 means the job code names
+    nothing, which is not the same as a posting that expired -- and a payload
+    without `hasExpired` is unknown rather than live, so a change to the API's
+    shape degrades into writing nothing.
     """
     if status != 200 or not isinstance(payload, dict):
         return "unknown"

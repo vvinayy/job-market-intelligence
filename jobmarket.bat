@@ -166,12 +166,18 @@ echo ================================================== >> "%LOGFILE%"
 
 python liveness_checker.py >> "%LOGFILE%" 2>&1
 
-REM hirist has no HTTP expiry signal, so liveness_checker skips it. This
-REM records what the hasExpired rule WOULD conclude, into its own table --
-REM it never writes cleaned_postings, so it cannot affect closure metrics.
-REM Running nightly is the point: the rule is trusted once a posting is
-REM observed crossing from live to expired, which one census cannot show.
-python hirist_liveness_probe.py >> "%LOGFILE%" 2>&1
+REM hirist publishes no expiry signal at all. hasExpired was measured on
+REM 2026-09-08 to be a clock, not an event: it flips at exactly 150 days
+REM after createdTime, 148d reading False and 150d reading True with no
+REM exception in 41 samples spanning 2019 to 2026. It says nothing about
+REM whether a job closed, so the nightly probe is switched off. Five nights
+REM of it recorded nothing but "live" and could not have recorded anything
+REM else. The 150 days are acted on instead by mark_delisted_hirist() inside
+REM liveness_checker.py, which is arithmetic on posted_date and needs no
+REM network. Run hirist_liveness_probe.py by hand around 2026-11-07, when
+REM the oldest posted_date crosses day 150, to confirm that against their
+REM own flag rather than against our subtraction.
+REM python hirist_liveness_probe.py >> "%LOGFILE%" 2>&1
 
 echo Check finished: %date% %time% >> "%LOGFILE%"
 echo Liveness check complete. Log: %LOGFILE%
