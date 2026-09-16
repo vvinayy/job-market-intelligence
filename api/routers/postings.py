@@ -28,11 +28,11 @@ SORTABLE = {
     "salary_min": "c.salary_min",
     "salary_max": "c.salary_max",
     "openings": "c.openings",
-    "applicant_count": "c.applicant_count",
-    "times_seen": "c.times_seen",
+    "applicant_count": "sg.applicant_count",
+    "times_seen": "sg.times_seen",
     "first_seen": "c.first_seen_date",
-    "last_seen": "c.last_seen_date",
-    "expired_on": "c.expired_on",
+    "last_seen": "sg.last_seen_date",
+    "expired_on": "st.expired_on",
     "company": "c.company",
     "title": "c.title",
 }
@@ -74,11 +74,15 @@ BASE_SELECT = """
             '{}'
         ) AS cities,
         c.working_type, c.is_full_time, c.contract_type,
-        c.posted_date, c.openings, c.applicant_count, c.applicant_count_qualifier,
-        c.company_rating, c.company_reviews, c.url, c.source,
-        c.is_expired, c.expired_on,
+        c.posted_date, c.openings, sg.applicant_count, sg.applicant_count_qualifier,
+        sg.company_rating, sg.company_reviews, st.url, c.source,
+        st.is_expired, st.expired_on,
         COALESCE(c.description_foreign_cities, '{}') AS description_foreign_cities
+    -- Both satellites are 1:1 with the spine, so these joins neither drop nor
+    -- duplicate a row, and the COUNT below stays correct with the same pair.
     FROM cleaned_postings c
+    JOIN posting_state st ON st.job_id = c.job_id
+    JOIN posting_sightings sg ON sg.job_id = c.job_id
     LEFT JOIN role_categories rc ON rc.role_category_id = c.role_category_id
     LEFT JOIN departments d ON d.department_id = c.department_id
     LEFT JOIN industry_types it ON it.industry_type_id = c.industry_type_id
@@ -177,11 +181,11 @@ def build_filters(
 
     w.add("c.posted_date >= %s", posted_after)
     w.add("c.posted_date <= %s", posted_before)
-    w.add("c.last_seen_date >= %s", seen_after)
+    w.add("sg.last_seen_date >= %s", seen_after)
     w.add("c.openings >= %s", min_openings)
     # add() skips on `is None`, not on falsy, so ?is_expired=false works.
     # A never-checked posting is neither open nor closed and matches neither.
-    w.add("c.is_expired = %s", is_expired)
+    w.add("st.is_expired = %s", is_expired)
 
     # A flag, not a verdict: these postings are stored in full like any
     # other and only marked, so this filter exists to review them, never to
@@ -280,7 +284,9 @@ def list_postings(
     )
 
     total = fetch_value(
-        f"SELECT COUNT(*) FROM cleaned_postings c {w.sql}", w.values
+        f"SELECT COUNT(*) FROM cleaned_postings c "
+        f"JOIN posting_state st ON st.job_id = c.job_id "
+        f"JOIN posting_sightings sg ON sg.job_id = c.job_id {w.sql}", w.values
     ) or 0
 
     # NULLS LAST: Postgres sorts NULL largest, so a DESC date sort would
@@ -312,9 +318,9 @@ def get_posting(job_id: int):
         raise HTTPException(404, f"No posting with job_id {job_id}")
 
     extra = fetch_one("""
-        SELECT c.description,
+        SELECT ct.description,
                COALESCE(c.certifications, '{}') AS certifications,
-               COALESCE(c.company_badges, '{}') AS company_badges,
+               COALESCE(sg.company_badges, '{}') AS company_badges,
                c.source_search,
                COALESCE(
                    (SELECT array_agg(sk.skill_name ORDER BY sk.skill_name)
@@ -323,11 +329,16 @@ def get_posting(job_id: int):
                     WHERE ps.job_id = c.job_id),
                    '{}'
                ) AS preferred_skills,
-               c.first_seen_date, c.last_seen_date, c.times_seen,
-        c.is_expired, c.expired_on, c.last_checked_on,
+               c.first_seen_date, sg.last_seen_date, sg.times_seen,
+        st.is_expired, st.expired_on, st.last_checked_on,
         COALESCE(c.description_foreign_cities, '{}') AS description_foreign_cities,
-               (c.last_seen_date - c.first_seen_date) AS days_listed
+               (sg.last_seen_date - c.first_seen_date) AS days_listed
         FROM cleaned_postings c
+        JOIN posting_state st ON st.job_id = c.job_id
+        JOIN posting_sightings sg ON sg.job_id = c.job_id
+        -- LEFT: the description is the one satellite row that could be absent
+        -- if a posting were ever stored without one.
+        LEFT JOIN posting_content ct ON ct.job_id = c.job_id
         WHERE c.job_id = %s
     """, (job_id,)) or {}
 

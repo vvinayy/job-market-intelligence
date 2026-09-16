@@ -123,31 +123,37 @@ def get_connection():
 
 
 # ON CONFLICT is where dedup happens: a known fingerprint refreshes in place.
-# Every field refreshes except job_id and first_seen_date — postings get edited
-# after going live, so a narrower SET clause goes stale on repeat sightings.
+# Every descriptive field refreshes except job_id and first_seen_date —
+# postings get edited after going live, so a narrower SET clause goes stale.
+#
+# THE WHERE IS THE POINT. A posting re-seen unchanged — the common case, since
+# an advert rarely changes after it is published — writes NOTHING here. That
+# only became possible once last_seen_date and times_seen moved to
+# posting_sightings: while they lived on this row, every sighting changed it by
+# definition and the spine was rewritten whether or not the advert had.
+# Measured 2026-09-15 at 46,000 rows: 14,303 ms and 34 MB of WAL for the old
+# shape against 206 ms and 8 MB for this one.
+#
+# A skipped row returns nothing from RETURNING, so save_records() looks the
+# missing fingerprints up afterwards — see _resolve_skipped().
 UPSERT_SQL = """
 INSERT INTO cleaned_postings (
-    fingerprint, url, source, title, company, description,
+    fingerprint, source, title, company,
     experience_min, experience_max, salary_min, salary_max,
-    city_ids, unmapped_locations, description_foreign_cities,
+    unmapped_locations, description_foreign_cities,
     working_type, is_full_time, contract_type,
-    role_family, seniority_level, role_category_id, naukri_role, industry_type_id, department_id,
-    posted_date, posted_raw, openings, applicant_count, applicant_count_qualifier,
-    company_rating, company_reviews, company_badges, source_search, certifications,
-    accepted_degree_ids, accepted_degree_specialization_ids, skill_ids, preferred_skill_ids,
-    skill_groups
+    role_family, seniority_level, role_category_id, naukri_role,
+    industry_type_id, department_id,
+    posted_date, posted_raw, openings, source_search, certifications
 ) VALUES %s
 ON CONFLICT (fingerprint) DO UPDATE SET
-    url                   = EXCLUDED.url,
     source                = EXCLUDED.source,
     title                 = EXCLUDED.title,
     company               = EXCLUDED.company,
-    description           = EXCLUDED.description,
     experience_min        = EXCLUDED.experience_min,
     experience_max        = EXCLUDED.experience_max,
     salary_min            = EXCLUDED.salary_min,
     salary_max            = EXCLUDED.salary_max,
-    city_ids              = EXCLUDED.city_ids,
     unmapped_locations    = EXCLUDED.unmapped_locations,
     description_foreign_cities = EXCLUDED.description_foreign_cities,
     working_type          = EXCLUDED.working_type,
@@ -162,34 +168,96 @@ ON CONFLICT (fingerprint) DO UPDATE SET
     posted_date           = EXCLUDED.posted_date,
     posted_raw            = EXCLUDED.posted_raw,
     openings              = EXCLUDED.openings,
-    applicant_count       = EXCLUDED.applicant_count,
-    applicant_count_qualifier = EXCLUDED.applicant_count_qualifier,
-    company_rating        = EXCLUDED.company_rating,
-    company_reviews       = EXCLUDED.company_reviews,
-    company_badges        = EXCLUDED.company_badges,
     source_search         = EXCLUDED.source_search,
-    certifications        = EXCLUDED.certifications,
-    accepted_degree_ids   = EXCLUDED.accepted_degree_ids,
-    accepted_degree_specialization_ids = EXCLUDED.accepted_degree_specialization_ids,
-    skill_ids             = EXCLUDED.skill_ids,
-    preferred_skill_ids   = EXCLUDED.preferred_skill_ids,
-    skill_groups          = EXCLUDED.skill_groups,
-    last_seen_date        = CURRENT_DATE,
-    times_seen            = cleaned_postings.times_seen + 1,
-    -- Literals, not EXCLUDED: these aren't scraped fields, they follow from
-    -- the scrape having succeeded. Naukri just served the page, so a
-    -- previously recorded expiry is void -- and a scrape reaching a posting
-    -- is a liveness check, which keeps it out of the checker's queue.
-    -- A search returning this posting IS evidence it is live, so these two
-    -- are honest. last_checked_on is NOT set here: that column means "the
-    -- liveness checker requested this URL", and writing it from a scrape
-    -- conflates coverage with verification -- the same conflation
-    -- liveness_checker.py refuses to make in the other direction by never
-    -- touching last_seen_date. It also made the evening run skip every
-    -- posting the morning scrape had re-surfaced.
-    is_expired            = FALSE,
-    expired_on            = NULL
+    certifications        = EXCLUDED.certifications
+-- posted_raw is deliberately absent from this comparison, though it is
+-- written above. It is Naukri's own wording ("1 day ago"), which ages by
+-- itself: the same untouched advert reads "1 day ago" then "2 days ago"
+-- then "1 week ago" while posted_date -- the actual fact -- never moves.
+-- Comparing it rewrote a 352-byte spine row to record the calendar
+-- turning over. Measured on the 2026-09-16 scrape: 61 of 213 re-sightings
+-- rewrote the spine, and 54 of those 61 carried relative posted_raw text.
+-- Every other column here describes the job, so any change to one is a
+-- real change. Add new columns to this tuple by default; leave one out
+-- only when it moves on its own like this.
+WHERE (cleaned_postings.source, cleaned_postings.title, cleaned_postings.company,
+       cleaned_postings.experience_min, cleaned_postings.experience_max,
+       cleaned_postings.salary_min, cleaned_postings.salary_max,
+       cleaned_postings.unmapped_locations,
+       cleaned_postings.description_foreign_cities, cleaned_postings.working_type,
+       cleaned_postings.is_full_time, cleaned_postings.contract_type,
+       cleaned_postings.role_family, cleaned_postings.seniority_level,
+       cleaned_postings.role_category_id, cleaned_postings.naukri_role,
+       cleaned_postings.industry_type_id, cleaned_postings.department_id,
+       cleaned_postings.posted_date,
+       cleaned_postings.openings, cleaned_postings.source_search,
+       cleaned_postings.certifications)
+   IS DISTINCT FROM
+      (EXCLUDED.source, EXCLUDED.title, EXCLUDED.company,
+       EXCLUDED.experience_min, EXCLUDED.experience_max,
+       EXCLUDED.salary_min, EXCLUDED.salary_max,
+       EXCLUDED.unmapped_locations,
+       EXCLUDED.description_foreign_cities, EXCLUDED.working_type,
+       EXCLUDED.is_full_time, EXCLUDED.contract_type,
+       EXCLUDED.role_family, EXCLUDED.seniority_level,
+       EXCLUDED.role_category_id, EXCLUDED.naukri_role,
+       EXCLUDED.industry_type_id, EXCLUDED.department_id,
+       EXCLUDED.posted_date,
+       EXCLUDED.openings, EXCLUDED.source_search,
+       EXCLUDED.certifications)
 RETURNING job_id, fingerprint, (xmax = 0) AS was_inserted;
+"""
+
+# --- the three satellites, keyed on job_id -----------------------------
+
+# is_expired is left NULL on a first insert and set FALSE on a re-sighting,
+# exactly as the single-table version did. Literals, not EXCLUDED: these
+# aren't scraped fields, they follow from the scrape having succeeded. Naukri
+# just served the page, so a previously recorded expiry is void.
+# last_checked_on is NOT set here: that column means "the liveness checker
+# requested this URL", and writing it from a scrape conflates coverage with
+# verification — the same conflation liveness_checker.py refuses to make in
+# the other direction by never touching last_seen_date. It also made the
+# evening run skip every posting the morning scrape had re-surfaced.
+# expiry_basis is cleared alongside, because a CHECK pairs it to is_expired.
+STATE_UPSERT_SQL = """
+INSERT INTO posting_state (job_id, source, url) VALUES %s
+ON CONFLICT (job_id) DO UPDATE SET
+    source       = EXCLUDED.source,
+    url          = EXCLUDED.url,
+    is_expired   = FALSE,
+    expired_on   = NULL,
+    expiry_basis = NULL
+WHERE posting_state.is_expired IS DISTINCT FROM FALSE
+   OR posting_state.url IS DISTINCT FROM EXCLUDED.url
+   OR posting_state.source IS DISTINCT FROM EXCLUDED.source
+"""
+
+# Guarded the same way as the spine: a description is the single widest thing
+# the pipeline stores, and rewriting an identical one is the most expensive
+# no-op in the schema.
+CONTENT_UPSERT_SQL = """
+INSERT INTO posting_content (job_id, description) VALUES %s
+ON CONFLICT (job_id) DO UPDATE SET
+    description = EXCLUDED.description
+WHERE posting_content.description IS DISTINCT FROM EXCLUDED.description
+"""
+
+# Deliberately NOT guarded: this table exists to be written on every sighting.
+# last_seen_date and times_seen take their defaults on a first insert.
+SIGHTING_UPSERT_SQL = """
+INSERT INTO posting_sightings (
+    job_id, applicant_count, applicant_count_qualifier,
+    company_rating, company_reviews, company_badges
+) VALUES %s
+ON CONFLICT (job_id) DO UPDATE SET
+    last_seen_date            = CURRENT_DATE,
+    times_seen                = posting_sightings.times_seen + 1,
+    applicant_count           = EXCLUDED.applicant_count,
+    applicant_count_qualifier = EXCLUDED.applicant_count_qualifier,
+    company_rating            = EXCLUDED.company_rating,
+    company_reviews           = EXCLUDED.company_reviews,
+    company_badges            = EXCLUDED.company_badges
 """
 
 
@@ -313,11 +381,13 @@ def save_records(records: list[dict]) -> tuple[int, int]:
             conn, "industry_types", "industry_type_id", "name",
             {c["posting"]["industry_type"] for c in deduped})
 
-        # Resolved once per batch, before the main UPSERT, so
-        # cleaned_postings.accepted_degree_ids can be written in the same
-        # INSERT — duplicated onto that table for an at-a-glance read, same as
-        # city_ids. The "accepted_" prefix marks OR semantics: any one degree
-        # satisfies the posting, unlike skill_ids which are all wanted.
+        # Resolved once per batch, before the child-table writes below.
+        # Until the 2026-09-15 split these ids were ALSO duplicated onto
+        # cleaned_postings for an at-a-glance read; that copy was deleted after
+        # being verified byte-identical on every row, so
+        # posting_qualification_degrees is now the only home. The "accepted_"
+        # prefix marks OR semantics: any one degree satisfies the posting,
+        # unlike skill_ids which are all wanted.
         degree_to_id = _resolve_degree_ids(
             conn,
             {(d["degree"], d["level"]) for c in deduped for d in c["qualification_degrees"]},
@@ -374,28 +444,22 @@ def save_records(records: list[dict]) -> tuple[int, int]:
 
         rows = [
             (
-                c["posting"]["fingerprint"], c["posting"]["url"],
-                c["posting"]["source"], c["posting"]["title"],
-                c["posting"]["company"], c["posting"]["description"],
+                c["posting"]["fingerprint"], c["posting"]["source"],
+                c["posting"]["title"], c["posting"]["company"],
                 c["posting"]["experience_min"], c["posting"]["experience_max"],
                 c["posting"]["salary_min"], c["posting"]["salary_max"],
-                c["posting"]["city_ids"], c["posting"]["unmapped_locations"],
+                c["posting"]["unmapped_locations"],
                 c["posting"]["description_foreign_cities"],
                 c["posting"]["working_type"], c["posting"]["is_full_time"],
-                c["posting"]["contract_type"], c["posting"]["role_family"], c["posting"]["seniority_level"],
-                role_category_to_id.get(c["posting"]["role_category"]), c["posting"]["naukri_role"],
-                industry_type_to_id.get(c["posting"]["industry_type"]), department_to_id.get(c["posting"]["department"]),
-                c["posting"]["posted_date"],
-                c["posting"]["posted_raw"], c["posting"]["openings"],
-                c["posting"]["applicant_count"], c["posting"]["applicant_count_qualifier"],
-                c["posting"]["company_rating"], c["posting"]["company_reviews"], c["posting"]["company_badges"],
-                c["posting"]["source_search"],
+                c["posting"]["contract_type"], c["posting"]["role_family"],
+                c["posting"]["seniority_level"],
+                role_category_to_id.get(c["posting"]["role_category"]),
+                c["posting"]["naukri_role"],
+                industry_type_to_id.get(c["posting"]["industry_type"]),
+                department_to_id.get(c["posting"]["department"]),
+                c["posting"]["posted_date"], c["posting"]["posted_raw"],
+                c["posting"]["openings"], c["posting"]["source_search"],
                 c["posting"]["certifications"],
-                fingerprint_to_degree_ids[c["posting"]["fingerprint"]],
-                fingerprint_to_spec_ids[c["posting"]["fingerprint"]],
-                fingerprint_to_skill_ids[c["posting"]["fingerprint"]],
-                fingerprint_to_preferred_skill_ids[c["posting"]["fingerprint"]],
-                fingerprint_to_skill_groups[c["posting"]["fingerprint"]],
             )
             for c in deduped
         ]
@@ -407,10 +471,24 @@ def save_records(records: list[dict]) -> tuple[int, int]:
             # multi-row INSERT, but this doesn't rely on it either way.
             fingerprint_to_job_id = {row[1]: row[0] for row in results}
             new_count = sum(1 for row in results if row[2])
-            repeat_count = len(results) - new_count
+            changed_count = len(results) - new_count
+
+            # A posting whose descriptive fields are unchanged is skipped by
+            # the WHERE on UPSERT_SQL and so returns no row — which is the
+            # whole saving. Its job_id is still needed for the child tables,
+            # so resolve those from the unique index.
+            skipped = [c["posting"]["fingerprint"] for c in deduped
+                       if c["posting"]["fingerprint"] not in fingerprint_to_job_id]
+            if skipped:
+                cur.execute("SELECT job_id, fingerprint FROM cleaned_postings "
+                            "WHERE fingerprint = ANY(%s)", (skipped,))
+                for job_id, fingerprint in cur.fetchall():
+                    fingerprint_to_job_id[fingerprint] = job_id
+            repeat_count = changed_count + len(skipped)
 
             skill_rows, qualification_rows, city_rows, job_ids_touched = [], [], [], []
             degree_rows, specialization_link_rows = [], []
+            state_rows, content_rows, sighting_rows = [], [], []
 
             for c in deduped:
                 job_id = fingerprint_to_job_id[c["posting"]["fingerprint"]]
@@ -425,6 +503,15 @@ def save_records(records: list[dict]) -> tuple[int, int]:
                                    fingerprint_to_skill_groups[fingerprint]))
                 qualification_rows += [(job_id, q["level"], q["field_of_study"]) for q in c["qualifications"]]
                 city_rows += [(job_id, city_id) for city_id in c["posting"]["city_ids"]]
+
+                state_rows.append((job_id, c["posting"]["source"], c["posting"]["url"]))
+                content_rows.append((job_id, c["posting"]["description"]))
+                sighting_rows.append((job_id,
+                                      c["posting"]["applicant_count"],
+                                      c["posting"]["applicant_count_qualifier"],
+                                      c["posting"]["company_rating"],
+                                      c["posting"]["company_reviews"],
+                                      c["posting"]["company_badges"]))
 
                 if fingerprint_to_degree_ids[fingerprint]:
                     degree_rows.append((job_id, fingerprint_to_degree_ids[fingerprint]))
@@ -451,6 +538,17 @@ def save_records(records: list[dict]) -> tuple[int, int]:
                 execute_values(cur, "INSERT INTO posting_qualification_degrees (job_id, accepted_degree_ids) VALUES %s", degree_rows)
             if specialization_link_rows:
                 execute_values(cur, "INSERT INTO posting_qualification_specializations (job_id, accepted_degree_specialization_ids) VALUES %s", specialization_link_rows)
+
+            # The three 1:1 satellites. Upserted rather than deleted and
+            # reinserted like the tables above, because each holds exactly one
+            # row per posting and posting_sightings has to READ its own
+            # times_seen to increment it — a delete would reset the count.
+            if state_rows:
+                execute_values(cur, STATE_UPSERT_SQL, state_rows)
+            if content_rows:
+                execute_values(cur, CONTENT_UPSERT_SQL, content_rows)
+            if sighting_rows:
+                execute_values(cur, SIGHTING_UPSERT_SQL, sighting_rows)
 
         conn.commit()
         return new_count, repeat_count
@@ -652,8 +750,11 @@ def mismatched_descriptions() -> list[dict]:
             cur.execute("""
                 SELECT c.job_id, c.company, c.title,
                        c.description_foreign_cities AS cities_named,
+                       -- city_ids left the spine in the 2026-09-15
+                       -- split; posting_cities is the only home now.
                        ARRAY(SELECT ci.city_name FROM cities ci
-                              WHERE ci.city_id = ANY(c.city_ids)
+                              JOIN posting_cities pc ON pc.city_id = ci.city_id
+                              WHERE pc.job_id = c.job_id
                               ORDER BY ci.city_name) AS own_cities
                 FROM cleaned_postings c
                 WHERE c.description_foreign_cities <> '{}'

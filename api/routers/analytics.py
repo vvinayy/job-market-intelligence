@@ -50,24 +50,29 @@ def summary():
     row = fetch_one("""
         SELECT
             COUNT(*)::int                                          AS total_postings,
-            COUNT(*) FILTER (WHERE last_seen_date >= CURRENT_DATE - 7)::int
+            COUNT(*) FILTER (WHERE sg.last_seen_date >= CURRENT_DATE - 7)::int
                                                                    AS active_last_7_days,
-            COUNT(*) FILTER (WHERE first_seen_date >= CURRENT_DATE - 7)::int
+            COUNT(*) FILTER (WHERE c.first_seen_date >= CURRENT_DATE - 7)::int
                                                                    AS new_postings_7d,
             -- Verified liveness, not a coverage proxy. active_last_7_days
             -- above means "a search surfaced it recently", which says as much
             -- about what we scraped as about the posting.
-            COUNT(*) FILTER (WHERE is_expired IS FALSE)::int        AS still_open,
-            COUNT(*) FILTER (WHERE is_expired)::int                 AS closed,
-            COUNT(*) FILTER (WHERE is_expired IS NULL)::int         AS never_checked,
-            MAX(last_checked_on)                                    AS last_liveness_check,
-            COUNT(DISTINCT company)::int                           AS companies,
-            COUNT(DISTINCT role_family)::int                       AS distinct_roles,
-            COUNT(*) FILTER (WHERE salary_min IS NOT NULL)::int     AS postings_with_salary,
-            MIN(posted_date)                                       AS earliest_posting,
-            MAX(posted_date)                                       AS latest_posting,
-            MAX(openings)::int                                     AS max_openings
-        FROM cleaned_postings
+            COUNT(*) FILTER (WHERE st.is_expired IS FALSE)::int     AS still_open,
+            COUNT(*) FILTER (WHERE st.is_expired)::int              AS closed,
+            COUNT(*) FILTER (WHERE st.is_expired IS NULL)::int      AS never_checked,
+            MAX(st.last_checked_on)                                 AS last_liveness_check,
+            COUNT(DISTINCT c.company)::int                          AS companies,
+            COUNT(DISTINCT c.role_family)::int                      AS distinct_roles,
+            COUNT(*) FILTER (WHERE c.salary_min IS NOT NULL)::int   AS postings_with_salary,
+            MIN(c.posted_date)                                      AS earliest_posting,
+            MAX(c.posted_date)                                      AS latest_posting,
+            MAX(c.openings)::int                                    AS max_openings
+        -- last_seen_date and the expiry columns left the spine in the
+        -- 2026-09-15 split. Both satellites are 1:1, so an inner join neither
+        -- drops nor duplicates a row.
+        FROM cleaned_postings c
+        JOIN posting_sightings sg ON sg.job_id = c.job_id
+        JOIN posting_state st ON st.job_id = c.job_id
     """) or {}
 
     row["liveness_started_on"] = fetch_value(
@@ -123,7 +128,10 @@ def skill_demand(
     if not include_blocked:
         w.add_raw("sk.skill_name NOT IN (SELECT skill FROM skill_blocklist)")
     if open_only:
-        w.add_raw("c.is_expired IS NOT TRUE")
+        # EXISTS rather than a join: scope() is shared, and every caller
+        # would otherwise have to change its FROM clause too.
+        w.add_raw("EXISTS (SELECT 1 FROM posting_state s "
+                  "WHERE s.job_id = c.job_id AND s.is_expired IS NOT TRUE)")
 
     return fetch_all(f"""
         SELECT sk.skill_name AS name, COUNT(*)::int AS postings
@@ -425,9 +433,12 @@ def skill_choices(
     # that form cost 40 ms against 2.8 ms here, for identical output.
     return fetch_all("""
         WITH members AS (
-            SELECT c.job_id, g.ord, e.id::int AS skill_id
-            FROM cleaned_postings c,
-                 LATERAL jsonb_array_elements(c.skill_groups) WITH ORDINALITY g(grp, ord),
+            SELECT ps.job_id, g.ord, e.id::int AS skill_id
+            -- skill_groups lives only in posting_skills now; the spine's copy
+            -- was deleted in the 2026-09-15 split after being verified
+            -- byte-identical on every row.
+            FROM posting_skills ps,
+                 LATERAL jsonb_array_elements(ps.skill_groups) WITH ORDINALITY g(grp, ord),
                  LATERAL jsonb_array_elements_text(g.grp) e(id)
         ),
         sets AS (
@@ -459,10 +470,10 @@ def skill_flexibility(
     return fetch_all("""
         WITH per_skill AS (
             SELECT sk.skill_id, sk.skill_name,
-                   COUNT(*) FILTER (WHERE sk.skill_id = ANY(c.skill_ids))                     AS required,
-                   COUNT(*) FILTER (WHERE sk.skill_id = ANY(skill_group_ids(c.skill_groups))) AS alternative
-            FROM cleaned_postings c
-            JOIN skills sk ON sk.skill_id = ANY(c.skill_ids || skill_group_ids(c.skill_groups))
+                   COUNT(*) FILTER (WHERE sk.skill_id = ANY(ps.skill_ids))                     AS required,
+                   COUNT(*) FILTER (WHERE sk.skill_id = ANY(skill_group_ids(ps.skill_groups))) AS alternative
+            FROM posting_skills ps
+            JOIN skills sk ON sk.skill_id = ANY(ps.skill_ids || skill_group_ids(ps.skill_groups))
             WHERE sk.skill_name NOT IN (SELECT skill FROM skill_blocklist)
             GROUP BY sk.skill_id, sk.skill_name
         ),
@@ -477,11 +488,11 @@ def skill_flexibility(
             -- skills` ran 1,265 full table scans to produce 185 rows: 1,080 of
             -- them found nothing. Measured 1,645ms -> 359ms, same output.
             FROM (SELECT DISTINCT s AS skill_id
-                  FROM cleaned_postings c,
-                       unnest(skill_group_ids(c.skill_groups)) s) a
+                  FROM posting_skills ps,
+                       unnest(skill_group_ids(ps.skill_groups)) s) a
             JOIN LATERAL (
                 SELECT other.skill_name, COUNT(*) AS n
-                FROM cleaned_postings c, LATERAL jsonb_array_elements(c.skill_groups) grp
+                FROM posting_skills ps, LATERAL jsonb_array_elements(ps.skill_groups) grp
                 JOIN skills other ON other.skill_id IN (SELECT jsonb_array_elements_text(grp)::int)
                 WHERE a.skill_id IN (SELECT jsonb_array_elements_text(grp)::int)
                   AND other.skill_id <> a.skill_id
@@ -526,10 +537,13 @@ def flexibility_by_experience(
                 ELSE '10+ years'
             END AS bucket,
             COUNT(*)::int AS postings,
-            COUNT(*) FILTER (WHERE c.skill_groups <> '[]')::int AS offering_a_choice,
-            ROUND(100.0 * COUNT(*) FILTER (WHERE c.skill_groups <> '[]')
+            COUNT(*) FILTER (WHERE ps.skill_groups <> '[]')::int AS offering_a_choice,
+            ROUND(100.0 * COUNT(*) FILTER (WHERE ps.skill_groups <> '[]')
                   / COUNT(*), 1)::float AS pct_offering_a_choice
-        FROM cleaned_postings c {w.sql}
+        -- LEFT JOIN on purpose: a posting with no skills row is not offering a
+        -- choice, and must still count in the denominator.
+        FROM cleaned_postings c
+        LEFT JOIN posting_skills ps ON ps.job_id = c.job_id {w.sql}
         GROUP BY bucket
         HAVING COUNT(*) >= 5
         ORDER BY pct_offering_a_choice DESC
@@ -614,16 +628,36 @@ def closures(
                 -- Exposure opens when the posting appeared or when checking
                 -- began, whichever is later, and closes when the posting did.
                 GREATEST(
-                    LEAST(COALESCE(c.expired_on, CURRENT_DATE), CURRENT_DATE)
+                    LEAST(COALESCE(st.expired_on, CURRENT_DATE), CURRENT_DATE)
                     - GREATEST(c.first_seen_date, %s::date), 0) AS exposure_days,
-                (c.is_expired AND c.expired_on > %s::date) AS closed_in_window
+                (st.is_expired AND st.expired_on > %s::date) AS closed_in_window
             FROM cleaned_postings c
-            {w.sql}{" AND" if w.sql else "WHERE"} c.is_expired IS NOT NULL
+            JOIN posting_state st ON st.job_id = c.job_id
+            {w.sql}{" AND" if w.sql else "WHERE"} st.is_expired IS NOT NULL
+              -- Observed closures only. A 'delisted' row aged past hirist's
+              -- 150-day cutoff, which is a calendar tick, not an employer
+              -- filling a role -- and Naukri's real closures run 0 to 32 days
+              -- with a median of 17. Averaging the two would report the
+              -- difference between two boards' retention policies as a
+              -- market signal.
+              AND st.expiry_basis IS DISTINCT FROM 'delisted'
+              -- And only postings something actually verified. is_expired is
+              -- FALSE on any posting a scrape re-surfaced, checked or not, so
+              -- without this the denominator carried 141 hirist rows that
+              -- nothing has ever requested and nothing can ever close --
+              -- dragging the rate down from 21.0 to 16.7 per hundred.
+              -- last_checked_on means "the liveness checker requested this
+              -- URL", which is the honest test, and stays correct by itself
+              -- if hirist checking is ever added.
+              -- Keep per-cent signs out of comments in this file: psycopg2
+              -- scans the whole string for placeholders, comments included,
+              -- and a stray one shifts every positional parameter.
+              AND st.last_checked_on IS NOT NULL
               -- Already expired when the window opened: never at risk inside
               -- it, so it belongs to neither numerator nor denominator.
               -- Keeping it would date an unknown-age closure to day one and
               -- count it as an event of the window's length.
-              AND (c.expired_on IS NULL OR c.expired_on > %s::date)
+              AND (st.expired_on IS NULL OR st.expired_on > %s::date)
         )
         SELECT
             bucket,

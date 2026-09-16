@@ -106,6 +106,8 @@ BEGIN
         c.source,
         COUNT(DISTINCT c.job_id)
     FROM cleaned_postings c
+    -- last_seen_date moved to posting_sightings in the 2026-09-15 split.
+    JOIN posting_sightings sg ON sg.job_id = c.job_id
     JOIN posting_skills ps ON ps.job_id = c.job_id
     -- skill_ids holds only the outright requirements; a skill offered
     -- as one of several alternatives lives in skill_groups and is not
@@ -115,7 +117,7 @@ BEGIN
     -- today incomparable with every day before it.
     JOIN LATERAL unnest(ps.skill_ids || skill_group_ids(ps.skill_groups)) AS u(skill_id) ON true
     JOIN skills sk ON sk.skill_id = u.skill_id
-    WHERE c.last_seen_date = CURRENT_DATE
+    WHERE sg.last_seen_date = CURRENT_DATE
     -- Positional: 2 is skill_name, 3 is c.source.
     GROUP BY 2, 3
     ON CONFLICT (snapshot_date, skill, source) DO UPDATE

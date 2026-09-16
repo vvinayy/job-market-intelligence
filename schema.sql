@@ -106,6 +106,10 @@ DROP TABLE IF EXISTS education_degrees;
 DROP TABLE IF EXISTS posting_skills;
 DROP TABLE IF EXISTS skills;
 DROP TABLE IF EXISTS posting_cities;
+DROP TABLE IF EXISTS hirist_liveness_observations;
+DROP TABLE IF EXISTS posting_sightings;
+DROP TABLE IF EXISTS posting_content;
+DROP TABLE IF EXISTS posting_state;
 DROP TABLE IF EXISTS cleaned_postings;
 DROP TABLE IF EXISTS role_categories CASCADE;
 DROP TABLE IF EXISTS departments CASCADE;
@@ -153,65 +157,23 @@ $$;
 CREATE TABLE cleaned_postings (
     job_id                 BIGSERIAL PRIMARY KEY,
     fingerprint            TEXT NOT NULL UNIQUE,
-    url                    TEXT NOT NULL,
     -- Which job board this came from, derived from `url` by
-    -- cleaning.source_from_url() and stored rather than re-derived: every
-    -- aggregate in api/ runs off this table directly, and an ILIKE on a URL
-    -- can use no index. A small closed vocabulary we control -- we write the
-    -- collectors -- so a CHECK is enough, same call as working_type. Adding a
-    -- third board means one entry in SOURCE_HOSTS and one value here.
-    -- 'other' is deliberate: an unrecognised host is a real answer, and
-    -- folding it into 'naukri' would invent one.
+    -- cleaning.source_from_url() and stored rather than re-derived: an ILIKE
+    -- on a URL can use no index. A small closed vocabulary we control -- we
+    -- write the collectors -- so a CHECK is enough, same call as
+    -- working_type. Adding a third board means one entry in SOURCE_HOSTS and
+    -- one value here. 'other' is deliberate: an unrecognised host is a real
+    -- answer, and folding it into 'naukri' would invent one.
+    --
+    -- Duplicated onto posting_state as well, deliberately: the liveness queue
+    -- filters on it, and without a copy there that query would join back here
+    -- purely to read it -- measured 38 pages against 274. It never changes
+    -- after insert, and one upsert writes both.
     source                 TEXT NOT NULL DEFAULT 'other'
                                CHECK (source IN ('naukri', 'hirist', 'other')),
     title                  TEXT,
     company                TEXT,
 
-    -- Same facts as posting_qualification_degrees/specializations below
-    -- (education_degrees.degree_id / education_degree_specializations.
-    -- degree_specialization_id), duplicated directly here for an
-    -- at-a-glance read without a join — same reason city_ids is
-    -- duplicated onto this table alongside posting_cities. No FK here
-    -- (Postgres can't constrain individual array elements), same
-    -- application-level guarantee as every other array column on this
-    -- table. Named accepted_* rather than a bare noun: multiple ids
-    -- here mean "any one of these satisfies the posting" (OR), the
-    -- opposite of skill_ids below where multiple ids are genuinely all
-    -- wanted together — the name has to carry that distinction since
-    -- both are plain INT[] columns and look identical otherwise.
-    accepted_degree_ids                 INT[],
-    accepted_degree_specialization_ids  INT[],
-
-    -- Same facts as posting_skills below, duplicated here for the same
-    -- at-a-glance reason. Production computation runs off this table
-    -- directly, so every attribute that exists anywhere in this schema
-    -- needs to be reachable from cleaned_postings without a join.
-    -- ONLY the skills required outright. A skill the posting offers as
-    -- one of several alternatives is NOT here -- it lives in
-    -- skill_groups instead, so no skill is ever listed twice. The full
-    -- set a posting would accept is therefore
-    --     skill_ids || skill_group_ids(skill_groups)
-    -- and anything meaning "every skill mentioned" must use that union:
-    -- the daily snapshot and the preferred-subset CHECK both do.
-    skill_ids                  INT[] NOT NULL DEFAULT '{}',
-    preferred_skill_ids        INT[] NOT NULL DEFAULT '{}',
-    -- The alternatives: [[96,476,614],[50,131]] means "any one cloud
-    -- AND any one build tool", not all five.
-    --
-    -- JSONB rather than INT[][] because Postgres multidimensional
-    -- arrays must be rectangular -- groups have different sizes, so
-    -- ARRAY[[96,476,614],[50,131]] is rejected outright. Nesting inside
-    -- skill_ids itself was considered and rejected: it would break
-    -- `= ANY(skill_ids)` everywhere, the GIN index, and the
-    -- preferred_skill_ids <@ skill_ids constraint. Same reasoning as
-    -- preferred_skill_ids, which also annotates a subset from its own
-    -- column rather than nesting.
-    --
-    -- Heuristic (skill_taxonomy.find_skill_choice_groups) -- about three
-    -- in four groups are right. '[]' means none were detected, NOT that
-    -- none exist. Derived purely from `description`, so it can be
-    -- recomputed for every row at any time.
-    skill_groups               JSONB NOT NULL DEFAULT '[]',
     -- Mined from description text via skill_taxonomy.extract_certifications()
     -- — a credential someone holds, a different kind of signal from a
     -- tool/language skill, kept separate from posting_skills rather
@@ -223,7 +185,6 @@ CREATE TABLE cleaned_postings (
     salary_min              NUMERIC,
     salary_max              NUMERIC,
 
-    city_ids                INT[],
     unmapped_locations      TEXT[],
 
     -- Cities the description names when it names none of this posting's own
@@ -236,6 +197,11 @@ CREATE TABLE cleaned_postings (
     -- always written in full and marked, and a human decides. Recomputed on
     -- every sighting, so it clears itself the moment Naukri serves the right
     -- description.
+    --
+    -- Stays HERE rather than moving to posting_content with the description
+    -- it is derived from: it is 13 bytes, and ?description_flagged= filters
+    -- list queries on it. Moving it would put the widest table in the schema
+    -- on the list path to read one small array.
     description_foreign_cities TEXT[],
 
     -- Closed, stable vocabularies -- cleaning.py already collapses every
@@ -243,9 +209,7 @@ CREATE TABLE cleaned_postings (
     -- (normalize_working_type / EMPLOYMENT_TYPES / CONTRACT_TYPES), so a
     -- CHECK constraint is enough to guard against a bug in that code; a
     -- reference table would only add a JOIN for a vocabulary this small
-    -- and this unlikely to grow. EMPLOYMENT_TYPES still normalises the
-    -- spellings even though the column below is a boolean -- the collapse
-    -- happens before the True/False decision, not instead of it.
+    -- and this unlikely to grow.
     working_type            TEXT CHECK (working_type IN ('On-site', 'Hybrid', 'Remote')),
     -- Two values and no prospect of a third, so a boolean rather than
     -- TEXT + CHECK. contract_type stays TEXT: it already carries five.
@@ -269,104 +233,134 @@ CREATE TABLE cleaned_postings (
     department_id            INT REFERENCES departments(department_id),
     industry_type_id         INT REFERENCES industry_types(industry_type_id),
 
-    description            TEXT,
-    -- NOTE: description_hash used to sit here. Deduplication is by
-    -- `fingerprint` (company + title + location + experience), so the
-    -- hash never distinguished a posting from another -- it only sped up
-    -- the ad-hoc "which postings share verbatim JD text" query, whose
-    -- index was never once scanned. That query still works without it:
-    --   SELECT md5(description) FROM cleaned_postings
-    --     GROUP BY 1 HAVING COUNT(DISTINCT company) > 1
-    -- Postgres cannot btree-index `description` directly (rows exceed the
-    -- 2704-byte limit), so if it ever needs an index again, index
-    -- md5(description) as an expression rather than storing a column.
-    -- NOTE: responsibilities_text / requirements_text used to sit here.
-    -- They are a pure function of `description` (cleaning.py::
-    -- split_description_sections), verified byte-identical on every row,
-    -- so storing them cost ~24% of the table to duplicate text already
-    -- present in the column above. The API computes them per posting at
-    -- read time instead. Don't re-add them as columns.
-
     posted_date               DATE,
     posted_raw                TEXT,
     openings                  INT,
-    -- Naukri shows this three ways: a plain exact number ("44"), a
-    -- floor once past some threshold ("100+"), or a ceiling for very
-    -- new postings ("Less than 10"). applicant_count is always the
-    -- digit found either way; applicant_count_qualifier records which
-    -- direction the ambiguity runs — NULL means the number was exact,
-    -- not that the qualifier is unknown. 'at_least'/'less_than' point
-    -- opposite directions, so collapsing both into a bare int the way
-    -- an earlier version of this column did would be actively wrong
-    -- for the 'less_than' case, not just imprecise.
-    applicant_count           INT,
-    applicant_count_qualifier TEXT,
-
-    -- Shown inline in the posting header, sourced from AmbitionBox — no
-    -- separate company-profile page visit needed. company_reviews is
-    -- Naukri's own rounded figure ("50.5K Reviews") expanded from its
-    -- K/M shorthand, not a more precise count than the source has.
-    company_rating             NUMERIC,
-    company_reviews            INT,
-    -- Recognition badges from the inline "About the company" block
-    -- (e.g. "Fortune India 500 (2023)", "Highly Rated by Women").
-    -- Confirmed from raw HTML that short entries like "TOP" are
-    -- genuinely what Naukri shows, not a truncation artifact.
-    company_badges             TEXT[],
 
     -- Which jobmarket.bat search URL surfaced this posting —
     -- lets a query answer "which searches are actually productive"
     -- instead of only ever seeing the merged result.
     source_search             TEXT,
-    first_seen_date          DATE NOT NULL DEFAULT CURRENT_DATE,
-    last_seen_date           DATE NOT NULL DEFAULT CURRENT_DATE,
-    times_seen                INT NOT NULL DEFAULT 1,
+    first_seen_date          DATE NOT NULL DEFAULT CURRENT_DATE
+);
 
-    -- Liveness, written by liveness_checker.py. A search never surfaces an
-    -- expired posting, so nothing else in the pipeline can ever reach these
-    -- rows -- the checker visits stored URLs directly.
+-- Only three indexes here, down from nine. Five were GIN indexes over array
+-- columns that were byte-identical copies of the child tables and had never
+-- been scanned once; they went with their columns in the 2026-09-15 split.
+-- The liveness index moved to posting_state, which now holds what it covers.
+CREATE INDEX IF NOT EXISTS idx_cleaned_postings_source
+    ON cleaned_postings (source);
+
+
+-- ---------------------------------------------------------------------
+-- THE THREE SATELLITES — one row per posting each, split off by how
+-- often they are WRITTEN rather than by what they mean.
+--
+-- Measured on 920 live rows before the split: the spine carried 1,194
+-- bytes over 45 columns at 4.4 rows per 8 kB page, so a scrape that only
+-- bumped last_seen_date rewrote a ~2,230-byte tuple. Afterwards the spine
+-- is 352 bytes and a re-sighting writes ~77. See ARCHITECTURE.md §3.
+-- ---------------------------------------------------------------------
+
+-- Liveness, written by liveness_checker.py. A search never surfaces an
+-- expired posting, so nothing else in the pipeline can ever reach these rows
+-- -- the checker visits stored URLs directly, which is why url lives here
+-- beside the columns it writes.
+CREATE TABLE posting_state (
+    job_id          BIGINT PRIMARY KEY
+                    REFERENCES cleaned_postings(job_id) ON DELETE CASCADE,
+    source          TEXT NOT NULL CHECK (source IN ('naukri', 'hirist', 'other')),
+    url             TEXT NOT NULL,
     -- NULL = never checked, which must stay distinct from FALSE = checked
     -- and alive. Same three-state shape as is_full_time; never test for
     -- truthiness.
-    is_expired               BOOLEAN,
+    is_expired      BOOLEAN,
     -- The date we CONFIRMED expiry, not the date it expired -- Naukri never
     -- says the latter. The gap to last_checked_on is the measurement error.
-    expired_on               DATE,
-    last_checked_on          DATE,
-
-    -- Checked against the UNION, not skill_ids alone: a starred skill
-    -- can be one of a choice group (12 rows are), in which case it sits
-    -- in skill_groups rather than skill_ids.
-    CONSTRAINT cleaned_postings_preferred_subset_of_skills
-        CHECK (preferred_skill_ids <@ (skill_ids || skill_group_ids(skill_groups))),
-
+    expired_on      DATE,
+    last_checked_on DATE,
+    -- 'observed' = a real closure the checker saw. 'delisted' = aged past
+    -- hirist's 150-day cutoff, which is a calendar tick and NOT a closure.
+    -- /analytics/closures reads 'observed' only.
+    expiry_basis    TEXT CHECK (expiry_basis IS NULL
+                                OR expiry_basis IN ('observed', 'delisted')),
     -- An expiry date on a posting that isn't expired is a bug, not a state.
-    CONSTRAINT cleaned_postings_expired_on_requires_expired
-        CHECK (expired_on IS NULL OR is_expired IS TRUE)
+    CONSTRAINT posting_state_expired_on_requires_expired
+        CHECK (expired_on IS NULL OR is_expired IS TRUE),
+    -- Paired so neither half can be written without the other.
+    CONSTRAINT posting_state_basis_pairs_with_expired
+        CHECK ((is_expired IS TRUE) = (expiry_basis IS NOT NULL))
 );
 
-CREATE INDEX IF NOT EXISTS idx_cleaned_postings_accepted_degree_ids
-    ON cleaned_postings USING GIN (accepted_degree_ids);
-CREATE INDEX IF NOT EXISTS idx_cleaned_postings_accepted_degree_specialization_ids
-    ON cleaned_postings USING GIN (accepted_degree_specialization_ids);
-CREATE INDEX IF NOT EXISTS idx_cleaned_postings_skill_ids
-    ON cleaned_postings USING GIN (skill_ids);
--- Two indexes because the two query shapes need different opclasses:
--- the expression index answers "does this posting offer skill 96 as an
--- option" (= ANY / &&), the jsonb_path_ops one answers "which postings
--- offer exactly this SET" (@>). The expression index is only possible
--- because skill_group_ids() is IMMUTABLE.
-CREATE INDEX IF NOT EXISTS idx_cleaned_postings_skill_group_ids
-    ON cleaned_postings USING GIN (skill_group_ids(skill_groups));
-CREATE INDEX IF NOT EXISTS idx_cleaned_postings_skill_groups
-    ON cleaned_postings USING GIN (skill_groups jsonb_path_ops);
--- Partial: the checker's queue is "not already dead, not already done
--- today", and the dead half of the table grows without ever being queried.
-CREATE INDEX IF NOT EXISTS idx_cleaned_postings_source
-    ON cleaned_postings (source);
-CREATE INDEX IF NOT EXISTS idx_cleaned_postings_liveness
-    ON cleaned_postings (last_checked_on)
+-- The checker's queue is "not already dead, not already done today", and the
+-- dead half of the table grows without ever being queried -- hence partial.
+-- source is in the key because the queue is Naukri-only.
+CREATE INDEX IF NOT EXISTS idx_posting_state_queue
+    ON posting_state (source, last_checked_on)
     WHERE is_expired IS NOT TRUE;
+
+
+-- 466 of the old row's 1,194 bytes, read on the detail path alone.
+--
+-- NOTE: description_hash used to sit beside this. Deduplication is by
+-- `fingerprint` (company + title + location + experience), so the hash never
+-- distinguished a posting from another -- it only sped up the ad-hoc "which
+-- postings share verbatim JD text" query, whose index was never once scanned.
+-- That query still works without it:
+--   SELECT md5(description) FROM posting_content
+--     JOIN cleaned_postings USING (job_id) GROUP BY 1 HAVING COUNT(DISTINCT company) > 1
+-- Postgres cannot btree-index `description` directly (rows exceed the
+-- 2704-byte limit), so if it ever needs an index again, index md5(description)
+-- as an expression rather than storing a column.
+--
+-- NOTE: responsibilities_text / requirements_text used to sit here too. They
+-- are a pure function of `description` (cleaning.py::split_description_sections),
+-- verified byte-identical on every row, so storing them cost ~24% of the table
+-- to duplicate text already present. The API computes them at read time.
+-- Don't re-add them as columns.
+CREATE TABLE posting_content (
+    job_id      BIGINT PRIMARY KEY
+                REFERENCES cleaned_postings(job_id) ON DELETE CASCADE,
+    description TEXT
+);
+
+
+-- Everything a re-sighting changes, and nothing else. This is the only table
+-- a daily scrape writes when the advert itself has not changed.
+CREATE TABLE posting_sightings (
+    job_id                    BIGINT PRIMARY KEY
+                              REFERENCES cleaned_postings(job_id) ON DELETE CASCADE,
+    last_seen_date            DATE NOT NULL DEFAULT CURRENT_DATE,
+    times_seen                INT NOT NULL DEFAULT 1,
+    -- Naukri shows this three ways: a plain exact number ("44"), a floor once
+    -- past some threshold ("100+"), or a ceiling for very new postings ("Less
+    -- than 10"). applicant_count is always the digit found either way;
+    -- applicant_count_qualifier records which direction the ambiguity runs --
+    -- NULL means the number was exact, not that the qualifier is unknown.
+    -- 'at_least'/'less_than' point opposite directions, so collapsing both
+    -- into a bare int would be actively wrong for the 'less_than' case.
+    applicant_count           INT,
+    applicant_count_qualifier TEXT,
+    -- Shown inline in the posting header, sourced from AmbitionBox.
+    -- company_reviews is Naukri's own rounded figure ("50.5K Reviews")
+    -- expanded from its K/M shorthand, not a more precise count than the
+    -- source has. These sit here rather than on a companies table because
+    -- they are observations at scrape time: measured 2026-09-15, 458
+    -- companies produced 556 distinct (company, rating, reviews) triples, so
+    -- the same company carries different ratings across postings.
+    company_rating            NUMERIC,
+    company_reviews           INT,
+    -- Recognition badges from the inline "About the company" block
+    -- (e.g. "Fortune India 500 (2023)", "Highly Rated by Women").
+    -- Confirmed from raw HTML that short entries like "TOP" are
+    -- genuinely what Naukri shows, not a truncation artifact.
+    company_badges            TEXT[]
+);
+
+-- snapshot_daily_skills() selects the postings seen today; a sequential scan
+-- of the spine was 416 pages.
+CREATE INDEX IF NOT EXISTS idx_posting_sightings_last_seen
+    ON posting_sightings (last_seen_date);
 
 
 -- ---------------------------------------------------------------------
@@ -433,7 +427,20 @@ CREATE TABLE posting_skills (
         CHECK (preferred_skill_ids <@ (skill_ids || skill_group_ids(skill_groups)))
 );
 
+-- Two indexes because the two query shapes need different opclasses: the
+-- expression index answers "does this posting offer skill 96 as an option"
+-- (= ANY / &&), the jsonb_path_ops one answers "which postings offer exactly
+-- this SET" (@>). The expression index is only possible because
+-- skill_group_ids() is IMMUTABLE. ?skill= is deliberately written as two
+-- separate && tests OR'd together so both can be used -- concatenating first
+-- builds a new array per row and no index can cover it, measured 14x slower.
 CREATE INDEX IF NOT EXISTS idx_posting_skills_skill_ids ON posting_skills USING GIN (skill_ids);
+-- Containment cannot be split the way overlap can: "all of these, in a OR b"
+-- is not "all in a, or all in b". So ?skills_all= must use the concatenation,
+-- and only an index over exactly that expression can serve it -- proven
+-- 2026-09-15, it sequential-scans even with enable_seqscan off without this.
+CREATE INDEX IF NOT EXISTS idx_posting_skills_all
+    ON posting_skills USING GIN ((skill_ids || skill_group_ids(skill_groups)));
 CREATE INDEX IF NOT EXISTS idx_posting_skills_skill_group_ids
     ON posting_skills USING GIN (skill_group_ids(skill_groups));
 
@@ -588,3 +595,34 @@ CREATE TABLE IF NOT EXISTS liveness_runs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_liveness_runs_started_at ON liveness_runs (started_at);
+
+
+-- ---------------------------------------------------------------------
+-- HIRIST_LIVENESS_OBSERVATIONS - what a hirist check WOULD have concluded.
+--
+-- The rule (liveness.classify_hirist) turned out to be a 150-day clock rather
+-- than a closure signal, so it is NOT wired into liveness_checker.py and must
+-- not be. This table stays because the probe writes here and nowhere else: a
+-- wrong rule costs a wrong row in an observation log rather than a fabricated
+-- closure that then counts as exposure in /analytics/closures.
+--
+-- One row per posting per day. Added to schema.sql on 2026-09-15; before that
+-- it existed only in migrations/2026-09-03-hirist-liveness-observations.sql,
+-- so a fresh install silently lacked it.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS hirist_liveness_observations (
+    observed_on   DATE   NOT NULL DEFAULT CURRENT_DATE,
+    job_id        BIGINT NOT NULL REFERENCES cleaned_postings(job_id) ON DELETE CASCADE,
+    job_code      TEXT,
+    http_status   INT,
+    -- The raw field, kept beside the verdict it produced. NULL means the
+    -- payload did not carry it, which is not the same as false.
+    has_expired   BOOLEAN,
+    verdict       TEXT NOT NULL CHECK (verdict IN ('expired', 'live', 'unknown')),
+    PRIMARY KEY (observed_on, job_id)
+);
+
+-- "Has this posting's verdict changed?" is the only question this table is
+-- for, and it is asked per posting across dates.
+CREATE INDEX IF NOT EXISTS idx_hirist_obs_job
+    ON hirist_liveness_observations (job_id, observed_on);

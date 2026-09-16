@@ -28,7 +28,10 @@ exposure-adjusted rate depends on it -- days before it are not exposure,
 because nothing was checking then. Measured against first_seen_date instead,
 the denominator came out 8,280 posting-days against 1,806 real ones.
 
-On cleaned_postings it writes only is_expired / expired_on / last_checked_on.
+It writes only to posting_state: is_expired / expired_on / last_checked_on /
+expiry_basis. Since the 2026-09-15 split those live there rather than on
+cleaned_postings, alongside the url this checker requests — so its queue is one
+narrow table and needs no join.
 It never touches posting content, and never bumps last_seen_date -- that column means "a search
 surfaced this", and conflating it with "we verified the URL" would destroy the
 ability to tell scraper coverage from direct verification.
@@ -69,6 +72,12 @@ REQUEST_TIMEOUT = 30
 # valve: that one catches "everything died", this catches "nothing answered".
 IMPLAUSIBLE_UNKNOWN_RATE = 0.25
 
+# hirist stops serving a listing this many days after it was created. Measured
+# 2026-09-08 by binary search on their own hasExpired flag: 148 days reads
+# False, 150 days reads True, no exception in 41 samples spanning 2019 to 2026.
+# Their number, not ours -- if they change it, this is the line to change.
+HIRIST_DELIST_DAYS = 150
+
 
 def _connect():
     return psycopg2.connect(
@@ -90,7 +99,9 @@ def due_for_check(conn, limit: int | None) -> list[tuple[int, str]]:
         cur.execute(
             """
             SELECT job_id, url
-              FROM cleaned_postings
+              -- posting_state since the 2026-09-15 split: url, source and the
+              -- expiry columns in one narrow table, so this needs no join.
+              FROM posting_state
              WHERE is_expired IS NOT TRUE
                AND (last_checked_on IS NULL OR last_checked_on < CURRENT_DATE)
                -- Naukri only. The whole detection rule is one measured fact --
@@ -139,11 +150,15 @@ def _apply(conn, expired: list[int], live: list[int]) -> None:
         if expired:
             cur.execute(
                 """
-                UPDATE cleaned_postings
+                UPDATE posting_state
                    SET is_expired = TRUE,
                        -- Only on the first confirmation: re-confirming a dead
                        -- posting must not move the date later every day.
                        expired_on = COALESCE(expired_on, CURRENT_DATE),
+                       -- This checker only ever sees Naukri's expJD redirect,
+                       -- which is a closure event rather than a delisting
+                       -- clock. Required: a CHECK pairs the two columns.
+                       expiry_basis = 'observed',
                        last_checked_on = CURRENT_DATE
                  WHERE job_id = ANY(%s)
                 """,
@@ -152,13 +167,51 @@ def _apply(conn, expired: list[int], live: list[int]) -> None:
         if live:
             cur.execute(
                 """
-                UPDATE cleaned_postings
+                UPDATE posting_state
                    SET is_expired = FALSE, expired_on = NULL,
+                       expiry_basis = NULL,
                        last_checked_on = CURRENT_DATE
                  WHERE job_id = ANY(%s)
                 """,
                 (live,),
             )
+
+
+def mark_delisted_hirist(conn) -> int:
+    """Expire hirist postings that have aged past the board's own cutoff.
+
+    No network call: hirist's hasExpired is arithmetic on createdTime, flipping
+    at exactly 150 days (measured 2026-09-08, 148d False and 150d True with no
+    exception in 41 samples from 2019 to 2026), and posted_date carries that
+    same instant rendered in IST. Asking the API would only ask it to do this
+    subtraction for us.
+
+    Recorded as 'delisted', never 'observed'. hirist is not telling us the job
+    was filled -- it is telling us the listing aged out. Naukri closures by
+    contrast scatter from 0 to 32 days with a median of 17, so averaging the
+    two would compare an event against a calendar. /analytics/closures reads
+    'observed' only, for that reason.
+
+    Deliberately NOT setting last_checked_on: that column means "the checker
+    requested this URL", and nothing here made a request.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE posting_state s
+               SET is_expired   = TRUE,
+                   expired_on   = c.posted_date + %s,
+                   expiry_basis = 'delisted'
+              FROM cleaned_postings c
+             WHERE c.job_id = s.job_id
+               AND s.source = 'hirist'
+               AND c.posted_date IS NOT NULL
+               AND s.is_expired IS NOT TRUE
+               AND CURRENT_DATE >= c.posted_date + %s
+            """,
+            (HIRIST_DELIST_DAYS, HIRIST_DELIST_DAYS),
+        )
+        return cur.rowcount
 
 
 def _log_expired(conn, expired: list[int]) -> None:
@@ -173,15 +226,17 @@ def _log_expired(conn, expired: list[int]) -> None:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT job_id, COALESCE(company, '?'), COALESCE(title, '?'),
-                   COALESCE(role_family, 'Uncategorised'),
+            SELECT c.job_id, COALESCE(c.company, '?'), COALESCE(c.title, '?'),
+                   COALESCE(c.role_family, 'Uncategorised'),
                    -- Days since WE first saw it, not how long Naukri listed
                    -- it: the posting predates our discovery by an unknown
                    -- amount, so this is an upper bound on observed lifetime.
-                   CURRENT_DATE - first_seen_date, url
-              FROM cleaned_postings
-             WHERE job_id = ANY(%s)
-             ORDER BY role_family NULLS LAST, company
+                   CURRENT_DATE - c.first_seen_date, s.url
+              FROM cleaned_postings c
+              -- url moved to posting_state in the 2026-09-15 split.
+              JOIN posting_state s ON s.job_id = c.job_id
+             WHERE c.job_id = ANY(%s)
+             ORDER BY c.role_family NULLS LAST, c.company
             """,
             (expired,),
         )
@@ -251,6 +306,18 @@ def main(limit: int | None) -> int:
         print(f"[liveness] Could not read the work queue: {exc}")
         conn.close()
         return 1
+
+    # Before the early return below: this is arithmetic, not a check, so it
+    # must still run on a night when no Naukri URL is due.
+    try:
+        delisted = mark_delisted_hirist(conn)
+        conn.commit()
+        if delisted:
+            print(f"[liveness] {delisted} hirist posting(s) passed "
+                  f"{HIRIST_DELIST_DAYS} days and were marked delisted.")
+    except psycopg2.Error as exc:
+        conn.rollback()
+        print(f"[liveness] Could not mark delisted hirist postings: {exc}")
 
     if not targets:
         print("[liveness] Nothing due for a check.")
