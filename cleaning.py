@@ -178,6 +178,68 @@ SKILL_ALIASES = {
     "java full stack": "Java Fullstack",
     "object oriented programming": "Object-Oriented Programming",
     "pl/sql": "PL/SQL", "pl sql": "PL/SQL", "plsql": "PL/SQL",
+
+    # CAD/PLM chip spellings, added 2026-09-09. These come from Naukri's own
+    # tags on real Dassault postings, so they are what the board actually
+    # emits rather than what it ought to: "Solid Works" and "SolidWorks" both
+    # appear, and _initcap alone would file them as two separate skills.
+    "catia": "CATIA", "catia v5": "CATIA", "catia v6": "CATIA",
+    "solid works": "SolidWorks", "solidworks": "SolidWorks",
+    "ug nx": "NX", "unigraphics": "NX", "nx unigraphics": "NX", "siemens nx": "NX",
+    "creo": "Creo", "pro-e": "Creo", "pro e": "Creo", "ptc creo": "Creo",
+    "creo parametric": "Creo", "ptc creo parametric": "Creo",
+    "autocad": "AutoCAD", "auto cad": "AutoCAD",
+    "solid edge": "Solid Edge", "solidedge": "Solid Edge",
+    "inventor": "Autodesk Inventor", "autodesk inventor": "Autodesk Inventor",
+    "enovia": "ENOVIA", "matrixone": "ENOVIA",
+    "3dexperience": "3DEXPERIENCE", "3d experience": "3DEXPERIENCE",
+    "teamcenter": "Teamcenter", "windchill": "Windchill",
+    "mql": "MQL", "jpo": "JPO", "pdm": "PDM", "plm": "PLM",
+    "tcl": "Tcl", "tcl/tk": "Tcl",
+    # Bare "nx" is deliberately NOT an alias: Cisco's NX-OS would collide with
+    # it in the IT corpus. Naukri tags the CAD product as "Ug Nx" anyway.
+    "bom": "BOM", "ebom": "BOM", "mbom": "BOM",
+    "abaqus": "Abaqus", "simulia": "SIMULIA", "ansys": "Ansys",
+    "isight": "Isight", "fe-safe": "fe-safe", "fesafe": "fe-safe",
+    "fea": "FEA", "finite element analysis": "FEA", "cae": "CAE",
+    "delmia": "DELMIA", "delmia apriso": "DELMIA", "apriso": "Apriso",
+    "quintiq": "Quintiq", "mes": "MES",
+    "mbse": "MBSE", "sysml": "SysML", "reqtify": "Reqtify", "doors": "DOORS",
+    "gd&t": "GD&T", "gd and t": "GD&T",
+    "sheet metal design": "Sheet Metal Design", "sheet metal": "Sheet Metal Design",
+
+    # --- Duplicate spellings collapsed 2026-09-16 ----------------------
+    # skills auto-registers whatever normalize_skill() emits, so any name
+    # NOT listed here registers as its own row via the _initcap fallback --
+    # which is how one skill ends up stored two or three times. These pair
+    # with migrations/2026-09-16-merge-duplicate-skill-spellings.sql, which
+    # collapses the rows already written. Adding an alias without running
+    # that migration widens the split instead of closing it.
+    #
+    # Folding into a name that already carries a category, so the merge
+    # fixes the category gap at the same time:
+    "iac terraform": "Terraform",
+    "snowflake db": "Snowflake",
+    "django framework": "Django", "django web framework": "Django",
+    "data build tool": "dbt",
+    "reacts js": "React",
+    "restapi": "REST API",
+    "rabbitmq.": "RabbitMQ",
+    "ml ops": "MLOps",
+    "datalake": "Data Lake",
+    # Folding between rows that are both uncategorised -- pure spelling.
+    # The canonical is the spelling already holding the most postings, not
+    # the prettiest one: renaming a skill means rewriting skills.skill_name
+    # too, which is a bigger change than this is worth.
+    "ci cd pipeline": "Ci/Cd Pipeline", "ci/cd pipelines": "Ci/Cd Pipeline",
+    "cybersecurity": "Cyber Security",
+    "cloud watch": "Cloudwatch",
+    "event bridge": "Eventbridge",
+    "pl-sql": "PL/SQL",
+    "reactnative": "React Native",
+    "ab testing": "A/B Testing",
+    "sales force development": "Salesforce Development",
+    "java full stack developer": "Java Fullstack Developer",
 }
 
 
@@ -312,6 +374,74 @@ SKILL_CATEGORIES = {
     # Testing
     "NUnit": "Testing", "JUnit": "Testing", "pytest": "Testing", "Selenium": "Testing",
     "Jest": "Testing",
+
+    # CAD — added 2026-09-09 with the Dassault pipeline. Without a category
+    # here an auto-registered chip lands with category NULL, which is what put
+    # 1,399 of 1,543 existing skills in that state.
+    "CATIA": "CAD", "SolidWorks": "CAD", "NX": "CAD", "Creo": "CAD",
+    "AutoCAD": "CAD", "Autodesk Inventor": "CAD", "Solid Edge": "CAD",
+    # Tcl scripts the ENOVIA trigger layer, so it arrives on PLM postings as
+    # a chip. It is a language, not a CAD tool, and belongs with the others.
+    "Tcl": "Languages",
+    "CAA": "CAD", "EKL": "CAD", "GD&T": "CAD", "Sheet Metal Design": "CAD",
+    "Surface Modeling": "CAD", "Reverse Engineering": "CAD", "Drafting": "CAD",
+
+    # PLM
+    "ENOVIA": "PLM", "3DEXPERIENCE": "PLM", "Teamcenter": "PLM",
+    "Windchill": "PLM", "MQL": "PLM", "JPO": "PLM", "PDM": "PLM", "PLM": "PLM",
+    "BOM": "PLM", "Engineering Change Management": "PLM",
+
+    # CAE / Simulation
+    "Abaqus": "Simulation", "SIMULIA": "Simulation", "Ansys": "Simulation",
+    "Isight": "Simulation", "Tosca": "Simulation", "fe-safe": "Simulation",
+    "FEA": "Simulation", "CAE": "Simulation",
+
+    # MES / Digital manufacturing
+    "DELMIA": "Manufacturing", "Apriso": "Manufacturing",
+    "Process Builder": "Manufacturing", "Global Process Manager": "Manufacturing",
+    "Quintiq": "Manufacturing", "MES": "Manufacturing",
+
+    # Systems engineering
+    "MBSE": "Systems Engineering", "SysML": "Systems Engineering",
+    "Reqtify": "Systems Engineering", "ControlBuild": "Systems Engineering",
+    "DOORS": "Systems Engineering",
+
+    # --- Added 2026-09-16 ---------------------------------------------
+    # category is NOT a label on every skill -- it is the filter
+    # /analytics/skill-categories uses to decide what belongs in the mix
+    # chart, and NULL is how a broad tag ("Agile", "Communication Skills")
+    # is kept out. So only add a key here when the skill is a specific,
+    # placeable technology. Everything below was already being counted as
+    # demand and was missing from that chart for no reason other than
+    # absence from this dict. Pairs with
+    # migrations/2026-09-16-backfill-skill-categories.sql, since
+    # categorize_skill() runs only at registration.
+    "Azure Devops": "Cloud/DevOps", "Aws Devops": "Cloud/DevOps",
+    "Eks": "Cloud/DevOps", "Iam": "Cloud/DevOps",
+    "Prometheus": "Cloud/DevOps", "Github Actions": "Cloud/DevOps",
+    "Api Gateway": "Cloud/DevOps", "Amazon Ec2": "Cloud/DevOps",
+    "Helm": "Cloud/DevOps", "Amazon Cloudwatch": "Cloud/DevOps",
+    "Cloudwatch": "Cloud/DevOps", "Cloudformation": "Cloud/DevOps",
+    "Openshift": "Cloud/DevOps", "Bitbucket": "Cloud/DevOps",
+    "Aws Sagemaker": "Data/ML", "Matplotlib": "Data/ML",
+    "Langgraph": "Data/ML", "Vertex Ai": "Data/ML",
+    "Synapse Analytics": "Data/ML", "Sqoop": "Data/ML",
+    "Bedrock": "Data/ML",
+    "Amazon Rds": "Database", "Ssis": "Database",
+    "Maven": "Backend", "Gradle": "Backend", "J2ee": "Backend",
+    "Apex": "Languages", "Bash Scripting": "Languages",
+
+    # Techniques rather than products. Still specific enough to place --
+    # "Computer Vision" names a field of work the way "Kafka" names a tool,
+    # and both answer "what kind of work is this role made of". Listed
+    # apart so the judgement is visible: strip this block and the one above
+    # still stands on its own.
+    "Computer Vision": "Data/ML", "Statistics": "Data/ML",
+    "Neural Networks": "Data/ML", "Feature Engineering": "Data/ML",
+    "Predictive Analytics": "Data/ML", "Clustering": "Data/ML",
+    "Classification": "Data/ML", "Business Intelligence": "Data/ML",
+    "Retrieval Augmented Generation": "Data/ML",
+    "Stored Procedures": "Database", "Rdbms": "Database",
 }
 
 
