@@ -191,7 +191,13 @@ def safe_education(page) -> dict[str, str]:
 # STAGE 1 — DISCOVERY
 # Collect job URLs from a search results page.
 # ---------------------------------------------------------------------
-def discover_job_urls(page, search_url: str, limit: int | None = None) -> list[str]:
+def discover_job_cards(page, search_url: str) -> list[tuple[str, str]]:
+    """Read one search page's result cards as (url, title) pairs.
+
+    Split out of discover_job_urls so a caller can judge a search term by
+    its titles without scraping every detail page. The card selectors stay
+    in one place either way -- a second copy would drift.
+    """
     print(f"\n[discovery] Loading search results: {search_url}")
     page.goto(search_url, wait_until="domcontentloaded", timeout=45000)
 
@@ -204,25 +210,31 @@ def discover_job_urls(page, search_url: str, limit: int | None = None) -> list[s
     cards = page.query_selector_all("div.srp-jobtuple-wrapper")
     print(f"[discovery] Found {len(cards)} job cards on this page.")
 
-    urls = []
+    found: list[tuple[str, str]] = []
+    seen: set[str] = set()
     skipped_off_site = 0
     for card in cards:
         link = card.query_selector("a.title")
         if not link:
             continue
         href = link.get_attribute("href")
-        if not href or href in urls:
+        if not href or href in seen:
             continue
         if "naukri.com" not in urlparse(href).netloc:
             # Defensive: an off-site href would be scraped with Naukri's own
             # selectors and yield silent garbage rather than an error.
             skipped_off_site += 1
             continue
-        urls.append(href)
+        seen.add(href)
+        found.append((href, (link.inner_text() or "").strip()))
 
     if skipped_off_site:
         print(f"[discovery] Skipped {skipped_off_site} off-site link(s) that weren't naukri.com job URLs.")
+    return found
 
+
+def discover_job_urls(page, search_url: str, limit: int | None = None) -> list[str]:
+    urls = [u for u, _ in discover_job_cards(page, search_url)]
     if limit:
         urls = urls[:limit]
     print(f"[discovery] Collected {len(urls)} job URLs.")

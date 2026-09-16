@@ -167,6 +167,67 @@ SKILL_ALIASES = {
     "pytest": ["pytest"],
     "Selenium": ["selenium"],
     "Jest": ["jest"],
+
+    # -- CAD / PLM / CAE, added 2026-09-09 for the Dassault pipeline. -----
+    # Naukri's own chips already carry most of these and auto-register, but
+    # only the description gets mined, and the chips spell them a dozen ways
+    # ("Solid Works", "SolidWorks", "solid works", "Ug Nx", "ug nx"). Listing
+    # the variants here is what stops one tool becoming several skill rows.
+    # Measured on the existing corpus: none of these terms occurs in any of
+    # the 847 Hyderabad IT descriptions, so this cannot shift that series.
+
+    # CAD
+    "CATIA": ["catia", "catia v5", "catia v6", "catia v5/v6"],
+    "SolidWorks": ["solidworks", "solid works", "solid-works"],
+    "NX": ["ug nx", "unigraphics", "siemens nx", "nx unigraphics"],
+    "Creo": ["creo", "ptc creo", "creo parametric", "pro/engineer", "pro engineer", "pro-e"],
+    "AutoCAD": ["autocad", "auto cad", "autocad mechanical"],
+    "Autodesk Inventor": ["autodesk inventor", "inventor"],
+    "Solid Edge": ["solid edge", "solidedge"],
+    "CAA": [r"caa c\+\+", "caa rade", "caa v5"],
+    "EKL": ["ekl", "engineering knowledge language"],
+    "GD&T": [r"gd&t", "gd and t", "geometric dimensioning"],
+    "Sheet Metal Design": ["sheet metal design", "sheet metal"],
+    "Surface Modeling": ["surface modeling", "surface modelling"],
+    "Reverse Engineering": ["reverse engineering"],
+
+    # PLM
+    "ENOVIA": ["enovia", "enovia v6", "enovia v5", "matrixone"],
+    "3DEXPERIENCE": ["3dexperience", "3d experience", "3dx platform", "3ds 3dexperience"],
+    "Teamcenter": ["teamcenter", "siemens teamcenter"],
+    "Windchill": ["windchill", "ptc windchill"],
+    "MQL": ["mql", "matrix query language"],
+    "JPO": ["jpo", "java program object"],
+    "PDM": ["pdm", "product data management"],
+    "PLM": ["plm", "product lifecycle management"],
+    "BOM": ["bom", "bill of materials", "ebom", "mbom"],
+    "Engineering Change Management": ["engineering change management", "ecm/eco/ecr",
+                                      "eco/ecr", "engineering change order"],
+
+    # CAE / Simulation
+    "Abaqus": ["abaqus", "abacus fea"],
+    "SIMULIA": ["simulia", "simulia cae"],
+    "Ansys": ["ansys"],
+    "Isight": ["isight"],
+    "Tosca": ["tosca"],
+    "fe-safe": ["fe-safe", "fesafe"],
+    "FEA": ["fea", "finite element analysis"],
+    "CAE": ["cae", "computer aided engineering"],
+
+    # MES / Digital manufacturing
+    "DELMIA": ["delmia", "delmia apriso"],
+    "Apriso": ["apriso"],
+    "Process Builder": ["process builder"],
+    "Global Process Manager": ["global process manager"],
+    "Quintiq": ["quintiq", "delmia quintiq"],
+    "MES": ["mes", "manufacturing execution system", "manufacturing execution systems"],
+
+    # Systems engineering / MBSE
+    "MBSE": ["mbse", "model based systems engineering", "model-based systems engineering"],
+    "SysML": ["sysml"],
+    "Reqtify": ["reqtify"],
+    "ControlBuild": ["controlbuild"],
+    "DOORS": ["doors", "ibm doors", "rational doors"],
 }
 
 
