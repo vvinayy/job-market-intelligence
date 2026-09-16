@@ -94,7 +94,6 @@ with tab5:
              "would take any of the others.")
 
     choices = dc.skill_choices(limit=15, min_postings=2)
-    flex = dc.skill_flexibility(limit=15, min_postings=5)
 
     if choices.empty:
         st.info("No interchangeable sets detected yet.")
@@ -112,37 +111,6 @@ with tab5:
         st.caption("Read as 'any one of these will do'. Detected from the wording of each "
                    "description, so treat it as a strong hint rather than a guarantee — "
                    "roughly one set in four is wrong.")
-
-    if not flex.empty:
-        st.divider()
-        st.subheader("How negotiable is each skill?")
-        st.write("Of the postings wanting a skill, the share that would equally accept "
-                 "something else. High means employers care about the capability more "
-                 "than the specific tool.")
-
-        flex["swaps_label"] = flex["swaps"].apply(lambda s: ", ".join(s[:3]) if len(s) else "-")
-        fig2 = px.bar(flex.sort_values("negotiable_pct"), x="negotiable_pct", y="skill",
-                      orientation="h", text="negotiable_pct",
-                      color="negotiable_pct", color_continuous_scale=dc.SCALE,
-                      hover_data={"required": True, "alternative": True, "swaps_label": True})
-        fig2.update_traces(texttemplate="%{text:.0f}%", textposition="outside", cliponaxis=False)
-        fig2.update_layout(height=max(340, len(flex) * 30),
-                           margin=dict(l=0, r=50, t=10, b=0), coloraxis_showscale=False,
-                           xaxis_title="% of demand that would accept a substitute",
-                           yaxis_title=None, **dc.TRANSPARENT)
-        st.plotly_chart(fig2, use_container_width=True)
-
-        st.dataframe(
-            flex[["skill", "required", "alternative", "negotiable_pct", "swaps_label"]]
-                .rename(columns={"required": "asked for outright",
-                                 "alternative": "would accept a swap",
-                                 "negotiable_pct": "negotiable %",
-                                 "swaps_label": "usually swapped with"}),
-            use_container_width=True, hide_index=True)
-        st.caption("How negotiable each skill is: the share of postings that would "
-                   "accept something else in its place, rather than naming it "
-                   "outright. A skill scores zero until some posting offers it as "
-                   "one option among several.")
 
 
 with tab3:
