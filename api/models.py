@@ -164,6 +164,11 @@ class Summary(BaseModel):
     still_open: int = 0
     closed: int = 0
     never_checked: int = 0
+    # Postings the liveness checker never requested (last_checked_on IS NULL).
+    # Larger than never_checked, and a different claim: a re-sighting writes
+    # is_expired = FALSE on any source, but only Naukri is ever verified.
+    # still_open + closed + unverified accounts for every posting.
+    unverified: int = 0
     last_liveness_check: date | None = None
     # When closure detection began. Every exposure-adjusted rate is scoped to
     # this date onward; NULL means no run has been recorded and no such rate

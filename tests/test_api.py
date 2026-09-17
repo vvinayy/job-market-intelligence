@@ -363,5 +363,21 @@ def test_posting_detail_carries_liveness(client):
 
 
 def test_summary_liveness_never_conflates_unchecked_with_open(client):
+    """still_open and closed count only what the checker actually requested.
+
+    This used to assert still_open + closed + never_checked == total, which
+    held only because still_open counted every is_expired IS FALSE row.
+    STATE_UPSERT_SQL writes that FALSE on any re-sighting of any source, so
+    hirist postings -- which nothing ever checks, the board publishing no
+    expiry signal -- were landing in "still open" on scraper coverage alone.
+    The partition is now against `unverified` (last_checked_on IS NULL),
+    which is the column that actually means "the checker requested this".
+    """
     s = client.get("/analytics/summary").json()
-    assert s["still_open"] + s["closed"] + s["never_checked"] == s["total_postings"]
+    assert s["still_open"] + s["closed"] + s["unverified"] == s["total_postings"]
+
+    # never_checked (the is_expired tri-state hole) is necessarily a SUBSET of
+    # unverified: a row can be unverified and still carry a FALSE a scrape
+    # wrote onto it. If these are ever equal, either every source is being
+    # checked or a scrape has stopped writing state -- both worth knowing.
+    assert s["never_checked"] <= s["unverified"]

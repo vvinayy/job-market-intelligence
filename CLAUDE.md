@@ -233,6 +233,20 @@ It never changes after insert, and without it the liveness queue would join back
 to the spine purely to filter on it — measured 38 pages against 274. Both copies
 are written by the same upsert.
 
+**Demand is `skill_ids || skill_group_ids(skill_groups)`, everywhere.**
+`skill_ids` holds outright requirements; a skill offered as one of several
+alternatives ("AWS or Azure") lives in `skill_groups` and is *not* repeated in
+`skill_ids`. Reading `skill_ids` alone is an undercount, and eight read paths
+were doing exactly that until 2026-09-17 — the Skills page said AWS appeared in
+295 postings while `/postings?skill=AWS` returned 419 and the Trends series
+counted 419 too. Same app, three numbers, one of them wrong in six places.
+`snapshot_daily_skills()`, the `?skill=` filter, the preferred-subset CHECK and
+the GIN index had the rule from the start; the API never got it.
+
+The single deliberate exception is `skill_flexibility()`, where `required`
+means "demanded outright" as opposed to negotiable — there the distinction *is*
+the measurement. Everywhere else, use the full expression.
+
 **`skills.category` is a filter, not a label — NULL is the common, correct
 state.** About 88% of rows carry no category, and that is the design:
 `/analytics/skill-categories` reads `WHERE sk.category IS NOT NULL`, so NULL
@@ -341,6 +355,45 @@ why the three skill columns were not merged into one.
   on purpose — a correction does not change which days were recorded. Twenty-
   four corrections exist for 12–17 Aug, where a foreign job description
   inflated C++ ninefold.
+- **Not every migration lives in `migrations/`.** The 2026-08-18 taxonomy sync
+  (commit `755fa6f`) merged 18 duplicate skill pairs and renamed 23 more
+  directly against the live database — carefully, with a backup and real
+  verification, just never saved as a `.sql` file. It surfaced only while
+  chasing the rename problem below: 98 of 118 stranded skill names had no
+  migration explaining their disappearance, and this is why.
+  `migrations/2026-08-18-skill-taxonomy-sync-record.sql` documents it after
+  the fact and cannot replay it — the individual pairs were never written
+  down, only the counts and method. When you do a cleanup by hand, write the
+  file first.
+
+- **A renamed skill splits its own history, and `skill_renames` is the fix.**
+  `skill_daily_counts` stores the skill NAME. When a spelling enters
+  `SKILL_ALIASES`, `normalize_skill()` starts emitting the canonical and the
+  series stops under the old name and restarts under the new one — so
+  `skill_first_appearances` reported PowerShell as first seen 2026-08-20 when
+  it had been present since 2026-08-07 as "Powershell". `/trends/new-skills`
+  was reporting renames to the reader as new skills entering the market.
+
+  `skill_renames` maps old spelling to canonical and
+  `skill_daily_counts_by_source` resolves through it, so every downstream view
+  inherits the fix. **Raw rows are never rewritten** — that would erase the
+  evidence the rename happened, leaving a clean line and no explanation. Same
+  shape as `skill_daily_corrections`: observation untouched, adjustment in its
+  own table, view applies it. The distinction that makes it legitimate is that
+  a correction fixes a COUNT that was wrong, while this fixes a LABEL; the
+  count was right before and after.
+
+  **Only 27 of 145 stranded names could be listed, and the omission is the
+  point.** `posting_count` is `COUNT(DISTINCT job_id)`, so two names may only
+  be summed when they share no `snapshot_date` — otherwise a posting holding
+  both spellings is counted twice. 77 names (1,412 mentions) ran in *parallel*
+  rather than in sequence: Terraform and "Iac Terraform" were both counted
+  daily, and 22 of the 23 postings holding the latter also held the former, so
+  adding the series would report 83 where about 61 existed. That union is not
+  derivable from two counts, so it is left visibly split. The test is
+  group-wise, not pairwise against the canonical: "Bash" and "Shell Scripting"
+  each avoid overlapping "Shell scripting" but overlap each other.
+
 - **The skill detector changed on 2026-09-02, and the step it puts in the
   history cannot be corrected away.** `extract_skills()` was rewritten to
   tokenise a description once and look each 1–3 word window up in a dict,

@@ -87,25 +87,23 @@ with s2:
     # it was measuring scraper coverage and reporting it as market activity.
     still_open = int(facts.get("still_open") or 0)
     closed = int(facts.get("closed") or 0)
-    checked_on = facts.get("last_liveness_check")
 
     # Denominator is postings actually checked, not the whole table. Against
     # `total` the card invited reading every remaining posting as closed, when
     # some were simply never checked -- the same NULL-is-not-False mistake
-    # is_expired exists to avoid.
-    never_checked = int(facts.get("never_checked") or 0)
+    # is_expired exists to avoid. The endpoint counts only rows the checker
+    # actually requested, so hirist never reaches either number.
     checked = still_open + closed
 
     if still_open or closed:
         st.markdown(f"### {still_open} of {checked}")
-        st.markdown("**checked postings are still open**")
+        st.markdown("**verified postings are still open**")
+        # One line on purpose. The number above is Naukri-only and the reason
+        # is not obvious, so the caption spends itself entirely on saying why
+        # the other postings are absent rather than on caveats.
         st.caption(
-            f"Every listing re-checked against Naukri"
-            + (f" on {checked_on}" if checked_on else "")
-            + f". {closed} have since closed — which means Naukri no longer "
-            "shows them, not that anyone was hired."
-            + (f" {never_checked} have not been checked yet and count as neither."
-               if never_checked else "")
+            f"Of {total} postings analysed, only Naukri's can be checked — "
+            "hirist publishes no expiry signal."
         )
     else:
         st.markdown(f"### {total}")

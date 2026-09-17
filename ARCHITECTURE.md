@@ -474,6 +474,63 @@ not know, which is the whole point.
 parameterised — a sort column, a grouping dimension — is checked against an
 allowlist. Never put caller input directly into SQL.
 
+## 10a. One question, one expression — counting demand
+
+A posting's demanded skills are `skill_ids || skill_group_ids(skill_groups)`.
+`skill_ids` carries outright requirements; a skill the employer offered as one
+of several alternatives sits in `skill_groups` and is deliberately not repeated
+in `skill_ids`, because "wants AWS" and "would accept AWS" are different claims
+and the schema keeps them separable.
+
+Four places had the full expression from the start —
+`snapshot_daily_skills()`, the `?skill=` filter on `/postings`, the
+preferred-subset CHECK, and the GIN index. Eight read paths in `api/routers/`
+did not, and nobody noticed for weeks because each endpoint was internally
+consistent. The contradiction was only visible by asking two pages the same
+question: the Skills chart said AWS appeared in 295 postings, the Jobs filter
+returned 419 for the same skill, and Trends plotted 419. Corrected 2026-09-17.
+
+**Not an `instrument_changes` row.** That ledger records changes to what gets
+*recorded*, and `skill_daily_counts` was never affected — the snapshot function
+was right all along. No series steps; the Skills page stops disagreeing with
+history that was already correct. Filing it there would claim a discontinuity
+that does not exist.
+
+The lesson generalises: a rule enforced in four places and violated in eight is
+not a rule, it is a convention. Where one expression defines a concept, the
+expression belongs somewhere both sides read — a view, a function, or a
+generated column — not copied into every query that needs it.
+
+## 10b. A rename is a label fix, not a correction
+
+`skill_daily_counts` stores the skill NAME, so a spelling entering
+`SKILL_ALIASES` ends one series and starts another. 145 names holding 1,586
+mentions were stranded this way by 2026-09-17, and `/trends/new-skills` was
+presenting renames as new skills arriving in the market.
+
+The instinct is to backfill the old names. That is wrong for the same reason
+editing a wrong count is wrong: it destroys the evidence that anything changed,
+leaving a continuous line and no explanation for it. `skill_renames` takes the
+shape §9 already established — raw observation untouched, adjustment in its own
+table, view applies it.
+
+What makes it legitimate rather than a second corrections ledger is that the
+two tables fix different things. A correction repairs a COUNT that was false
+when written. A rename repairs a LABEL: the count was right before and after,
+and only our index into it moved. Both claims in a snapshot row — *how many*
+and *what we called it* — can fail independently, and conflating them under one
+rule is what made this look unfixable at first.
+
+**The 27-of-145 split is the honest part.** `posting_count` is
+`COUNT(DISTINCT job_id)`, so two names are summable only when no posting could
+have been counted under both — provable only when they share no snapshot date.
+77 names ran in parallel rather than in sequence and are not recoverable:
+Terraform and "Iac Terraform" were counted on the same days, with 22 of 23
+postings holding both, so summing would report 83 where roughly 61 existed. The
+true union cannot be derived from two distinct-counts, so the split stays
+visible rather than being papered over with a plausible number. The remaining
+41 have no canonical to map to at all.
+
 ## 11a. `skills.category` is a filter, not a label
 
 `/analytics/skill-categories` reads `WHERE sk.category IS NOT NULL`. So NULL is

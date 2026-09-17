@@ -241,15 +241,52 @@ DROP VIEW IF EXISTS skill_daily_counts_by_source;
 -- ever stores skills that actually appeared that day. raw_count and
 -- correction stay visible so a reader can always see what was observed and
 -- what was adjusted.
+-- ---------------------------------------------------------------------
+-- RENAMES -- a label fix, not a correction.
+--
+-- skill_daily_counts stores the skill NAME. When a spelling enters
+-- SKILL_ALIASES, normalize_skill() starts emitting the canonical and the
+-- series stops under the old name and restarts under the new one, so a
+-- skill present since day one is reported by skill_first_appearances as
+-- newly appearing on its rename date.
+--
+-- Distinct from skill_daily_corrections: that ledger fixes a COUNT that
+-- was wrong, this maps a NAME that changed. The count was right before
+-- and after, so nothing here revises an observation -- which is why the
+-- raw rows stay untouched and the resolution happens in the view below.
+--
+-- A pair may ONLY be listed when the two names share no snapshot_date.
+-- posting_count is COUNT(DISTINCT job_id), so summing overlapping series
+-- double-counts any posting that held both spellings. Of 145 stranded
+-- names on 2026-09-17 only 27 passed that test; the rest ran in parallel
+-- and their true union is not recoverable from the stored counts.
+-- See migrations/2026-09-17-skill-renames.sql.
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS skill_renames (
+    old_name       TEXT PRIMARY KEY,
+    canonical_name TEXT NOT NULL,
+    noted_on       DATE NOT NULL DEFAULT CURRENT_DATE,
+    CHECK (old_name <> canonical_name)
+);
+
+
 CREATE VIEW skill_daily_counts_by_source AS
 SELECT
     s.snapshot_date,
-    s.skill,
+    -- Resolved here and nowhere else: every trend view reads this one, so
+    -- skill_daily_counts_corrected, both delta views and
+    -- skill_first_appearances all inherit it unchanged. Corrections still
+    -- join on the RAW name below, because a correction was written against
+    -- the spelling observed that day. snapshot_coverage deliberately keeps
+    -- reading the raw table -- a rename does not change which days were
+    -- recorded.
+    COALESCE(r.canonical_name, s.skill)    AS skill,
     s.source,
     s.posting_count + COALESCE(c.delta, 0) AS posting_count,
     s.posting_count                        AS raw_count,
     COALESCE(c.delta, 0)                   AS correction
 FROM skill_daily_counts s
+LEFT JOIN skill_renames r ON r.old_name = s.skill
 LEFT JOIN (
     SELECT snapshot_date, skill, source, SUM(delta) AS delta
     FROM skill_daily_corrections
