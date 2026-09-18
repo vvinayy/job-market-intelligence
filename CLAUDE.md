@@ -51,17 +51,66 @@ until someone closes them. The scrape itself is unaffected. Either pass
 comment about it over `schtasks /query`.
 
 **`jobmarket.bat` runs everything through `D:\python\python.exe`, not the
-Microsoft Store build.** Moved 2026-09-17 after the Store build crashed
-Streamlit twice in one day — a hard access violation (`0xc0000005`) inside
-`python313.dll` itself, both times at the exact same offset. The Store
-build sandboxes filesystem access in a way that doesn't get on with
-Streamlit's file watcher (`watchdog`, native OS-level directory watching),
-and the crash is below Python's own exception handling, so nothing catches
-it and nothing logs it — the dashboard just vanishes. This was ALSO the
-silent-update risk noted before the move: the Store build's package path
-carries the version number, so an update to 3.14 would have taken every
-dependency with it. `D:\python` is a plain, unsandboxed CPython 3.13.1 that
-was already on this machine; nothing was downloaded to fix this.
+Microsoft Store build** — worth doing on its own merits (see below), but it
+did **not** fix the crash it was first tried for. Keep both facts straight;
+the section after this one has the part that actually did.
+
+The Store build's package path carries the version number, so a silent
+update to 3.14 would take every dependency with it — that risk is real and
+this move removes it. `D:\python` is a plain, unsandboxed CPython 3.13.1
+that was already on this machine; nothing was downloaded to fix this.
+
+`jobmarket.bat` sets `PY=D:\python\python.exe` at the top and calls
+`"%PY%"` everywhere instead of bare `python` — every collector, the
+liveness checker, and both the API and the dashboard (`"%PY%" -m uvicorn`
+/ `"%PY%" -m streamlit`, not the bare `uvicorn`/`streamlit` commands, which
+would resolve through PATH to whatever installed them first). Running
+anything by hand — `pip install`, `pytest`, `uvicorn api.main:app --reload`
+— must go through `D:\python\python.exe` too, or it silently runs against
+the Store build's *different* copy of every package.
+
+**The actual Streamlit crash is a sleep/resume bug, and it doesn't care
+which Python runs it.** First diagnosed 2026-09-17 as the Store build's
+sandboxing conflicting with Streamlit's native file watcher; that theory
+looked solid at the time — a hard access violation (`0xc0000005`) inside
+`python313.dll`, reproduced, tested, seemingly fixed by the Python switch
+above. It wasn't. The next day, running through `D:\python`, Streamlit
+crashed again — a *different* fault (`0xc0000409`, `ucrtbase.dll`), so not
+even the same signature. What actually lines up, checked against Windows'
+own sleep/wake log, is this:
+
+| Crash | Time | Preceding system wake |
+| --- | --- | --- |
+| 1 (Store Python) | 2026-09-17 13:16:18 | 13:15:48 — 30s earlier |
+| 2 (Store Python) | 2026-09-17 15:45:16 | 15:44:27 — 49s earlier |
+| 3 (`D:\python`) | 2026-09-18 12:44:56 | 12:44:24 — 32s earlier |
+
+Three for three, under a minute each time, across two unrelated Python
+installs. The best explanation: Streamlit's file watcher (`watchdog`)
+holds a native, OS-level handle on the project folder so it can auto-reload
+on a file change, and that class of handle is a known weak point across a
+Windows sleep/resume cycle. This machine sleeps and wakes constantly —
+roughly a dozen times a day, almost all woken by the power button after a
+short sleep — which is exactly the condition that keeps re-triggering it.
+Not stepped through a debugger to the exact line; the timing correlation is
+the evidence, and it is not close.
+
+**Fix:** `jobmarket.bat`'s dashboard line now passes
+`--server.fileWatcherType poll` instead of the native watcher. Polling
+re-scans the folder on a timer instead of holding a persistent handle, so
+a sleep/resume cycle has nothing to invalidate. Applied 2026-09-18,
+immediately after crash 3; not yet proven across a full day of real sleep
+cycles — treat as the working theory until it survives one.
+
+Separately, unrelated to Streamlit: this machine has rebooted from a real
+bugcheck (`0x10E`, `VIDEO_TDR_FAILURE` — a graphics-driver timeout) six
+times since 2026-08-04, most recently 2026-09-16. A stale batch of those
+old reports happened to flush from Windows' queue at the same moment as
+crash 3 on 2026-09-18, which looked like a live event and cost real time
+to rule out before the sleep/resume pattern was found. That graphics-driver
+instability is real and worth attention on its own, but nothing ties it to
+Streamlit specifically — don't let its timing coincide with a future crash
+and pull the investigation sideways again.
 
 `jobmarket.bat` sets `PY=D:\python\python.exe` at the top and calls
 `"%PY%"` everywhere instead of bare `python` — every collector, the
@@ -177,6 +226,21 @@ return `"On-site"` when it found nothing, which put a fabricated value on 372 of
 so its absence means "not stated", never "office". A fallback over a value that
 *is* present is fine by contrast: `classify_role()` returning `"Other"` describes
 a real title that matched no pattern, and invents nothing.
+
+**`"N weeks ago"` is deliberately unhandled by `parse_posted_date()`, for the
+same reason as `"30+ days ago"`, one size up.** `"N days ago"` has at most a
+day of slop. `"N weeks ago"` has up to seven — `"2 weeks ago"` could be day 8
+or day 20, and the text gives no way to tell which. Computing `today - 14`
+would invent a specific day the source never gave, which is the same mistake
+`normalize_working_type()` made. 304 live postings sit at `posted_date IS
+NULL` for exactly this reason (measured 2026-09-18; 227 of them are "N weeks
+ago" without a `+`, which reads as computable until you notice the slop, and
+77 are "3+ weeks ago", genuinely unbounded). This also means
+`check_field_health()` will keep flagging `posted_date` on any Naukri search
+whose results skew toward older listings — real, expected, and not a broken
+selector. Confirmed by checking `posted_raw` alongside it: the raw label is
+present on 100% of those postings, so the gap is in what a week can be
+converted to, not in what the scraper found.
 
 **No AI in the pipeline.** Extraction is DOM selectors; skills are regex.
 Missing labels become NULL. Never add a model call or a guess to fill a gap.

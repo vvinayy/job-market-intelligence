@@ -69,6 +69,19 @@ def test_posted_date_plus_is_unknown():
     assert nc.parse_posted_date("30+ days ago") is None
 
 
+def test_posted_date_weeks_ago_is_unknown():
+    """Deliberately unhandled, not a gap to close. 'N days ago' has at
+    most a day of slop; 'N weeks ago' has up to seven -- '2 weeks ago'
+    could be day 8 or day 20, and there is no way to tell which from the
+    text alone. Computing today - 14 would invent a specific day the
+    source never gave us, the same mistake normalize_working_type() made
+    once already. 304 live postings sit at posted_date IS NULL for this
+    reason (2026-09-18); that is the honest count, not a bug."""
+    assert nc.parse_posted_date("1 week ago") is None
+    assert nc.parse_posted_date("2 weeks ago") is None
+    assert nc.parse_posted_date("3+ weeks ago") is None
+
+
 def test_posted_date_missing():
     assert nc.parse_posted_date(None) is None
     assert nc.parse_posted_date("") is None

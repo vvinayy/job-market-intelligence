@@ -142,7 +142,7 @@ REM --------------------------------------------------------------------
 :start_dashboard
 echo.
 echo === Starting the dashboard ===
-start "Job Market Dashboard" cmd /k "%PY% -m streamlit run Home.py"
+start "Job Market Dashboard" cmd /k "%PY% -m streamlit run Home.py --server.fileWatcherType poll"
 
 echo.
 echo Both are launching in their own windows. Streamlit opens your browser
