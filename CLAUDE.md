@@ -582,12 +582,26 @@ why the three skill columns were not merged into one.
   panel says so in words. See
   `docs/superpowers/specs/2026-08-31-foreign-description-detection.md`.
 
-- **Four location fragments still need a curated `cities` entry**, and only
-  two of them are cities: `Srinagar` (2 postings) and `Patiala` (2). Both need
-  a state, which is the one thing that cannot be guessed from a city name --
-  and `Srinagar` genuinely names two places, in Jammu & Kashmir and in
-  Uttarakhand. The rest (`Anywhere in India/Multiple Locations`, `Any
-  Location`, `pan india`) are not cities and should stay unmapped.
+- **Five location fragments now need a curated `cities` entry**, not the two
+  this used to say (checked again 2026-09-18; the list grows as new postings
+  surface new fragments and nobody replays it regularly). `Srinagar` (2
+  postings), `Patiala` (2), `Surat` (1), `Salem` (1), `Mohali` (1) are all real
+  cities. Each needs a state, which is the one thing that cannot be guessed
+  from a city name -- and `Srinagar` genuinely names two places, in Jammu &
+  Kashmir and in Uttarakhand. **The `Salem` and `Mohali` postings currently
+  have no resolved location at all** — each named only that one city, so
+  with nothing to fall back on they carry zero city rows, not a degraded one.
+
+  `Madhapur` is a different case, deliberately not in the list above: it is a
+  Hyderabad neighbourhood, not a separate city, and its one posting already
+  resolved to Hyderabad from the *other* comma-separated fragment in the same
+  location string — the same bucket as `Others` and `Metros`, correctly
+  unmapped rather than a gap. `Dubai`, `Riyadh` and `Kenya` are the same:
+  genuinely international, correctly excluded, matching
+  `Overseas/International`.
+
+  The rest (`Anywhere in India/Multiple Locations`, `Any Location`,
+  `pan india`) are not cities and should stay unmapped.
 
   The parenthetical pair (`Hyderabad( Raidurgam )`, `Hyderabad( HITEC City )`)
   is resolved: the parser handled them all along, those rows simply predated
