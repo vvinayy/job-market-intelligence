@@ -50,17 +50,48 @@ until someone closes them. The scrape itself is unaffected. Either pass
 `--scrape-only` in the task or accept the two windows — but do not trust a
 comment about it over `schtasks /query`.
 
-**There is no virtualenv.** `python` resolves to the Microsoft Store build
-(3.13.14) and every dependency lives in its user site-packages. A Store update
-to 3.14 would move that path and take every package with it, and the 11:00 run
-would fail at `import playwright` — which, because the collector never reaches
-`_snapshot_today()`, silently costs that day's snapshot as well.
+**`jobmarket.bat` runs everything through `D:\python\python.exe`, not the
+Microsoft Store build.** Moved 2026-09-17 after the Store build crashed
+Streamlit twice in one day — a hard access violation (`0xc0000005`) inside
+`python313.dll` itself, both times at the exact same offset. The Store
+build sandboxes filesystem access in a way that doesn't get on with
+Streamlit's file watcher (`watchdog`, native OS-level directory watching),
+and the crash is below Python's own exception handling, so nothing catches
+it and nothing logs it — the dashboard just vanishes. This was ALSO the
+silent-update risk noted before the move: the Store build's package path
+carries the version number, so an update to 3.14 would have taken every
+dependency with it. `D:\python` is a plain, unsandboxed CPython 3.13.1 that
+was already on this machine; nothing was downloaded to fix this.
+
+`jobmarket.bat` sets `PY=D:\python\python.exe` at the top and calls
+`"%PY%"` everywhere instead of bare `python` — every collector, the
+liveness checker, and both the API and the dashboard (`"%PY%" -m uvicorn`
+/ `"%PY%" -m streamlit`, not the bare `uvicorn`/`streamlit` commands, which
+would resolve through PATH to whatever installed them first). Running
+anything by hand — `pip install`, `pytest`, `uvicorn api.main:app --reload`
+— must go through `D:\python\python.exe` too, or it silently runs against
+the Store build's *different* copy of every package, which will pass tests
+today and still crash Streamlit.
+
+**`playwright` is pinned to `==1.62.0` in both requirements files**, not
+`>=1.40`. `pip install` on a bare `>=1.40` pulled 1.63.0, which wants a
+Chromium browser revision (1243) that was not in this machine's cache
+(1234 — the one the Store install had already downloaded); the download
+timed out and installing that pin's browser has not been proven to work
+here. 1.62.0 uses the already-cached revision, verified with a real
+headless launch. Bumping the pin needs `playwright install chromium` to
+actually succeed against `cdn.playwright.dev` first.
 
 ## Getting it running
 
 ```powershell
-pip install -r requirements.txt; pip install -r api/requirements.txt
-playwright install chromium
+# D:\python\python.exe, not bare `python` -- see the note above. Everything
+# below assumes $PY is set to it; PowerShell doesn't inherit jobmarket.bat's
+# %PY%, so set it once per session:
+$PY = "D:\python\python.exe"
+
+& $PY -m pip install -r requirements.txt; & $PY -m pip install -r api/requirements.txt
+& $PY -m playwright install chromium   # only if %LOCALAPPDATA%\ms-playwright is empty
 
 # one-time database setup, in this order
 & "C:\Program Files\PostgreSQL\18\bin\psql.exe" -U postgres -d jobmarket -f schema.sql
@@ -72,11 +103,11 @@ playwright install chromium
 .\jobmarket.bat --check-only   # find expired postings (the 5pm task)
 
 # or run the two services by hand
-uvicorn api.main:app --reload   # terminal 1 — docs at /docs
-streamlit run Home.py           # terminal 2
+& $PY -m uvicorn api.main:app --reload   # terminal 1 — docs at /docs
+& $PY -m streamlit run Home.py           # terminal 2
 
-pytest                          # everything
-pytest tests/test_cleaning.py tests/test_skill_taxonomy.py \
+& $PY -m pytest                          # everything
+& $PY -m pytest tests/test_cleaning.py tests/test_skill_taxonomy.py `
        tests/test_naukri_parsers.py tests/test_liveness.py   # fast, no I/O
 ```
 

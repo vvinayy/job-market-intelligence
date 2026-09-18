@@ -25,6 +25,12 @@ REM                                 delay the dashboard launch. ~10 min.
 REM ====================================================================
 
 cd /d "C:\Users\Acer\Webscraping_Extraction"
+REM Real Python at D:\python, not the Microsoft Store build. The
+REM Store build sandboxes file access in a way that crashes Streamlit's
+REM file watcher (access violation, 0xc0000005) and can be silently
+REM replaced by a background update -- moved off it 2026-09-17 after two
+REM crashes in one day. See CLAUDE.md.
+set PY=D:\python\python.exe
 
 if /i "%~1"=="--skip-scrape"  goto :start_services
 if /i "%~1"=="--scrape-only"  goto :scrape
@@ -64,11 +70,11 @@ echo ================================================== >> "%LOGFILE%"
 
 REM One line per search. Add or remove searches here - this is where you
 REM control what gets collected each day.
-python naukri_collector.py "https://www.naukri.com/python-developer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
-python naukri_collector.py "https://www.naukri.com/data-science-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
-python naukri_collector.py "https://www.naukri.com/java-full-stack-developer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
-python naukri_collector.py "https://www.naukri.com/machine-learning-engineer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
-python naukri_collector.py "https://www.naukri.com/python-full-stack-developer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
+"%PY%" naukri_collector.py "https://www.naukri.com/python-developer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
+"%PY%" naukri_collector.py "https://www.naukri.com/data-science-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
+"%PY%" naukri_collector.py "https://www.naukri.com/java-full-stack-developer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
+"%PY%" naukri_collector.py "https://www.naukri.com/machine-learning-engineer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
+"%PY%" naukri_collector.py "https://www.naukri.com/python-full-stack-developer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
 
 REM hirist, the second board. Until these were added, every hirist row in
 REM the database came from a hand-run collector: times_seen sat at 1.0
@@ -83,13 +89,13 @@ REM measured -- so each one is a genuinely different slice, not the same
 REM jobs re-surfaced. Also verified and ready if more depth is wanted:
 REM full-stack-developer, python-developer, qa-engineer, java-developer
 REM (java overlaps the most, 14 of 20 new).
-python hirist_collector.py "https://www.hirist.tech/search/software-developer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
-python hirist_collector.py "https://www.hirist.tech/search/cloud-engineer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
-python hirist_collector.py "https://www.hirist.tech/search/machine-learning-engineer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
-python hirist_collector.py "https://www.hirist.tech/search/data-engineer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
-python hirist_collector.py "https://www.hirist.tech/search/devops-engineer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
-python hirist_collector.py "https://www.hirist.tech/search/backend-developer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
-python hirist_collector.py "https://www.hirist.tech/search/frontend-developer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
+"%PY%" hirist_collector.py "https://www.hirist.tech/search/software-developer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
+"%PY%" hirist_collector.py "https://www.hirist.tech/search/cloud-engineer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
+"%PY%" hirist_collector.py "https://www.hirist.tech/search/machine-learning-engineer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
+"%PY%" hirist_collector.py "https://www.hirist.tech/search/data-engineer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
+"%PY%" hirist_collector.py "https://www.hirist.tech/search/devops-engineer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
+"%PY%" hirist_collector.py "https://www.hirist.tech/search/backend-developer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
+"%PY%" hirist_collector.py "https://www.hirist.tech/search/frontend-developer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
 
 REM Backstop only. naukri_collector.py already snapshots after every
 REM run; this catches the case where every search failed before reaching
@@ -108,7 +114,7 @@ REM --------------------------------------------------------------------
 :start_services
 echo.
 echo === Starting the API ===
-start "Job Market API" cmd /k "uvicorn api.main:app --reload"
+start "Job Market API" cmd /k "%PY% -m uvicorn api.main:app --reload"
 
 echo Waiting for the API to come up...
 set ATTEMPTS=0
@@ -136,7 +142,7 @@ REM --------------------------------------------------------------------
 :start_dashboard
 echo.
 echo === Starting the dashboard ===
-start "Job Market Dashboard" cmd /k "streamlit run Home.py"
+start "Job Market Dashboard" cmd /k "%PY% -m streamlit run Home.py"
 
 echo.
 echo Both are launching in their own windows. Streamlit opens your browser
@@ -164,7 +170,7 @@ echo ================================================== >> "%LOGFILE%"
 echo Check started: %date% %time% >> "%LOGFILE%"
 echo ================================================== >> "%LOGFILE%"
 
-python liveness_checker.py >> "%LOGFILE%" 2>&1
+"%PY%" liveness_checker.py >> "%LOGFILE%" 2>&1
 
 REM hirist publishes no expiry signal at all. hasExpired was measured on
 REM 2026-09-08 to be a clock, not an event: it flips at exactly 150 days
