@@ -98,6 +98,53 @@ def test_demand_view_never_counts_a_skill_twice_for_one_posting(rows):
     assert dupes == [], f"posting_skill_demand yielded a skill twice: {dupes}"
 
 
+def test_no_new_cross_column_skill_duplicates(rows):
+    """Guards against the actual failure, not just its symptom.
+
+    test_demand_view_never_counts_a_skill_twice_for_one_posting only checks
+    the VIEW's output -- and the view's own DISTINCT is what makes that test
+    pass. A future migration that repeats the 2026-09-16 mistake (writing a
+    skill_id into skill_ids without checking whether it already sits in
+    skill_groups on the same row) would keep sailing through that test
+    forever, because the view would just absorb the new duplicate too. That
+    is the gap: the mitigation was tested, not the precondition it relies on.
+
+    This checks the RAW columns instead, against a fixed allowlist of the
+    four duplicates already known and accounted for (CLAUDE.md, "Demand is
+    the posting_skill_demand view"). Anything beyond that list is new and
+    fails loudly, naming the job_id and skill so it can be traced to
+    whichever migration or write path just created it -- most likely a skill
+    merge that didn't check `skill_ids && skill_group_ids(skill_groups)`
+    before repointing an id, which is exactly what created the four already
+    here.
+    """
+    KNOWN_OVERLAPS = {
+        (2250, "Django"),
+        (2695, "Snowflake"),
+        (2952, "Terraform"),
+        (2963, "Terraform"),
+    }
+    overlaps = rows("""
+        SELECT ps.job_id, sk.skill_name
+          FROM posting_skills ps
+          JOIN skills sk ON sk.skill_id = ANY(ps.skill_ids)
+                        AND sk.skill_id = ANY(skill_group_ids(ps.skill_groups))
+         ORDER BY 1, 2
+    """)
+    found = {(r["job_id"], r["skill_name"]) for r in overlaps}
+    new = found - KNOWN_OVERLAPS
+    assert new == set(), (
+        f"a skill sits in both skill_ids and skill_groups on a row not in "
+        f"the known allowlist: {sorted(new)}. This is how the "
+        f"Terraform/Django/Snowflake over-count happened on 2026-09-16 -- "
+        f"whatever just wrote this row concatenated or repointed an id "
+        f"without checking `skill_ids && skill_group_ids(skill_groups)` "
+        f"first. If it's genuinely a new legitimate case (the posting "
+        f"really demands the skill outright AND lists it as an "
+        f"alternative), add it to KNOWN_OVERLAPS here deliberately -- don't "
+        f"let it pass silently.")
+
+
 def test_demand_view_loses_no_posting_and_invents_none(rows):
     """Deduplicating must not drop a posting. Every posting carrying any
     skill -- outright or only as an alternative -- must appear."""

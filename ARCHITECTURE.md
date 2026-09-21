@@ -523,6 +523,17 @@ demands Terraform outright *and* lists it among alternatives is a real shape,
 and dropping either copy would discard a fact the source actually gave. The
 duplicate is removed where it is read.
 
+**Fixing this once was not enough — the same mistake needed a guard against
+recurrence, not just a workaround for the instance found.**
+`test_demand_view_never_counts_a_skill_twice_for_one_posting` only proves the
+view's own `DISTINCT` still works; it says nothing about whether a *new*
+overlap has appeared in the raw columns, and would keep passing forever if
+one had — the view would just absorb it too. `test_no_new_cross_column_skill_duplicates`
+checks the precondition instead: a hardcoded allowlist of exactly these four
+`(job_id, skill_name)` pairs, failing by name the instant a fifth exists.
+Verified to actually catch one: a fifth overlap planted inside a rolled-back
+transaction made the guard's own query return 5 rows, not 4 (2026-09-21).
+
 **Neither correction is an `instrument_changes` row.** That ledger records
 changes to what gets *recorded*, and `skill_daily_counts` was never affected by
 either. The snapshot function had the full expression from the start, and its

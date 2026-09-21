@@ -367,8 +367,19 @@ already offered Terraform as an alternative — it verified no id appeared twice
 `COUNT(*)` read path then over-counted: Terraform 150 postings against a true
 148. **The rows are not corrupt** — such a posting genuinely demands the skill
 outright and also lists it as a substitute, so deleting either copy would
-destroy a real fact. It is deduplicated on read instead. A future merge
-migration should check `skill_ids && skill_group_ids(skill_groups)`.
+destroy a real fact. It is deduplicated on read instead.
+
+**"A future migration should check for this" is not a safeguard — a
+sentence nobody is forced to read is exactly how these four rows happened.**
+`test_no_new_cross_column_skill_duplicates` is the actual guard:
+`tests/test_data_integrity.py` holds a hardcoded allowlist of these four
+`(job_id, skill_name)` pairs, and fails by name the moment a fifth exists —
+whether from a merge migration repointing an id without checking, a
+collector writing a group and an outright requirement for the same skill, or
+anything else. Confirmed to trip: planting a fifth overlap inside a rolled-
+back transaction made the test's own query return 5 rows instead of 4
+(2026-09-21). A genuinely new legitimate case is added to the allowlist
+deliberately, not silently absorbed.
 
 **No instrument step came out of this, and the reason is worth knowing.**
 `snapshot_daily_skills()` has always used `COUNT(DISTINCT c.job_id)`, so the
