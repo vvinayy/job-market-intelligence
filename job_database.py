@@ -14,8 +14,27 @@ up committed in a file:
         $env:PGPASSWORD="your-password"
         $env:PGDATABASE="jobmarket"     (optional, defaults to jobmarket)
         $env:PGUSER="postgres"          (optional, defaults to postgres)
-        $env:PGHOST="localhost"         (optional)
+        $env:PGHOST="127.0.0.1"         (optional; this is already the default)
         $env:PGPORT="5432"              (optional)
+
+connection_params() is the one definition of these five values.
+api/database.py, liveness_checker.py and hirist_liveness_probe.py all
+import it rather than re-declaring their own -- they used to, and two of
+those four copies had drifted to `PGHOST` defaulting to "localhost"
+while the other two defaulted to "127.0.0.1". Fixed 2026-09-21.
+
+Not the same bug as dash_common.py's documented localhost/127.0.0.1 cost
+(2048 ms against 7 ms) -- that is real, but specific to the API server,
+which binds 127.0.0.1 only. Checked here before assuming it applied:
+`netstat` shows Postgres listening on both 0.0.0.0:5432 and [::]:5432,
+so "localhost" resolves to ::1 and connects immediately, no IPv4
+fallback wait. Five runs each way averaged 33.8 ms against 53.5 ms,
+which is noise, not a real gap -- one 147 ms outlier explains the
+difference entirely. 127.0.0.1 is still the default: it is never worse
+here and doesn't depend on Postgres staying dual-stack on every future
+machine this runs on, but the fix's actual value is the four copies
+becoming one, not a speed win that turned out not to exist for this
+particular connection.
 """
 
 import os
@@ -112,14 +131,28 @@ def _resolve_degree_specialization_ids(conn, pairs: set[tuple[int, int]]) -> dic
     return mapping
 
 
+def connection_params() -> dict:
+    """The five psycopg2.connect() kwargs, read from environment variables.
+
+    password is left out of the dict entirely when PGPASSWORD is unset
+    (os.environ.get returns None, and psycopg2 drops a None-valued kwarg),
+    not sent as an empty string -- an explicit "" forces password auth and
+    fails outright on a server using trust/peer auth locally, where no
+    password was ever the right answer.
+    """
+    params = {
+        "dbname": os.environ.get("PGDATABASE", "jobmarket"),
+        "user": os.environ.get("PGUSER", "postgres"),
+        "password": os.environ.get("PGPASSWORD"),
+        # 127.0.0.1, not localhost -- see the module docstring.
+        "host": os.environ.get("PGHOST", "127.0.0.1"),
+        "port": os.environ.get("PGPORT", "5432"),
+    }
+    return params
+
+
 def get_connection():
-    return psycopg2.connect(
-        dbname=os.environ.get("PGDATABASE", "jobmarket"),
-        user=os.environ.get("PGUSER", "postgres"),
-        password=os.environ.get("PGPASSWORD"),
-        host=os.environ.get("PGHOST", "localhost"),
-        port=os.environ.get("PGPORT", "5432"),
-    )
+    return psycopg2.connect(**connection_params())
 
 
 # ON CONFLICT is where dedup happens: a known fingerprint refreshes in place.

@@ -558,6 +558,36 @@ is `test_skills_endpoint_agrees_with_the_skill_filter`, which asks two
 independent paths the same question and fails if they differ — the check that
 would have caught the original bug on the day it shipped.
 
+## 10a-1. The same lesson, found a third time, in the connection code
+
+`job_database.py`, `api/database.py`, `liveness_checker.py` and
+`hirist_liveness_probe.py` each hand-declared their own five psycopg2
+kwargs (`dbname`/`user`/`password`/`host`/`port`) instead of sharing one
+definition — identical shape to the skill-demand duplication above, found
+2026-09-21 by an audit asking exactly the question that should be asked
+after any bug like this: *where else does this pattern already exist?*
+
+Two of the four had drifted on `PGHOST`'s default: `job_database.py` and
+`api/database.py` said `"localhost"`, `liveness_checker.py` and
+`hirist_liveness_probe.py` said `"127.0.0.1"`. `job_database.connection_params()`
+is now the one definition; the other three import it.
+
+**Checked, not assumed, whether this was the known `dash_common.py`
+performance bug wearing a different hat — and it wasn't.** That bug (2048 ms
+against 7 ms) is real but specific to the API server, which `netstat`
+confirms binds `127.0.0.1:8000` only: a client resolving `localhost` to
+`::1` first hits a closed port and waits out a connect timeout before
+falling back to IPv4. Postgres is different — `netstat` shows it listening
+on both `0.0.0.0:5432` and `[::]:5432`, so `localhost` resolves to `::1` and
+connects immediately, no fallback needed. Five connections measured each
+way averaged 33.8 ms against 53.5 ms, and a single 147 ms outlier accounts
+for the entire gap — noise, not a systematic cost. `127.0.0.1` was kept as
+the shared default anyway (never worse, and doesn't assume every future
+Postgres install stays dual-stack), but the fix's real value is one
+definition instead of four, not a speed win that turned out not to apply
+here. Reusing a number measured on a different code path would have been
+the same mistake `normalize_working_type()` made, one layer up.
+
 ## 10b. A rename is a label fix, not a correction
 
 `skill_daily_counts` stores the skill NAME, so a spelling entering

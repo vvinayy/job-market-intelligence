@@ -44,7 +44,6 @@ the "expired" page is drawn in JavaScript after the shell loads. Measured
 2026-09-02 over both states.
 """
 
-import os
 import random
 import sys
 import time
@@ -54,6 +53,7 @@ import httpx
 import psycopg2
 
 import liveness
+from job_database import connection_params
 
 # The same endpoint hirist_collector.py already reads postings from. Deliberately
 # not re-declared there and imported here: this script must keep working if the
@@ -73,13 +73,7 @@ REQUEST_TIMEOUT = 30
 
 
 def _connect():
-    return psycopg2.connect(
-        dbname=os.environ.get("PGDATABASE", "jobmarket"),
-        user=os.environ.get("PGUSER", "postgres"),
-        password=os.environ.get("PGPASSWORD", ""),
-        host=os.environ.get("PGHOST", "127.0.0.1"),
-        port=os.environ.get("PGPORT", "5432"),
-    )
+    return psycopg2.connect(**connection_params())
 
 
 def targets(conn, limit: int | None) -> list[tuple[int, str]]:

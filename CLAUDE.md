@@ -161,9 +161,29 @@ $PY = "D:\python\python.exe"
 ```
 
 Configuration is environment variables only, never files: `PGDATABASE`
-(default `jobmarket`), `PGUSER` (`postgres`), `PGPASSWORD`, `PGHOST`, `PGPORT`.
-The API also accepts `DATABASE_URL`; the dashboard accepts `API_BASE_URL`
-(default `http://localhost:8000`).
+(default `jobmarket`), `PGUSER` (`postgres`), `PGPASSWORD`, `PGHOST` (default
+`127.0.0.1`, not `localhost` — this file said `localhost` until 2026-09-21,
+which was always wrong for the dashboard: `dash_common.py`'s own
+`_DEFAULT_API` has read `127.0.0.1` from the start), `PGPORT`. The API also
+accepts `DATABASE_URL`; the dashboard accepts `API_BASE_URL` (default
+`http://127.0.0.1:8000`).
+
+**`PGHOST`'s default was also hand-typed four times and had drifted: two
+copies said `"localhost"`, two said `"127.0.0.1"`.** `job_database.py`,
+`api/database.py`, `liveness_checker.py` and `hirist_liveness_probe.py` each
+declared their own five connection kwargs (`dbname`/`user`/`password`/
+`host`/`port`) instead of sharing one definition — the same shape of mistake
+as the skill-demand expression, one rule copied by hand into several places.
+`job_database.connection_params()` is now the single definition; the other
+three import it. **This is not the same fix as the `dash_common.py`
+`127.0.0.1`-vs-`localhost` cost** (2048 ms against 7 ms) — that cost is real
+but specific to the API server, which binds `127.0.0.1` only, so a client
+resolving `localhost` to `::1` first hits a closed port and waits out a
+timeout. Checked before assuming it transferred to Postgres: `netstat` shows
+Postgres listening on both `0.0.0.0:5432` and `[::]:5432`, and five
+connections each way averaged 33.8 ms against 53.5 ms — noise, not a real
+gap. The consolidation's value is the four copies becoming one, not a speed
+win that turned out not to exist for this particular connection.
 
 ## Where things are
 

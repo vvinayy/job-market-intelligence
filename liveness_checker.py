@@ -42,7 +42,6 @@ unattended from Task Scheduler, and an aborted run that only prints into a
 log file is indistinguishable from one that never ran.
 """
 
-import os
 import random
 import sys
 import time
@@ -53,6 +52,7 @@ import psycopg2
 
 import liveness
 import notify
+from job_database import connection_params
 
 # A real browser UA. Naukri serves the redirect to a plain client, but an
 # obviously-scripted agent is the first thing any site rate-limits.
@@ -80,13 +80,7 @@ HIRIST_DELIST_DAYS = 150
 
 
 def _connect():
-    return psycopg2.connect(
-        dbname=os.environ.get("PGDATABASE", "jobmarket"),
-        user=os.environ.get("PGUSER", "postgres"),
-        password=os.environ.get("PGPASSWORD", ""),
-        host=os.environ.get("PGHOST", "127.0.0.1"),
-        port=os.environ.get("PGPORT", "5432"),
-    )
+    return psycopg2.connect(**connection_params())
 
 
 def due_for_check(conn, limit: int | None) -> list[tuple[int, str]]:

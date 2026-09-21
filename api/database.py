@@ -14,6 +14,8 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from psycopg2.pool import SimpleConnectionPool
 
+from job_database import connection_params
+
 
 _pool: SimpleConnectionPool | None = None
 
@@ -32,14 +34,7 @@ def init_pool(minconn: int = 1, maxconn: int = 10):
     if url:
         _pool = SimpleConnectionPool(minconn, maxconn, dsn=url)
     else:
-        _pool = SimpleConnectionPool(
-            minconn, maxconn,
-            dbname=os.environ.get("PGDATABASE", "jobmarket"),
-            user=os.environ.get("PGUSER", "postgres"),
-            password=os.environ.get("PGPASSWORD"),
-            host=os.environ.get("PGHOST", "localhost"),
-            port=os.environ.get("PGPORT", "5432"),
-        )
+        _pool = SimpleConnectionPool(minconn, maxconn, **connection_params())
 
 
 def close_pool():
