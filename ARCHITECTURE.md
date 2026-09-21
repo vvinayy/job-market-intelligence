@@ -5,9 +5,7 @@ file explains **why it is shaped the way it is** — the decisions, what forced
 them, what evidence settled each one, and which arguments were considered and
 rejected.
 
-It is written to be read cold. Someone picking this project up with no memory
-of the conversations behind it should be able to read this file and `CLAUDE.md`
-and know not just the current state but *why it is the current state*, so they
+It is written to know not just the current state but *why it is the current state*, so they
 do not re-derive a decision that was already settled, or undo one whose reason
 is not visible in the code.
 
@@ -478,9 +476,8 @@ allowlist. Never put caller input directly into SQL.
 
 A posting's demanded skills are `skill_ids || skill_group_ids(skill_groups)`.
 `skill_ids` carries outright requirements; a skill the employer offered as one
-of several alternatives sits in `skill_groups` and is deliberately not repeated
-in `skill_ids`, because "wants AWS" and "would accept AWS" are different claims
-and the schema keeps them separable.
+of several alternatives sits in `skill_groups`, because "wants AWS" and "would
+accept AWS" are different claims and the schema keeps them separable.
 
 Four places had the full expression from the start —
 `snapshot_daily_skills()`, the `?skill=` filter on `/postings`, the
@@ -490,16 +487,65 @@ consistent. The contradiction was only visible by asking two pages the same
 question: the Skills chart said AWS appeared in 295 postings, the Jobs filter
 returned 419 for the same skill, and Trends plotted 419. Corrected 2026-09-17.
 
-**Not an `instrument_changes` row.** That ledger records changes to what gets
-*recorded*, and `skill_daily_counts` was never affected — the snapshot function
-was right all along. No series steps; the Skills page stops disagreeing with
-history that was already correct. Filing it there would claim a discontinuity
-that does not exist.
+**That correction left the rule copied twelve times, and a second bug inside
+it.** Writing the expression out at every site is the same fragility one layer
+along, and it hid a subtler fault: the two columns are *meant* to be disjoint
+but nothing enforces it, and four rows hold one skill in both. Concatenating
+yields that skill twice, so every `COUNT(*)` path over-counted — Terraform 150
+postings against a true 148, Django 107 against 106, Snowflake 67 against 66.
+The cause was `migrations/2026-09-16-merge-duplicate-skill-spellings.sql`,
+which repointed losing spellings into `skill_ids` and verified no id appeared
+twice *within* that column, never *across* both.
 
-The lesson generalises: a rule enforced in four places and violated in eight is
-not a rule, it is a convention. Where one expression defines a concept, the
-expression belongs somewhere both sides read — a view, a function, or a
-generated column — not copied into every query that needs it.
+**The view is the single definition, added 2026-09-21:**
+
+```sql
+CREATE OR REPLACE VIEW posting_skill_demand AS
+    SELECT DISTINCT ps.job_id, u.skill_id
+      FROM posting_skills ps,
+           unnest(ps.skill_ids || skill_group_ids(ps.skill_groups)) AS u(skill_id);
+```
+
+Eleven of those twelve query sites now read it — eight in `analytics.py`, one
+each in `postings.py` and `reference.py`, and `snapshot_daily_skills()`. The
+twelfth, `?skills_all=`, keeps the concatenation because containment operates
+on an **array**, not rows; so do the two uses in `schema.sql` that were never
+query logic to begin with — the preferred-subset CHECK and
+`idx_posting_skills_all`. Rows come from the view, arrays are written out.
+
+`?skill=` is deliberately not among them: it tests the two arrays separately
+and ORs the results so both GIN indexes apply, measured 14× faster than
+concatenating first. Postgres inlines a view this simple, so no query plan
+changed.
+
+The four rows are **not repaired in place**, deliberately: a posting that
+demands Terraform outright *and* lists it among alternatives is a real shape,
+and dropping either copy would discard a fact the source actually gave. The
+duplicate is removed where it is read.
+
+**Neither correction is an `instrument_changes` row.** That ledger records
+changes to what gets *recorded*, and `skill_daily_counts` was never affected by
+either. The snapshot function had the full expression from the start, and its
+`COUNT(DISTINCT c.job_id)` collapsed the duplicate rows before they could be
+written — which is precisely why history stayed correct while six live
+endpoints were wrong. Both forms were diffed row for row over 642 snapshot
+rows on 2026-09-21: zero differences.
+
+**This is why the charts show no step.** Everything that was wrong is
+recomputed on every request and stores nothing, so correcting it moved the past
+and the present in the same instant; there is no stored number for tomorrow to
+disagree with. Filing either as an instrument change would claim a
+discontinuity that does not exist — the opposite failure to the 2026-09-02
+detector rewrite, where a real step exists and *must* stay visible.
+
+The lesson generalises, and it took two rounds to learn. A rule enforced in
+four places and violated in eight is not a rule, it is a convention — and
+fixing it by writing the rule out twelve times makes the convention longer, not
+safer. Where one expression defines a concept, it belongs somewhere every
+caller reads: a view, a function, or a generated column. The test that pins it
+is `test_skills_endpoint_agrees_with_the_skill_filter`, which asks two
+independent paths the same question and fails if they differ — the check that
+would have caught the original bug on the day it shipped.
 
 ## 10b. A rename is a label fix, not a correction
 

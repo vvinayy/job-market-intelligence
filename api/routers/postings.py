@@ -51,9 +51,9 @@ BASE_SELECT = """
         c.salary_min, c.salary_max,
         COALESCE(
             (SELECT array_agg(sk.skill_name ORDER BY sk.skill_name)
-             FROM posting_skills ps
-             JOIN skills sk ON sk.skill_id = ANY(ps.skill_ids || skill_group_ids(ps.skill_groups))
-             WHERE ps.job_id = c.job_id),
+             FROM posting_skill_demand d
+             JOIN skills sk ON sk.skill_id = d.skill_id
+             WHERE d.job_id = c.job_id),
             '{}'
         ) AS skills,
         COALESCE(

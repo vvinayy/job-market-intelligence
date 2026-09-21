@@ -328,19 +328,61 @@ It never changes after insert, and without it the liveness queue would join back
 to the spine purely to filter on it — measured 38 pages against 274. Both copies
 are written by the same upsert.
 
-**Demand is `skill_ids || skill_group_ids(skill_groups)`, everywhere.**
+**Demand is the `posting_skill_demand` view — join it, don't rewrite it.**
 `skill_ids` holds outright requirements; a skill offered as one of several
-alternatives ("AWS or Azure") lives in `skill_groups` and is *not* repeated in
-`skill_ids`. Reading `skill_ids` alone is an undercount, and eight read paths
+alternatives ("AWS or Azure") lives in `skill_groups`. Demand is both
+together. Reading `skill_ids` alone is an undercount, and eight read paths
 were doing exactly that until 2026-09-17 — the Skills page said AWS appeared in
 295 postings while `/postings?skill=AWS` returned 419 and the Trends series
 counted 419 too. Same app, three numbers, one of them wrong in six places.
 `snapshot_daily_skills()`, the `?skill=` filter, the preferred-subset CHECK and
 the GIN index had the rule from the start; the API never got it.
 
+That fix wrote `skill_ids || skill_group_ids(skill_groups)` out by hand at
+twelve sites across four files, which is the same fragility one layer along.
+**On 2026-09-21 the rows-shaped callers were collapsed into one view**:
+
+```sql
+CREATE OR REPLACE VIEW posting_skill_demand AS
+    SELECT DISTINCT ps.job_id, u.skill_id
+      FROM posting_skills ps,
+           unnest(ps.skill_ids || skill_group_ids(ps.skill_groups)) AS u(skill_id);
+```
+
+Postgres inlines it, so no plan changes. Exactly three callers still write the
+concatenation, because they need an **array**, not rows: `?skills_all=`
+containment, the preferred-subset CHECK, and `idx_posting_skills_all`. That is
+the line — rows come from the view, arrays are written out. `?skill=` is
+deliberately *not* one of them: it tests the two arrays separately and ORs the
+results so both GIN indexes can serve it, measured 14× faster than
+concatenating first.
+
+**The two columns are not guaranteed disjoint, and `DISTINCT` is why that
+stopped mattering.** Four rows hold one skill both outright *and* in a choice
+group (jobs 2250 Django, 2695 Snowflake, 2952 and 2963 Terraform). They came
+from `migrations/2026-09-16-merge-duplicate-skill-spellings.sql`, which
+repointed "Iac Terraform" into Terraform inside `skill_ids` on postings that
+already offered Terraform as an alternative — it verified no id appeared twice
+*within* `skill_ids` and never checked *across* the two columns. Every
+`COUNT(*)` read path then over-counted: Terraform 150 postings against a true
+148. **The rows are not corrupt** — such a posting genuinely demands the skill
+outright and also lists it as a substitute, so deleting either copy would
+destroy a real fact. It is deduplicated on read instead. A future merge
+migration should check `skill_ids && skill_group_ids(skill_groups)`.
+
+**No instrument step came out of this, and the reason is worth knowing.**
+`snapshot_daily_skills()` has always used `COUNT(DISTINCT c.job_id)`, so the
+duplicate collapsed before anything reached `skill_daily_counts` — the stored
+history was never inflated. Everything that *was* wrong is recomputed on every
+request and keeps no history, so correcting it moved the past and the present
+at once. Both forms were diffed row for row over today's 642 snapshot rows:
+zero differences. Hence no `instrument_changes` row and no
+`skill_daily_corrections` row — nothing recorded was ever wrong.
+
 The single deliberate exception is `skill_flexibility()`, where `required`
 means "demanded outright" as opposed to negotiable — there the distinction *is*
-the measurement. Everywhere else, use the full expression.
+the measurement, so it joins the view to pick *which* skills a posting demands
+but still reads the raw columns for the two `FILTER`s.
 
 **`skills.category` is a filter, not a label — NULL is the common, correct
 state.** About 88% of rows carry no category, and that is the design:

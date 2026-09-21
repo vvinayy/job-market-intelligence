@@ -160,9 +160,8 @@ def list_skills(
         SELECT sk.skill_name AS skill,
                COUNT(*)::int AS postings,
                ROUND(100.0 * COUNT(*) / {total}, 2)::float AS share_pct
-        FROM posting_skills ps
-        JOIN LATERAL unnest(ps.skill_ids || skill_group_ids(ps.skill_groups)) AS u(skill_id) ON true
-        JOIN skills sk ON sk.skill_id = u.skill_id
+        FROM posting_skill_demand d
+        JOIN skills sk ON sk.skill_id = d.skill_id
         {where}
         GROUP BY sk.skill_name
         HAVING COUNT(*) >= %s

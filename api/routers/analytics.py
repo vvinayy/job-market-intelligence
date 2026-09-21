@@ -100,8 +100,7 @@ def summary():
     row["liveness_started_on"] = fetch_value(
         "SELECT MIN(started_at)::date FROM liveness_runs")
     row["distinct_skills"] = fetch_value(
-        "SELECT COUNT(DISTINCT s) FROM posting_skills, "
-        "unnest(skill_ids || skill_group_ids(skill_groups)) AS s") or 0
+        "SELECT COUNT(DISTINCT skill_id) FROM posting_skill_demand") or 0
     row["cities_covered"] = fetch_value(
         "SELECT COUNT(DISTINCT city_id) FROM posting_cities") or 0
     row["postings_with_education"] = fetch_value(
@@ -110,12 +109,13 @@ def summary():
         SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY openings)
         FROM cleaned_postings WHERE openings IS NOT NULL""")
     # Divided by ALL postings, not just those with skills, so a posting with
-    # none still counts in the denominator. COALESCE: array_length('{}') is NULL.
+    # none still counts in the denominator. Counting the view's rows rather
+    # than summing array_length keeps this agreeing with every other skill
+    # count: four postings hold one skill both outright and as an
+    # alternative, and the array still carries it twice.
     row["avg_skills_per_posting"] = fetch_value("""
-        SELECT ROUND(COALESCE(SUM(array_length(
-                   skill_ids || skill_group_ids(skill_groups), 1)), 0)::numeric
-                 / NULLIF(%s, 0), 2)::float
-        FROM posting_skills
+        SELECT ROUND(COUNT(*)::numeric / NULLIF(%s, 0), 2)::float
+        FROM posting_skill_demand
     """, (row.get("total_postings") or 0,)) or 0.0
 
     total = row.get("total_postings") or 1
@@ -125,13 +125,18 @@ def summary():
     return Summary(**row)
 
 
-# Demand is skill_ids || skill_group_ids(skill_groups) everywhere in this
-# file except skill_flexibility(), where `required` means "demanded outright"
-# and the distinction is the measurement. Reading skill_ids alone understated
-# AWS by 124 postings (295 against 419) and disagreed with both
-# snapshot_daily_skills() and the ?skill= filter on /postings, so the Skills
-# page and the Trends page answered the same question differently. Corrected
-# 2026-09-17.
+# Demand is the posting_skill_demand view everywhere in this file except
+# skill_flexibility(), where `required` means "demanded outright" as opposed
+# to negotiable and the distinction IS the measurement.
+#
+# The view is one copy of skill_ids || skill_group_ids(skill_groups). Reading
+# skill_ids alone understated AWS by 124 postings (295 against 419) and
+# disagreed with both snapshot_daily_skills() and the ?skill= filter on
+# /postings, so the Skills page and the Trends page answered the same question
+# differently. Corrected 2026-09-17 by writing the concatenation out at each
+# site; replaced by the view 2026-09-21, which also deduplicates -- four rows
+# hold one skill both outright and as an alternative, which the raw
+# concatenation counted twice (Terraform 150 against a true 148).
 #
 # Deliberately NOT an instrument_changes row. That ledger records changes to
 # what gets RECORDED, and skill_daily_counts is untouched here -- the snapshot
@@ -174,9 +179,8 @@ def skill_demand(
     return fetch_all(f"""
         SELECT sk.skill_name AS name, COUNT(*)::int AS postings
         FROM cleaned_postings c
-        JOIN posting_skills ps ON ps.job_id = c.job_id
-        JOIN LATERAL unnest(ps.skill_ids || skill_group_ids(ps.skill_groups)) AS u(skill_id) ON true
-        JOIN skills sk ON sk.skill_id = u.skill_id
+        JOIN posting_skill_demand d ON d.job_id = c.job_id
+        JOIN skills sk ON sk.skill_id = d.skill_id
         {w.sql}
         GROUP BY sk.skill_name ORDER BY postings DESC LIMIT %s
     """, w.values + (limit,))
@@ -324,9 +328,8 @@ def skill_category_mix(
     total = fetch_value(f"""
         SELECT COUNT(*)
         FROM cleaned_postings c
-        JOIN posting_skills ps ON ps.job_id = c.job_id
-        JOIN LATERAL unnest(ps.skill_ids || skill_group_ids(ps.skill_groups)) AS u(skill_id) ON true
-        JOIN skills sk ON sk.skill_id = u.skill_id
+        JOIN posting_skill_demand d ON d.job_id = c.job_id
+        JOIN skills sk ON sk.skill_id = d.skill_id
         {w.sql}
     """, w.values) or 1
 
@@ -334,9 +337,8 @@ def skill_category_mix(
         SELECT sk.category AS bucket, COUNT(*)::int AS postings,
                ROUND(100.0 * COUNT(*) / {total}, 2)::float AS share_pct
         FROM cleaned_postings c
-        JOIN posting_skills ps ON ps.job_id = c.job_id
-        JOIN LATERAL unnest(ps.skill_ids || skill_group_ids(ps.skill_groups)) AS u(skill_id) ON true
-        JOIN skills sk ON sk.skill_id = u.skill_id
+        JOIN posting_skill_demand d ON d.job_id = c.job_id
+        JOIN skills sk ON sk.skill_id = d.skill_id
         {w.sql}
         GROUP BY sk.category ORDER BY postings DESC
     """, w.values)
@@ -363,12 +365,13 @@ def co_occurrence(
     limit: int = Query(100, ge=1, le=1000),
     min_together: int = Query(1, ge=1),
 ):
-    # One row per posting means pairing needs two unnests, one per side of the
-    # self-join. `a.skill_id < b.skill_id` gives each pair once, never itself.
+    # Pairing self-joins the demand view, one side per member of the pair.
+    # `a.skill_id < b.skill_id` gives each pair once, never itself. The view's
+    # DISTINCT matters more here than anywhere else: an undeduplicated side
+    # would pair a posting's duplicated skill with every other skill twice.
     return fetch_all("""
         WITH exploded AS (
-            SELECT ps.job_id, u.skill_id
-            FROM posting_skills ps, unnest(ps.skill_ids || skill_group_ids(ps.skill_groups)) AS u(skill_id)
+            SELECT job_id, skill_id FROM posting_skill_demand
         ),
         ranked AS (
             SELECT e.skill_id, COUNT(*) AS n
@@ -419,9 +422,8 @@ def skill_suggestions(
         SELECT sk.skill_name AS skill, COUNT(*)::int AS postings,
                ROUND(100.0 * COUNT(*) / {base}, 2)::float AS share_pct
         FROM cleaned_postings c
-        JOIN posting_skills ps ON ps.job_id = c.job_id
-        JOIN LATERAL unnest(ps.skill_ids || skill_group_ids(ps.skill_groups)) AS u(skill_id) ON true
-        JOIN skills sk ON sk.skill_id = u.skill_id
+        JOIN posting_skill_demand d ON d.job_id = c.job_id
+        JOIN skills sk ON sk.skill_id = d.skill_id
         {w.sql}
           AND NOT (sk.skill_name = ANY(%s))
           AND sk.skill_name NOT IN (SELECT skill FROM skill_blocklist)
@@ -510,8 +512,12 @@ def skill_flexibility(
             SELECT sk.skill_id, sk.skill_name,
                    COUNT(*) FILTER (WHERE sk.skill_id = ANY(ps.skill_ids))                     AS required,
                    COUNT(*) FILTER (WHERE sk.skill_id = ANY(skill_group_ids(ps.skill_groups))) AS alternative
+            -- The view picks WHICH skills a posting demands; the two FILTERs
+            -- above still read the raw columns, because here the split
+            -- between outright and negotiable is the whole measurement.
             FROM posting_skills ps
-            JOIN skills sk ON sk.skill_id = ANY(ps.skill_ids || skill_group_ids(ps.skill_groups))
+            JOIN posting_skill_demand d ON d.job_id = ps.job_id
+            JOIN skills sk ON sk.skill_id = d.skill_id
             WHERE sk.skill_name NOT IN (SELECT skill FROM skill_blocklist)
             GROUP BY sk.skill_id, sk.skill_name
         ),

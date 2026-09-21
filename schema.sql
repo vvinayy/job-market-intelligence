@@ -446,6 +446,46 @@ CREATE INDEX IF NOT EXISTS idx_posting_skills_skill_group_ids
 
 
 -- ---------------------------------------------------------------------
+-- POSTING_SKILL_DEMAND — "every skill this posting would accept", once.
+--
+-- skill_ids holds outright requirements; a skill offered as one of several
+-- alternatives ("AWS or Azure") lives in skill_groups and is normally not
+-- repeated there. Demand is both together, and reading skill_ids alone is
+-- an undercount -- eight read paths did exactly that until 2026-09-17 and
+-- reported AWS in 295 postings against a true 419.
+--
+-- The rule was written out by hand at twelve sites. This view is the one
+-- copy for every caller that wants the skills as ROWS. Exactly three
+-- callers still write the concatenation, because an array is what they
+-- operate on: ?skills_all= (containment), the preferred-subset CHECK
+-- above, and idx_posting_skills_all. ?skill= is NOT one of them -- it
+-- tests the two arrays separately and ORs the results, so that both GIN
+-- indexes can serve it; concatenating first builds a new array per row
+-- and no index can cover it, measured 14x slower.
+--
+-- DISTINCT is load-bearing, not tidiness. The two columns are meant to be
+-- disjoint but are not guaranteed to be: the 2026-09-16 merge migration
+-- repointed "Iac Terraform" -> Terraform inside skill_ids on postings that
+-- already offered Terraform in a group, and its verification checked for
+-- duplicates WITHIN skill_ids but never ACROSS the two columns. Four rows
+-- came out holding one skill twice (jobs 2250 Django, 2695 Snowflake, 2952
+-- and 2963 Terraform), which inflated Terraform to 150 postings against a
+-- true 148 on every COUNT(*) read path. The rows are not wrong -- such a
+-- posting really does demand the skill outright AND list it as an
+-- alternative, and deleting either copy would destroy a real fact -- so
+-- this is deduplicated on read rather than repaired in place.
+--
+-- Postgres inlines a view this simple, so a caller's plan is unchanged.
+-- snapshot_daily_skills() was already immune via COUNT(DISTINCT job_id),
+-- which is why skill_daily_counts history never recorded the inflation and
+-- this fix introduces no step in the trend series.
+CREATE OR REPLACE VIEW posting_skill_demand AS
+    SELECT DISTINCT ps.job_id, u.skill_id
+      FROM posting_skills ps,
+           unnest(ps.skill_ids || skill_group_ids(ps.skill_groups)) AS u(skill_id);
+
+
+-- ---------------------------------------------------------------------
 -- POSTING_QUALIFICATIONS — one row per UG/PG/Doctorate entry actually
 -- present on a posting (a posting with no Doctorate row simply gets no
 -- row here for it, rather than a padded NULL). field_of_study holds

@@ -108,15 +108,23 @@ BEGIN
     FROM cleaned_postings c
     -- last_seen_date moved to posting_sightings in the 2026-09-15 split.
     JOIN posting_sightings sg ON sg.job_id = c.job_id
-    JOIN posting_skills ps ON ps.job_id = c.job_id
-    -- skill_ids holds only the outright requirements; a skill offered
-    -- as one of several alternatives lives in skill_groups and is not
-    -- repeated there. Demand means "this posting would accept AWS",
-    -- so both are counted -- reading skill_ids alone would have cut
-    -- AWS from 207 postings to 149 overnight and made every day after
-    -- today incomparable with every day before it.
-    JOIN LATERAL unnest(ps.skill_ids || skill_group_ids(ps.skill_groups)) AS u(skill_id) ON true
-    JOIN skills sk ON sk.skill_id = u.skill_id
+    -- Demand means "this posting would accept AWS", so an outright
+    -- requirement and an either/or alternative both count. The
+    -- posting_skill_demand view is the one definition of that; reading
+    -- skill_ids alone would have cut AWS from 207 postings to 149
+    -- overnight and made every day after today incomparable with every
+    -- day before it.
+    --
+    -- COUNT(DISTINCT c.job_id) below is what kept this table correct
+    -- while six live endpoints were over-counting: four postings hold a
+    -- skill both outright and as an alternative, so the raw
+    -- concatenation yields it twice, and DISTINCT collapsed it before it
+    -- was ever written. Swapping in the view changes no stored number --
+    -- both forms diffed row for row over today's 642 snapshot rows on
+    -- 2026-09-21, zero differences -- which is why this needs no
+    -- instrument_changes row and the trend series has no step in it.
+    JOIN posting_skill_demand psd ON psd.job_id = c.job_id
+    JOIN skills sk ON sk.skill_id = psd.skill_id
     WHERE sg.last_seen_date = CURRENT_DATE
     -- Positional: 2 is skill_name, 3 is c.source.
     GROUP BY 2, 3
