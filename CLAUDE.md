@@ -99,8 +99,11 @@ the evidence, and it is not close.
 `--server.fileWatcherType poll` instead of the native watcher. Polling
 re-scans the folder on a timer instead of holding a persistent handle, so
 a sleep/resume cycle has nothing to invalidate. Applied 2026-09-18,
-immediately after crash 3; not yet proven across a full day of real sleep
-cycles — treat as the working theory until it survives one.
+immediately after crash 3. **Proven, not just theory, as of 2026-09-22**:
+checked the Application event log for Id 1000 (app crash) and Id 1002 (app
+hang) mentioning `streamlit`/`python` over the four days since — zero, on a
+machine that sleeps and wakes roughly a dozen times a day. The GPU
+bugcheck (`0x10E`) is quiet over the same window too, last seen 2026-09-16.
 
 Separately, unrelated to Streamlit: this machine has rebooted from a real
 bugcheck (`0x10E`, `VIDEO_TDR_FAILURE` — a graphics-driver timeout) six
