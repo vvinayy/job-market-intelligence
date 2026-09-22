@@ -796,6 +796,13 @@ Together they take the spine from 339 bytes to roughly 186. They were left out
 because they are the modest-bytes tail — the measured wins are all in what phase
 one does — and each adds a join to endpoints that currently need none.
 
+**On hold by explicit decision (2026-09-22), not an open backlog item.**
+Nothing an endpoint returns changes if this is built — it is purely fewer
+bytes on disk — so there is no correctness or feature pressure pushing it.
+Wait for a real trigger (storage pressure, or row-count growth making these
+bytes matter the way phase one's did) rather than building it because the
+design already exists.
+
 ## 17. Operational facts that have already cost time
 
 Recorded because each was discovered the expensive way.

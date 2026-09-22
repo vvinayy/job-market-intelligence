@@ -626,12 +626,18 @@ why the three skill columns were not merged into one.
   compared against the pre-migration dump and matched. The first real exercise
   of the new write path end to end is the next scheduled scrape.
 
-- **Phase 2 of the split is designed but not built.** `companies`, `searches`
-  and `naukri_roles` dictionaries, `certifications` and `unmapped_locations` as
-  1:N child tables, and retyping `fingerprint` from 64-char hex text to `bytea`
-  (65 bytes to 33). Together these take the spine from 339 bytes to roughly
-  186. They were left out of phase 1 because they are the modest-bytes tail;
-  the measured wins are all in what phase 1 does.
+- **Phase 2 of the split is designed but not built, and deliberately on
+  hold — not a backlog item to pick up when convenient.** `companies`,
+  `searches` and `naukri_roles` dictionaries, `certifications` and
+  `unmapped_locations` as 1:N child tables, and retyping `fingerprint` from
+  64-char hex text to `bytea` (65 bytes to 33). Together these take the
+  spine from 339 bytes to roughly 186. They were left out of phase 1
+  because they are the modest-bytes tail; the measured wins are all in what
+  phase 1 does. **User decision, 2026-09-22: do not build without asking
+  first.** It changes no output any endpoint returns — purely fewer bytes
+  on disk — so nothing forces it. Revisit only if a real need shows up
+  (storage pressure, or the spine's row count grows enough that these
+  bytes start mattering the way phase 1's did), not on a schedule.
 
 - **`?skills_all=` had no index that could serve it.** Containment over
   `skill_ids || skill_group_ids(skill_groups)` matches neither GIN index, and
