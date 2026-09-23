@@ -200,7 +200,7 @@ win that turned out not to exist for this particular connection.
 | `liveness.py` | Decides whether a posting URL is still live. Pure functions, no I/O. |
 | `liveness_checker.py` | Visits stored URLs daily to find expired postings. Naukri only. |
 | `hirist_liveness_probe.py` | Records what a hirist expiry check *would* conclude, into its own table. Writes nothing to `cleaned_postings`. **No longer scheduled** — the rule it tested turned out to be a clock. Kept for a by-hand run around 2026-11-07. |
-| `notify.py` | Windows toast notifications, so unattended runs are not silent. |
+| `notify.py` | Windows toast notifications, so unattended runs are not silent. `toast()` for a Python caller, `python notify.py TITLE MESSAGE [--urgent]` for `jobmarket.bat` (added 2026-09-23 — see below). |
 | `schema.sql` | Every table. Run first. |
 | `migrations/` | Dated, idempotent `ALTER`s for a database that already has data — `schema.sql` drops the postings tables, so it cannot bring an existing one forward. |
 | `trends_setup.sql` | Daily skill snapshots and the views over them. Run second. |
@@ -455,6 +455,35 @@ allowlist. Never put caller input directly into SQL.
 **Scraper etiquette.** One visible browser for the whole run (Naukri blocks
 headless), and a random 3–6 second pause between pages. Don't go headless, don't
 parallelise, don't remove the pause.
+
+**A slow page must cost one posting, or one search — never the whole run.**
+Both collectors' navigation call (`scrape_job_detail()`'s `page.goto()` in
+`naukri_collector.py`, `discover_job_codes()`'s in `hirist_collector.py`) is
+wrapped in a `PlaywrightTimeoutError` catch as of 2026-09-23. Before that,
+an unguarded `page.goto()` in `naukri_collector.py` — sitting three lines
+above a `wait_for_selector()` timeout that *was* already caught the same
+way — let a single slow page raise all the way out of `main()`. Measured
+cost, 2026-09-23: postings 17–20 of a 20-posting search lost, no
+`scrape_runs` row written (the INSERT happens after the loop that
+crashed), and nothing to show it happened except a raw traceback in the
+day's log file. Same signature seen on 2026-09-17 too — not a one-off.
+`hirist_collector.py`'s `discover_job_codes()` had the identical unwrapped
+pattern; a timeout there now returns `[]`, which `main()` already treats
+as a real, logged 0-postings outcome rather than something new to invent.
+
+**`jobmarket.bat` now notices a collector's exit code, as a backstop for
+whatever exception type isn't one of the ones just caught.** Every
+`naukri_collector.py`/`hirist_collector.py` call routes through a
+`:run_collector` subroutine (`jobmarket.bat`, end of file) instead of
+being invoked directly — `if errorlevel 1` after it logs `[FAILED]` and
+fires `python notify.py "..." "..." --urgent`, which is why `notify.py`
+gained a CLI. Before this, no collector call anywhere in `jobmarket.bat`
+checked its own exit code, and neither collector ever called `notify.py`
+— only `liveness_checker.py` did — so a crash of this kind was invisible
+outside a manual log read. Verified with a same-file harness reproducing
+`:run_collector`'s exact logic against a script forced to exit 1 and one
+forced to exit 0: the failure path logs and notifies, the success path
+does neither.
 
 **hirist expiry cannot be detected, and the rule is dead.** hirist carries no
 HTTP signal — HEAD and GET both answer 200 for live and expired postings

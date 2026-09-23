@@ -246,7 +246,16 @@ def discover_job_urls(page, search_url: str, limit: int | None = None) -> list[s
 # Visit one job page and read the required parameters off it.
 # ---------------------------------------------------------------------
 def scrape_job_detail(page, url: str, search_url: str | None = None) -> dict | None:
-    page.goto(url, wait_until="domcontentloaded", timeout=45000)
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=45000)
+    except PlaywrightTimeoutError:
+        # Unguarded until 2026-09-23: a slow page here used to raise all the
+        # way out of main() and kill the rest of the search -- 4 postings
+        # lost with no scrape_runs row to show it happened. One slow page
+        # must cost one posting, same contract as the wait_for_selector
+        # timeout three lines below.
+        print(f"  [skip] Page never loaded (45s timeout) -- {url}")
+        return None
 
     # A posting can expire between URL discovery and this visit. Naukri
     # redirects those to a search page that never renders a description, so

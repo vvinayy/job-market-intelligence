@@ -739,6 +739,28 @@ One visible browser for the whole run and a random 3–6 second pause between
 pages. Naukri blocks headless browsers outright. Do not go headless, do not
 parallelise, do not remove the pause.
 
+**A single slow page used to be able to take the whole search down with it,
+silently.** `naukri_collector.py`'s `scrape_job_detail()` had an unguarded
+`page.goto()` — three lines above a `wait_for_selector()` timeout that was
+already caught and turned into a per-posting skip. Nothing wrapped the
+`goto()` itself, so a Playwright navigation timeout propagated straight out
+of `main()`. Measured cost on 2026-09-23: 4 of 20 postings in one search
+lost, and no `scrape_runs` row at all for that search, since the crash
+happened before the row's own `INSERT`. The identical shape existed in
+`hirist_collector.py`'s `discover_job_codes()`. Both now catch
+`PlaywrightTimeoutError` and degrade into an already-handled path instead
+of raising — `None` for one posting, `[]` for a whole search, which
+`main()` already logs as a real (if empty) outcome rather than treating as
+new.
+
+That fixes the specific exception type. As a backstop for whatever else
+can still make a collector process exit nonzero, `jobmarket.bat` routes
+every collector call through a `:run_collector` subroutine that checks
+`errorlevel` and fires `notify.py` on failure — previously no call in the
+batch checked its exit code, and neither collector ever notified (only
+`liveness_checker.py` did), so a crash here was invisible short of
+opening the day's log file by hand.
+
 ## 15. Search terms are measured, never reasoned about
 
 Naukri's ranking cannot be predicted from the words in a term. Measured

@@ -70,11 +70,16 @@ echo ================================================== >> "%LOGFILE%"
 
 REM One line per search. Add or remove searches here - this is where you
 REM control what gets collected each day.
-"%PY%" naukri_collector.py "https://www.naukri.com/python-developer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
-"%PY%" naukri_collector.py "https://www.naukri.com/data-science-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
-"%PY%" naukri_collector.py "https://www.naukri.com/java-full-stack-developer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
-"%PY%" naukri_collector.py "https://www.naukri.com/machine-learning-engineer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
-"%PY%" naukri_collector.py "https://www.naukri.com/python-full-stack-developer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
+REM
+REM Routed through :run_collector, not called directly: a crashed collector
+REM used to be silent (no scrap_runs row, no exit-code check, no toast) --
+REM see CLAUDE.md, 2026-09-23. The subroutine notices a nonzero exit and
+REM fires one toast so it cannot be missed the way that one was.
+call :run_collector naukri_collector.py "https://www.naukri.com/python-developer-jobs-in-hyderabad"
+call :run_collector naukri_collector.py "https://www.naukri.com/data-science-jobs-in-hyderabad"
+call :run_collector naukri_collector.py "https://www.naukri.com/java-full-stack-developer-jobs-in-hyderabad"
+call :run_collector naukri_collector.py "https://www.naukri.com/machine-learning-engineer-jobs-in-hyderabad"
+call :run_collector naukri_collector.py "https://www.naukri.com/python-full-stack-developer-jobs-in-hyderabad"
 
 REM hirist, the second board. Until these were added, every hirist row in
 REM the database came from a hand-run collector: times_seen sat at 1.0
@@ -89,13 +94,13 @@ REM measured -- so each one is a genuinely different slice, not the same
 REM jobs re-surfaced. Also verified and ready if more depth is wanted:
 REM full-stack-developer, python-developer, qa-engineer, java-developer
 REM (java overlaps the most, 14 of 20 new).
-"%PY%" hirist_collector.py "https://www.hirist.tech/search/software-developer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
-"%PY%" hirist_collector.py "https://www.hirist.tech/search/cloud-engineer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
-"%PY%" hirist_collector.py "https://www.hirist.tech/search/machine-learning-engineer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
-"%PY%" hirist_collector.py "https://www.hirist.tech/search/data-engineer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
-"%PY%" hirist_collector.py "https://www.hirist.tech/search/devops-engineer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
-"%PY%" hirist_collector.py "https://www.hirist.tech/search/backend-developer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
-"%PY%" hirist_collector.py "https://www.hirist.tech/search/frontend-developer-jobs-in-hyderabad" --limit 20 >> "%LOGFILE%" 2>&1
+call :run_collector hirist_collector.py "https://www.hirist.tech/search/software-developer-jobs-in-hyderabad"
+call :run_collector hirist_collector.py "https://www.hirist.tech/search/cloud-engineer-jobs-in-hyderabad"
+call :run_collector hirist_collector.py "https://www.hirist.tech/search/machine-learning-engineer-jobs-in-hyderabad"
+call :run_collector hirist_collector.py "https://www.hirist.tech/search/data-engineer-jobs-in-hyderabad"
+call :run_collector hirist_collector.py "https://www.hirist.tech/search/devops-engineer-jobs-in-hyderabad"
+call :run_collector hirist_collector.py "https://www.hirist.tech/search/backend-developer-jobs-in-hyderabad"
+call :run_collector hirist_collector.py "https://www.hirist.tech/search/frontend-developer-jobs-in-hyderabad"
 
 REM Backstop only. naukri_collector.py already snapshots after every
 REM run; this catches the case where every search failed before reaching
@@ -187,4 +192,27 @@ REM python hirist_liveness_probe.py >> "%LOGFILE%" 2>&1
 
 echo Check finished: %date% %time% >> "%LOGFILE%"
 echo Liveness check complete. Log: %LOGFILE%
+exit /b 0
+
+
+REM --------------------------------------------------------------------
+REM :run_collector - one search, %1=collector script %2=search URL.
+REM
+REM Every collector call in STAGE 1 routes through here instead of being
+REM called directly. A crashed collector used to be completely silent:
+REM no scrap_runs row (the crash happens before that INSERT), no exit-code
+REM check anywhere in this file, and neither collector calls notify.py --
+REM only liveness_checker.py did. Found 2026-09-23 chasing an unhandled
+REM Playwright navigation timeout that took postings 17-20 of a 20-posting
+REM search down with it and left no trace but a raw traceback in the log.
+REM That specific timeout is now caught inside the collectors themselves
+REM (see naukri_collector.py/hirist_collector.py); this is the backstop
+REM for whatever else can still make one exit nonzero.
+REM --------------------------------------------------------------------
+:run_collector
+"%PY%" %1 "%~2" --limit 20 >> "%LOGFILE%" 2>&1
+if errorlevel 1 (
+    echo [FAILED] %1 %~2 -- process exited nonzero, some postings from this search may be missing >> "%LOGFILE%"
+    "%PY%" notify.py "Scrape search failed" "%1 on %~2 crashed - see %LOGFILE%" --urgent >> "%LOGFILE%" 2>&1
+)
 exit /b 0

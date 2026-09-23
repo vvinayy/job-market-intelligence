@@ -74,3 +74,16 @@ def toast(title: str, message: str, urgent: bool = False) -> bool:
         return result.returncode == 0
     except Exception:                      # noqa: BLE001 - cosmetic, never fatal
         return False
+
+
+if __name__ == "__main__":
+    # CLI entry so jobmarket.bat can fire a toast without building an
+    # inline `-c` string across batch/Python quoting boundaries -- the
+    # existing toast() contract, just reachable from a .bat line. Added
+    # 2026-09-23 so a crashed collector can be reported, not just liveness
+    # check outcomes.
+    import sys
+    if len(sys.argv) < 3:
+        print("Usage: notify.py TITLE MESSAGE [--urgent]")
+        sys.exit(1)
+    toast(sys.argv[1], sys.argv[2], urgent="--urgent" in sys.argv[3:])

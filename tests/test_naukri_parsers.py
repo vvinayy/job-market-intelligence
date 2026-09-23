@@ -5,8 +5,10 @@ regression target for a real bug: the old code extracted the digits from
 stored identically to a floor)."""
 
 from datetime import date, timedelta
+from unittest.mock import MagicMock
 
 import naukri_collector as nc
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 
 # ---------------------------------------------------------------------
@@ -108,3 +110,20 @@ def test_compute_field_found_counts_skips_sentinels_and_empties():
 
 def test_compute_field_found_counts_empty_input():
     assert nc.compute_field_found_counts([]) == {}
+
+
+# ---------------------------------------------------------------------
+# Regression: a slow detail page must cost one posting, not the search.
+# Unguarded until 2026-09-23 -- page.goto() raising here propagated out of
+# main() and took postings 17-20 of a 20-posting run down with it, with no
+# scrape_runs row left behind. Same contract as the wait_for_selector
+# timeout three lines below it in scrape_job_detail(), which already
+# returns None instead of raising.
+# ---------------------------------------------------------------------
+def test_scrape_job_detail_returns_none_on_navigation_timeout():
+    page = MagicMock()
+    page.goto.side_effect = PlaywrightTimeoutError("Page.goto: Timeout 45000ms exceeded.")
+
+    record = nc.scrape_job_detail(page, "https://www.naukri.com/job-listings-x")
+
+    assert record is None

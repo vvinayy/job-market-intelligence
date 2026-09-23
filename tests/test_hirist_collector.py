@@ -7,8 +7,11 @@ If that stops being true, a second source has quietly become a second
 pipeline.
 """
 
+from unittest.mock import MagicMock
+
 import cleaning
 import hirist_collector as hc
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 
 # A realistic payload, trimmed to the keys the mapper reads. Values are the
@@ -176,3 +179,19 @@ def test_clean_record_accepts_a_hirist_record_unchanged():
     # Derived layers still work, because they read title and description.
     assert posting["role_family"]
     assert "Python" in cleaned["skills"]
+
+
+# ---------------------------------------------------------------------
+# Regression: a slow search-results page must not crash the whole search.
+# Unguarded until 2026-09-23 -- page.goto() raising here used to propagate
+# out of main() uncaught. main() already treats zero codes as a real,
+# logged outcome (see the comment above its own `if not codes:` branch),
+# so returning [] on timeout degrades into that existing path instead.
+# ---------------------------------------------------------------------
+def test_discover_job_codes_returns_empty_list_on_navigation_timeout():
+    page = MagicMock()
+    page.goto.side_effect = PlaywrightTimeoutError("Page.goto: Timeout 60000ms exceeded.")
+
+    codes = hc.discover_job_codes(page, "https://www.hirist.tech/search/x")
+
+    assert codes == []

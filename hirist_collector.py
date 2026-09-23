@@ -39,7 +39,7 @@ import time
 from datetime import datetime, date
 
 import httpx
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 from skill_taxonomy import extract_skills
 from job_database import (save_records, record_scrape_run, check_field_health,
@@ -91,7 +91,16 @@ def discover_job_codes(page, search_url: str, limit: int | None = None) -> list[
     Codes, not URLs: the detail API is keyed by code, and the slug in the
     href is decoration that can change without the posting changing."""
     print(f"\n[discovery] Loading search results: {search_url}")
-    page.goto(search_url, wait_until="domcontentloaded", timeout=60000)
+    try:
+        page.goto(search_url, wait_until="domcontentloaded", timeout=60000)
+    except PlaywrightTimeoutError:
+        # main() already treats zero codes as a real, logged outcome (a
+        # scrape_runs row with 0 found, not skipped) -- so degrading into
+        # that existing path beats letting this crash the whole search with
+        # no record it happened. Same class of gap naukri_collector.py's
+        # scrape_job_detail() had, fixed 2026-09-23.
+        print(f"  [skip] Search results never loaded (60s timeout) -- {search_url}")
+        return []
     # Nothing to wait for by selector — the cards mount after hydration, and
     # a fixed settle is more honest than guessing at a generated class name.
     page.wait_for_timeout(7000)
