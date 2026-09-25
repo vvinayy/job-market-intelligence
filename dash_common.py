@@ -64,6 +64,16 @@ CITY_COORDINATES = {
 
 
 @st.cache_data(ttl=CACHE_TTL)
+def _fetch(path: str, params: tuple = ()):
+    # Raises on failure on purpose: st.cache_data never caches an exception,
+    # so a failed call is retried next time. The callers used to catch here
+    # and return []/{} -- which got cached, blanking a chart for 30 minutes
+    # after the API had already recovered.
+    response = _SESSION.get(f"{API_BASE}{path}", params=list(params), timeout=15)
+    response.raise_for_status()
+    return response.json()
+
+
 def api_get(path: str, params: tuple = ()) -> list[dict]:
     """Call one API endpoint, return its JSON as a list of dicts.
 
@@ -73,9 +83,7 @@ def api_get(path: str, params: tuple = ()) -> list[dict]:
     `skill=` filters) are passed as repeated tuple entries.
     """
     try:
-        response = _SESSION.get(f"{API_BASE}{path}", params=list(params), timeout=15)
-        response.raise_for_status()
-        return response.json()
+        return _fetch(path, params)
     except requests.exceptions.ConnectionError:
         st.error(
             f"Can't reach the API at {API_BASE}. Is it running? "
@@ -92,17 +100,15 @@ def df(path: str, params: tuple = ()) -> pd.DataFrame:
     return pd.DataFrame(api_get(path, params))
 
 
-@st.cache_data(ttl=CACHE_TTL)
 def one(path: str, params: tuple = ()) -> dict:
     """For endpoints that return a single object, not a list — /analytics/summary
     and /trends/coverage are dicts, not arrays, so they skip the DataFrame step.
 
-    Cached like api_get. It wasn't, so /analytics/summary re-fetched on every
-    widget interaction on every page that shows a headline figure."""
+    Cached like api_get, through _fetch. It wasn't, so /analytics/summary
+    re-fetched on every widget interaction on every page that shows a
+    headline figure."""
     try:
-        response = _SESSION.get(f"{API_BASE}{path}", params=list(params), timeout=15)
-        response.raise_for_status()
-        return response.json()
+        return _fetch(path, params)
     except requests.exceptions.ConnectionError:
         st.error(f"Can't reach the API at {API_BASE}.")
         st.stop()
