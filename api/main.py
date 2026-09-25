@@ -14,7 +14,6 @@ Needs DATABASE_URL, or the individual PG* variables.
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 
 from .database import init_pool, close_pool, fetch_value
 from .routers import postings, reference, analytics, trends
@@ -41,14 +40,10 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Wide open for now. Before deploying anywhere public, restrict
-# allow_origins to the domains that should actually be able to call this.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["GET"],
-    allow_headers=["*"],
-)
+# No CORS middleware, deliberately. The dashboard calls this from Python
+# (dash_common.py), not from a browser, and /docs is same-origin, so nothing
+# needs it -- and allow_origins=["*"] let any website open in the browser
+# read this API off 127.0.0.1. Add it back only for a real browser client.
 
 app.include_router(postings.router)
 app.include_router(reference.router)

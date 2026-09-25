@@ -171,6 +171,17 @@ which was always wrong for the dashboard: `dash_common.py`'s own
 accepts `DATABASE_URL`; the dashboard accepts `API_BASE_URL` (default
 `http://127.0.0.1:8000`).
 
+**Everything listens on this machine only, on purpose.** The API binds
+`127.0.0.1` (uvicorn's default); the dashboard is launched with
+`--server.address 127.0.0.1` because Streamlit defaults to every interface,
+and a Public-profile firewall rule for `D:\python\python.exe` made it
+reachable from the same Wi-Fi (fixed 2026-09-25). Postgres listens on `*`
+but `pg_hba.conf` only admits `127.0.0.1`/`::1`. The API has **no CORS
+middleware** — the dashboard calls it from Python, not a browser, and the old
+`allow_origins=["*"]` let any open website read it. So there is no inbound
+rate limiting, and none is needed while nothing outside this machine can
+connect. Outbound, the scrapers are throttled (see Scraper etiquette).
+
 **`PGHOST`'s default was also hand-typed four times and had drifted: two
 copies said `"localhost"`, two said `"127.0.0.1"`.** `job_database.py`,
 `api/database.py`, `liveness_checker.py` and `hirist_liveness_probe.py` each

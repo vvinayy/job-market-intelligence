@@ -147,7 +147,10 @@ REM --------------------------------------------------------------------
 :start_dashboard
 echo.
 echo === Starting the dashboard ===
-start "Job Market Dashboard" cmd /k "%PY% -m streamlit run Home.py --server.fileWatcherType poll"
+REM --server.address 127.0.0.1: Streamlit defaults to every interface, and a
+REM Public-profile firewall rule for python.exe made it reachable by anyone
+REM on the same Wi-Fi -- who could then query the API through it.
+start "Job Market Dashboard" cmd /k "%PY% -m streamlit run Home.py --server.fileWatcherType poll --server.address 127.0.0.1"
 
 echo.
 echo Both are launching in their own windows. Streamlit opens your browser
