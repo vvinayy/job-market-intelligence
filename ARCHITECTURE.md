@@ -857,7 +857,13 @@ Recorded because each was discovered the expensive way.
   from `schema.sql` + `trends_setup.sql` alone now yields 0 column differences
   against live, 25 tables and 49 indexes — but the lesson is the check, not the
   fix: **after any schema change, build from the two files and diff the result
-  against the live database.**
+  against the live database.** Diff the catalogs, not just columns: a
+  columns-and-counts diff called the two identical on 2026-09-28 while
+  `fillfactor = 70` on four tables was live-only (a fresh install would lose
+  the HOT headroom) and 8 dead PL/pgSQL cleaning functions from before August's
+  move to `cleaning.py` were still in the database. Both fixed that day; the
+  functions' exact definitions are kept in
+  `migrations/2026-09-28-restore-legacy-sql-cleaning-functions.sql`.
 - **Scheduled tasks are live.** `JobMarket` scrapes at 11:00 and `JobMarket
   Liveness Check` runs at 17:00, both enabled. A code change that expects a
   schema the database does not yet have will fail on the next firing — check

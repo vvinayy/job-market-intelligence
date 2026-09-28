@@ -154,6 +154,9 @@ $$;
 -- add a column, `ALTER TABLE ADD COLUMN` appends it to the end and the
 -- live table will no longer match this file's order; that's cosmetic and
 -- harmless (every query names its columns), but rebuild if it matters.
+-- fillfactor 70 on this table and its three satellites: measured 2026-09-11,
+-- the headroom took HOT updates from 4% to 81% on a wide row. Set live by
+-- the 2026-09-15 split migration; missing here until 2026-09-28.
 CREATE TABLE cleaned_postings (
     job_id                 BIGSERIAL PRIMARY KEY,
     fingerprint            TEXT NOT NULL UNIQUE,
@@ -242,7 +245,7 @@ CREATE TABLE cleaned_postings (
     -- instead of only ever seeing the merged result.
     source_search             TEXT,
     first_seen_date          DATE NOT NULL DEFAULT CURRENT_DATE
-);
+) WITH (fillfactor = 70);
 
 -- Only three indexes here, down from nine. Five were GIN indexes over array
 -- columns that were byte-identical copies of the child tables and had never
@@ -290,7 +293,7 @@ CREATE TABLE posting_state (
     -- Paired so neither half can be written without the other.
     CONSTRAINT posting_state_basis_pairs_with_expired
         CHECK ((is_expired IS TRUE) = (expiry_basis IS NOT NULL))
-);
+) WITH (fillfactor = 70);
 
 -- The checker's queue is "not already dead, not already done today", and the
 -- dead half of the table grows without ever being queried -- hence partial.
@@ -322,7 +325,7 @@ CREATE TABLE posting_content (
     job_id      BIGINT PRIMARY KEY
                 REFERENCES cleaned_postings(job_id) ON DELETE CASCADE,
     description TEXT
-);
+) WITH (fillfactor = 70);
 
 
 -- Everything a re-sighting changes, and nothing else. This is the only table
@@ -355,7 +358,7 @@ CREATE TABLE posting_sightings (
     -- Confirmed from raw HTML that short entries like "TOP" are
     -- genuinely what Naukri shows, not a truncation artifact.
     company_badges            TEXT[]
-);
+) WITH (fillfactor = 70);
 
 -- snapshot_daily_skills() selects the postings seen today; a sequential scan
 -- of the spine was 416 pages.

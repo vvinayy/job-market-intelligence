@@ -548,6 +548,21 @@ why the three skill columns were not merged into one.
   run on a fresh one. It had drifted twice — a missing `expiry_basis`, and
   `hirist_liveness_observations` which had only ever existed in a migration —
   so re-run that diff after any schema change.
+
+  **Diff the catalogs, not just the columns.** The 2026-09-15 check compared
+  column lists and object counts, and missed two things a catalog-level
+  comparison caught on 2026-09-28: `fillfactor = 70` on the spine and its three
+  satellites existed live but not in `schema.sql` (a fresh install would have
+  lost the HOT-update headroom; now added), and 8 legacy PL/pgSQL cleaning
+  functions (`clean_and_populate()` and helpers) that commit `59f9094` removed
+  from the files in August but never dropped from the database — dead, with
+  `normalize_working_type()` still carrying the fabricating `ELSE 'On-site'`.
+  Dropped by `migrations/2026-09-28-drop-legacy-sql-cleaning-functions.sql`;
+  `...-restore-legacy-sql-cleaning-functions.sql` recreates them exactly if
+  ever needed. What still differs is cosmetic: 15 constraint *names*
+  (`cleaned_postings_new_…_fkey1`, left by table rebuilds) and column *order*
+  in `cleaned_postings`, `skill_daily_counts` and `skill_daily_corrections`.
+  Definitions, indexes, views, sequences and extensions are identical.
 - **`snapshot_daily_skills()` must run after each day's scrape.** A day not
   snapshotted is gone forever — `cleaned_postings` only shows the present. The
   scraper calls it automatically now. **Editing the function body in
