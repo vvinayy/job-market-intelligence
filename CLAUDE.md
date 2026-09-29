@@ -581,6 +581,15 @@ why the three skill columns were not merged into one.
   on purpose — a correction does not change which days were recorded. Twenty-
   four corrections exist for 12–17 Aug, where a foreign job description
   inflated C++ ninefold.
+- **`skill_daily_counts` grows every day, and that is expected, not a leak.**
+  It is the only history, so nothing is ever deleted from it: one row per skill
+  per board per day, ~640 a day, 4.2 MB for 42 days (2026-09-29), projecting to
+  ~37 MB a year. Half of each day's rows are skills seen in a single posting,
+  which is how `skill_first_appearances` spots new skills. Shrinking it
+  (skill ids instead of names, dropping the tail, deriving counts from posting
+  dates) was evaluated and declined, because each one loses history or changes
+  what the trend numbers mean. ARCHITECTURE.md section 8 has the measurements.
+  Revisit only if the database approaches a few hundred MB.
 - **Not every migration lives in `migrations/`.** The 2026-08-18 taxonomy sync
   (commit `755fa6f`) merged 18 duplicate skill pairs and renamed 23 more
   directly against the live database — carefully, with a backup and real

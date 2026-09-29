@@ -371,9 +371,31 @@ is gone forever.** Three days were lost this way once, and the error went into
 a log nobody read.
 
 That table is also the only one whose size is a function of the *calendar*
-rather than of data volume: 14,592 rows over 29 snapshot days from 920
-postings, and nothing ever deletes from it. It is the table that will eventually
-need partitioning or a retention policy — not the postings table.
+rather than of data volume, and nothing ever deletes from it. Measured
+2026-09-29: 22,811 rows over 42 snapshot days, ~640 a day (drifting up slowly
+as the vocabulary grows), 4.2 MB in a 20 MB database. That projects to ~37 MB a
+year. It is the table that will eventually need a retention policy — not the
+postings table — but not at this size.
+
+**Shrinking it was evaluated and deliberately not done (2026-09-29).** Every
+option either loses history or changes what the trend numbers mean:
+
+- *Store `skill_id` + a smallint source instead of text* — 32% smaller
+  (3,312 kB against 2,264 kB, built side by side). Blocked by 144 stranded
+  names (817 rows) whose `skills` row was merged away; converting needs a
+  "retired skill" flag so merges stop deleting ids.
+- *Drop single-posting rows* — ~50% of daily rows have `posting_count = 1`, but
+  `skill_first_appearances` depends on them.
+- *Derive counts from posting dates instead of storing them* — counting each
+  posting from `first_seen_date` until expiry does fill missed days and removes
+  the false dips on days a search crashed (17 Sep: 113 against ~320). But it is a
+  different metric: past days come out 30% to 3.5× higher than what was
+  snapshotted, it re-mines history with today's skill rules, it tracks the
+  size of our own sample as much as the market, and today's figure is
+  incomplete until the 5 pm liveness check. What the searches returned on a past
+  day is recorded nowhere else, so the stored numbers cannot be reproduced.
+
+Revisit only if the database approaches a few hundred MB.
 
 ## 9. Two ledgers, because there are two kinds of wrong
 
