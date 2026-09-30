@@ -351,15 +351,15 @@ def sampling_note():
 
 def freshness_note():
     """One line under each page title: when the data was last collected and how
-    many history days are missing. Without it a stale or gappy dashboard looks
-    exactly like a current one -- this used to live only in Home's collapsed
-    System health panel."""
+    much trend history exists. Without it a stale dashboard looks exactly like a
+    current one -- this used to live only in Home's collapsed System health
+    panel. Missing days are left to the Trends page, which explains them."""
     latest = (scrape_health().get("latest_run") or {}).get("started_at")
     coverage = trends_coverage()
     history = ""
     if coverage.get("days_recorded"):
         history = (f" Trend history: {coverage['days_recorded']} days recorded since "
-                   f"{coverage['earliest']}, {coverage.get('days_missing') or 0} missing.")
+                   f"{coverage['earliest']}.")
     if not latest:
         st.caption("No scrape has been recorded yet." + history)
         return
