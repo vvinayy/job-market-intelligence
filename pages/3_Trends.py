@@ -9,6 +9,7 @@ import dash_common as dc
 
 st.set_page_config(page_title="Trends", layout="wide", page_icon="◎")
 st.title("Trends over time")
+dc.freshness_note()
 
 coverage = dc.trends_coverage()
 days = int(coverage.get("days_recorded") or 0)
@@ -118,7 +119,10 @@ with tab0:
 with tab1:
     top = dc.skill_demand(limit=40)
     tracked = top["skill"].tolist() if not top.empty else []
-    chosen = st.multiselect("Skills to plot", tracked)
+    # Seeded from ?skill=... so a chart can be bookmarked or shared.
+    dc.from_url("trend_skills", "skill", many=True, options=tracked)
+    chosen = st.multiselect("Skills to plot", tracked, key="trend_skills")
+    dc.to_url(skill=chosen)
     st.caption("Listed most in-demand first — nothing is pre-selected, pick what you want to compare.")
 
     if chosen:
@@ -128,6 +132,7 @@ with tab1:
             fig.update_layout(height=460, margin=dict(l=0, r=0, t=10, b=0),
                               xaxis_title=None, yaxis_title="postings", **dc.TRANSPARENT)
             st.plotly_chart(fig, use_container_width=True)
+            dc.csv_download(series, "skill_demand_over_time.csv")
     else:
         st.info("Pick one or more skills above to plot their demand over time.")
 

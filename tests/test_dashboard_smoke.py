@@ -48,3 +48,64 @@ def test_jobs_page_loads_without_exception():
     at = AppTest.from_file(str(ROOT / "pages" / "5_Jobs.py"), default_timeout=30)
     at.run()
     assert not at.exception
+
+
+@pytest.mark.parametrize("page", ["1_Skills.py", "3_Trends.py", "4_Composition.py"])
+def test_other_pages_load_without_exception(page):
+    at = AppTest.from_file(str(ROOT / "pages" / page), default_timeout=30)
+    at.run()
+    assert not at.exception
+
+
+def test_every_page_says_how_fresh_the_data_is():
+    at = AppTest.from_file(str(ROOT / "pages" / "4_Composition.py"), default_timeout=30)
+    at.run()
+    shown = [c.value for c in at.caption] + [w.value for w in at.warning]
+    assert any("Data last collected" in s for s in shown)
+
+
+def test_jobs_filters_are_restored_from_a_shared_link():
+    at = AppTest.from_file(str(ROOT / "pages" / "5_Jobs.py"), default_timeout=30)
+    at.query_params["skill"] = ["Python", "Not A Real Skill"]
+    at.query_params["exp"] = "2-8"
+    at.query_params["status"] = "Still open"
+    at.run()
+    assert not at.exception
+    # The unknown skill is dropped rather than crashing the multiselect.
+    assert at.multiselect(key="jobs_skill").value == ["Python"]
+    assert tuple(at.slider(key="jobs_exp").value) == (2, 8)
+    assert at.radio(key="jobs_status").value == "Still open"
+    # And written back, so the address bar reflects what is on screen.
+    assert at.query_params["skill"] == ["Python"]
+
+
+def test_a_malformed_link_is_ignored_not_fatal():
+    at = AppTest.from_file(str(ROOT / "pages" / "5_Jobs.py"), default_timeout=30)
+    at.query_params["exp"] = "junk"
+    at.query_params["per_page"] = "7"
+    at.run()
+    assert not at.exception
+    assert tuple(at.slider(key="jobs_exp").value) == (0, 20)
+    assert at.select_slider(key="jobs_page_size").value == 25
+
+
+def test_jobs_csv_holds_every_match_not_just_the_visible_page():
+    at = AppTest.from_file(str(ROOT / "pages" / "5_Jobs.py"), default_timeout=60)
+    at.run()
+    button = next(b for b in at.button if b.label.startswith("Prepare CSV"))
+    total = int(button.label.split()[4])   # "Prepare CSV of all N matching postings"
+    assert total > 200, "needs more than one API page to prove the loop"
+    button.click().run()
+    assert not at.exception
+    csv = at.session_state["jobs_csv"]
+    assert len(csv) == total
+    assert csv["job_id"].is_unique
+    assert not csv["skills"].map(lambda v: isinstance(v, list)).any()
+
+
+def test_trends_skills_are_restored_from_a_shared_link():
+    at = AppTest.from_file(str(ROOT / "pages" / "3_Trends.py"), default_timeout=30)
+    at.query_params["skill"] = ["Python", "SQL"]
+    at.run()
+    assert not at.exception
+    assert at.multiselect(key="trend_skills").value == ["Python", "SQL"]

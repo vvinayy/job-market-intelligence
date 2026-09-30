@@ -9,6 +9,8 @@ needs to change. Every page below keeps working unmodified.
 """
 
 import os
+from datetime import date
+
 import requests
 import pandas as pd
 import streamlit as st
@@ -345,6 +347,74 @@ def sampling_note():
         "Figures describe postings collected from a fixed set of searches and "
         "cities on Naukri and hirist, not the Indian IT market as a whole."
     )
+
+
+def freshness_note():
+    """One line under each page title: when the data was last collected and how
+    many history days are missing. Without it a stale or gappy dashboard looks
+    exactly like a current one -- this used to live only in Home's collapsed
+    System health panel."""
+    latest = (scrape_health().get("latest_run") or {}).get("started_at")
+    coverage = trends_coverage()
+    history = ""
+    if coverage.get("days_recorded"):
+        history = (f" Trend history: {coverage['days_recorded']} days recorded since "
+                   f"{coverage['earliest']}, {coverage.get('days_missing') or 0} missing.")
+    if not latest:
+        st.caption("No scrape has been recorded yet." + history)
+        return
+    age = (date.today() - date.fromisoformat(latest[:10])).days
+    when = latest[:16].replace("T", " ")
+    ago = "today" if age == 0 else "yesterday" if age == 1 else f"{age} days ago"
+    line = f"Data last collected {when} ({ago}).{history}"
+    # A day old is the normal state before the 11:00 run; older means a run was missed.
+    (st.warning if age > 1 else st.caption)(line)
+
+
+def csv_download(frame: pd.DataFrame, filename: str, label: str = "Download CSV"):
+    """utf-8-sig so Excel opens rupee signs and non-ASCII company names correctly."""
+    if frame is None or frame.empty:
+        return
+    st.download_button(label, frame.to_csv(index=False).encode("utf-8-sig"),
+                       file_name=filename, mime="text/csv")
+
+
+# ---------------------------------------------------------------------
+# Shareable links -- filters mirrored into the address bar, so a view can be
+# bookmarked or sent to someone and reopens exactly as it was.
+# ---------------------------------------------------------------------
+def from_url(key: str, param: str, *, many: bool = False, options=None, parse=str):
+    """Seed widget `key` from the URL once, before the widget is created.
+
+    Skipped when the widget already has state, so the URL only sets the
+    starting view and never overrides what the reader then changes. Values not
+    in `options` are dropped: a stale link (a skill since renamed) would
+    otherwise make Streamlit raise instead of just ignoring it."""
+    if key in st.session_state or param not in st.query_params:
+        return
+    raw = st.query_params.get_all(param) if many else [st.query_params[param]]
+    try:
+        values = [parse(v) for v in raw]
+    except ValueError:
+        return
+    if options is not None:
+        values = [v for v in values if v in options]
+    if values:
+        st.session_state[key] = values if many else values[0]
+
+
+def to_url(**params):
+    """Write the current filters back to the URL. Unset values are left out so
+    an unfiltered view keeps a clean address."""
+    clean = {}
+    for k, v in params.items():
+        if v is None or v is False or v == "" or v == []:
+            continue
+        clean[k] = [str(x) for x in v] if isinstance(v, list) else str(v)
+    current = {k: st.query_params.get_all(k) for k in st.query_params}
+    wanted = {k: v if isinstance(v, list) else [v] for k, v in clean.items()}
+    if current != wanted:
+        st.query_params.from_dict(clean)
 
 
 # ---------------------------------------------------------------------

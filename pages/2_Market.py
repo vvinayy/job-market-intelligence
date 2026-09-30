@@ -9,6 +9,7 @@ import dash_common as dc
 
 st.set_page_config(page_title="Market", layout="wide", page_icon="◎")
 st.title("Market")
+dc.freshness_note()
 
 
 def ranked_bar(data, value_col, label_col, height_per_row=26, min_height=300, x_title=None):

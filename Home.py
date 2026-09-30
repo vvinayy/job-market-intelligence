@@ -27,6 +27,7 @@ dc.prefetch()
 
 st.title("Job Market Intelligence")
 st.caption("What Indian IT employers are actually asking for")
+dc.freshness_note()
 
 
 facts = dc.summary()

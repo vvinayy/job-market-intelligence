@@ -23,6 +23,7 @@ import dash_common as dc
 st.set_page_config(page_title="Composition", layout="wide", page_icon="◎")
 st.title("Composition")
 st.caption("Which sectors are hiring IT roles, and what qualifications they ask for.")
+dc.freshness_note()
 
 # Below this a bar carries no information: a sector with one posting tells you
 # about that posting, not about the sector. The excluded ones are still

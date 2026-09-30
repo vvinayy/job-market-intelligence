@@ -8,6 +8,7 @@ import dash_common as dc
 
 st.set_page_config(page_title="Skills", layout="wide", page_icon="◎")
 st.title("Skills")
+dc.freshness_note()
 
 tab1, tab2, tab5, tab3, tab4 = st.tabs(
     ["Demand", "Pairings", "Interchangeable", "By experience level", "By category"])
@@ -36,6 +37,7 @@ with tab1:
             "terms as skills — 'Agile', 'Coding', 'Cloud' — and those are left out "
             "so they don't crowd out real tools."
         )
+        dc.csv_download(data, f"skill_demand_top{n}.csv")
 
 
 with tab2:
@@ -67,6 +69,8 @@ with tab2:
         st.caption("Skills most often asked for in the same posting. Only the 30 "
                    "most in-demand skills are paired up, so a common pairing "
                    "between two rarer skills won't show here.")
+        dc.csv_download(pairs.sort_values("together", ascending=False),
+                        "skill_pairings.csv", "Download all pairings (CSV)")
 
         st.divider()
         st.write("Full picture: every pairing among those same skills, not just the top ones.")

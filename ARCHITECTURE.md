@@ -80,6 +80,20 @@ all** — and 29 of 35 API endpoints needed none either, because they read only
 columns that stayed put. A schema change is absorbable inside `api/routers/` by
 design, and that design held the first time it was tested seriously.
 
+Three page-level conveniences live in `dash_common` too, so every page gets
+them the same way (added 2026-09-30, no API change):
+
+- **`freshness_note()`** under every title — last scrape time and missing
+  snapshot days, read from `/analytics/scrape-health` and `/trends/coverage`.
+  A caption normally, a warning once the last scrape is more than a day old.
+- **`csv_download()`** — Skills demand and pairings, the Trends series, and on
+  Jobs *every* match (paged through `/postings` 200 at a time on request), not
+  just the rows on screen.
+- **`from_url()` / `to_url()`** — Jobs filters and the Trends skill selection
+  live in the address bar, so a view can be bookmarked or shared. The URL only
+  seeds the first render; values not in a widget's options are dropped, so a
+  stale link degrades instead of raising.
+
 ## 3. A posting is four tables, divided by how often each column is written
 
 Until 15 September 2026 a posting was one 45-column row. The problem was not

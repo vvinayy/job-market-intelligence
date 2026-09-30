@@ -6,6 +6,8 @@ filter down to) the actual listings behind them. Thin wrapper over the
 pagination server-side.
 """
 
+from datetime import date
+
 import pandas as pd
 import streamlit as st
 
@@ -14,20 +16,62 @@ import dash_common as dc
 st.set_page_config(page_title="Jobs", layout="wide", page_icon="◎")
 st.title("Jobs")
 st.caption("Search individual postings. Pick what you already know — the sidebar pages show the aggregate picture.")
+dc.freshness_note()
 
 
 # =====================================================================
 # FILTERS
 # =====================================================================
-f1, f2, f3 = st.columns(3)
-skill = f1.multiselect("Skills (any of)", dc.top_skills(80), key="jobs_skill")
-role_family = f2.multiselect("Role", dc.roles(), key="jobs_role")
+# Every filter is seeded from the page URL (once) and written back to it below,
+# so a search can be bookmarked or shared and reopens exactly as it was.
+SKILL_OPTIONS = dc.top_skills(80)
+ROLE_OPTIONS = dc.roles()
 cities_df = dc.cities_reference()
-city = f3.multiselect("City", cities_df["city_name"].tolist() if not cities_df.empty else [], key="jobs_city")
-
+CITY_OPTIONS = cities_df["city_name"].tolist() if not cities_df.empty else []
 sources_df = dc.sources()
 source_counts = (dict(zip(sources_df["name"], sources_df["postings"]))
                  if not sources_df.empty else {})
+STATUS_OPTIONS = ["All", "Still open", "Closed"]
+SENIORITY_OPTIONS = ["Intern/Trainee", "Junior", "Associate", "Senior", "Lead/Principal", "Manager/Leadership"]
+WT_OPTIONS = ["On-site", "Hybrid", "Remote"]
+QUAL_OPTIONS = ["UG", "PG", "Doctorate"]
+SORT_OPTIONS = ["posted_date", "expired_on", "experience_min", "salary_max", "openings",
+                "applicant_count", "times_seen", "company", "title"]
+ORDER_OPTIONS = ["desc", "asc"]
+PAGE_SIZES = [10, 25, 50, 100]
+
+
+def _exp_range(text: str) -> tuple[int, int]:
+    lo, hi = (int(x) for x in text.split("-"))
+    if not 0 <= lo <= hi <= 20:
+        raise ValueError(text)
+    return lo, hi
+
+
+dc.from_url("jobs_skill", "skill", many=True, options=SKILL_OPTIONS)
+dc.from_url("jobs_role", "role", many=True, options=ROLE_OPTIONS)
+dc.from_url("jobs_city", "city", many=True, options=CITY_OPTIONS)
+dc.from_url("jobs_source", "board", many=True, options=list(source_counts))
+dc.from_url("jobs_status", "status", options=STATUS_OPTIONS)
+dc.from_url("jobs_seniority", "seniority", many=True, options=SENIORITY_OPTIONS)
+dc.from_url("jobs_exp", "exp", parse=_exp_range)
+dc.from_url("jobs_wt", "arrangement", many=True, options=WT_OPTIONS)
+dc.from_url("jobs_salary", "salary", parse=lambda s: s == "1")
+dc.from_url("jobs_qual", "education", many=True, options=QUAL_OPTIONS)
+dc.from_url("jobs_search", "q")
+dc.from_url("jobs_sort", "sort", options=SORT_OPTIONS)
+dc.from_url("jobs_order", "order", options=ORDER_OPTIONS)
+dc.from_url("jobs_page_size", "per_page", parse=int, options=PAGE_SIZES)
+# Defaults go through session state rather than the widgets' value= so a
+# URL-seeded value never collides with a hardcoded default.
+st.session_state.setdefault("jobs_exp", (0, 20))
+st.session_state.setdefault("jobs_page_size", 25)
+
+f1, f2, f3 = st.columns(3)
+skill = f1.multiselect("Skills (any of)", SKILL_OPTIONS, key="jobs_skill")
+role_family = f2.multiselect("Role", ROLE_OPTIONS, key="jobs_role")
+city = f3.multiselect("City", CITY_OPTIONS, key="jobs_city")
+
 source = st.multiselect(
     "Job board", list(source_counts), key="jobs_source",
     format_func=lambda s: f"{s} ({source_counts.get(s, 0)})",
@@ -43,7 +87,7 @@ if source_counts:
     )
 
 status = st.radio(
-    "Listing status", ["All", "Still open", "Closed"], horizontal=True, key="jobs_status",
+    "Listing status", STATUS_OPTIONS, horizontal=True, key="jobs_status",
     help="Checked daily against Naukri only. 'Closed' means Naukri now "
          "redirects the posting as expired — it does not mean the role was "
          "filled. Postings from other boards are never checked, so they are "
@@ -65,31 +109,35 @@ if is_expired is not None and any(s != "naukri" for s in source):
     )
 
 seniority_level = st.multiselect(
-    "Seniority (inferred from title)",
-    ["Intern/Trainee", "Junior", "Associate", "Senior", "Lead/Principal", "Manager/Leadership"],
-    key="jobs_seniority",
+    "Seniority (inferred from title)", SENIORITY_OPTIONS, key="jobs_seniority",
     help="Most titles carry no seniority word at all — leaving this empty includes those too.",
 )
 
 f4, f5, f6, f10 = st.columns(4)
-exp = f4.slider("Experience range required (years)", 0, 20, (0, 20), key="jobs_exp",
+exp = f4.slider("Experience range required (years)", 0, 20, key="jobs_exp",
                  help="Matches postings whose minimum requirement falls in this range.")
-working_type = f5.multiselect("Work arrangement", ["On-site", "Hybrid", "Remote"], key="jobs_wt")
+working_type = f5.multiselect("Work arrangement", WT_OPTIONS, key="jobs_wt")
 has_salary = f6.checkbox("Only postings that disclose salary", key="jobs_salary")
-qualification_level = f10.multiselect("Education level", ["UG", "PG", "Doctorate"], key="jobs_qual",
+qualification_level = f10.multiselect("Education level", QUAL_OPTIONS, key="jobs_qual",
                                        help="Only postings scraped since Education tracking was added carry this field.")
 
 f7, f8, f9 = st.columns(3)
 search = f7.text_input("Search title or company", key="jobs_search")
-sort_by = f8.selectbox(
-    "Sort by",
-    ["posted_date", "expired_on", "experience_min", "salary_max", "openings",
-     "applicant_count", "times_seen", "company", "title"],
-    key="jobs_sort",
-)
-order = f9.radio("Order", ["desc", "asc"], horizontal=True, key="jobs_order")
+sort_by = f8.selectbox("Sort by", SORT_OPTIONS, key="jobs_sort")
+order = f9.radio("Order", ORDER_OPTIONS, horizontal=True, key="jobs_order")
 
-page_size = st.select_slider("Results per page", [10, 25, 50, 100], value=25, key="jobs_page_size")
+page_size = st.select_slider("Results per page", PAGE_SIZES, key="jobs_page_size")
+
+dc.to_url(
+    skill=skill, role=role_family, city=city, board=source,
+    status=None if status == "All" else status, seniority=seniority_level,
+    exp=None if tuple(exp) == (0, 20) else f"{exp[0]}-{exp[1]}",
+    arrangement=working_type, salary="1" if has_salary else None,
+    education=qualification_level, q=search.strip() or None,
+    sort=None if sort_by == "posted_date" else sort_by,
+    order=None if order == "desc" else order,
+    per_page=None if page_size == 25 else page_size,
+)
 
 st.divider()
 
@@ -174,6 +222,34 @@ event = st.dataframe(
 )
 
 st.caption("Click a row to see the full description.")
+
+
+# Every match, not just the page on screen -- a CSV of 25 rows labelled as
+# "the results" would be quietly incomplete. Fetched only on request, since
+# it is up to one call per 200 postings; kept until the filters change.
+def _all_matches() -> pd.DataFrame:
+    frames, page_no = [], 1
+    while True:
+        chunk, chunk_meta = dc.search_postings(page=page_no, page_size=200, sort_by=sort_by,
+                                               order=order, **filters)
+        frames.append(chunk)
+        if page_no >= (chunk_meta.get("pages") or 1):
+            break
+        page_no += 1
+    out = pd.concat(frames, ignore_index=True)
+    for col in out.columns:
+        if out[col].map(lambda v: isinstance(v, list)).any():
+            out[col] = out[col].map(lambda v: "; ".join(map(str, v)) if isinstance(v, list) else v)
+    return out
+
+
+if st.session_state.get("jobs_csv_signature") != signature:
+    st.session_state.pop("jobs_csv", None)
+if st.button(f"Prepare CSV of all {total} matching postings"):
+    st.session_state["jobs_csv"] = _all_matches()
+    st.session_state["jobs_csv_signature"] = signature
+dc.csv_download(st.session_state.get("jobs_csv"), f"jobs_{date.today()}.csv",
+                f"Download {total} postings (CSV)")
 
 
 # =====================================================================
