@@ -217,6 +217,7 @@ win that turned out not to exist for this particular connection.
 | `trends_setup.sql` | Daily skill snapshots and the views over them. Run second. |
 | `api/` | FastAPI. `main.py` app, `database.py` query helpers, `models.py` response shapes, `routers/` endpoints. |
 | `Home.py`, `pages/` | Streamlit dashboard (Skills — including a "One skill" deep-dive tab — Market, with an "Over time" arrivals tab, Trends, Composition, Jobs). |
+| `.streamlit/config.toml` | `[theme] base = "light"` — light theme only, by decision (2026-09-30). Setting it removes Streamlit's theme picker from the menu; don't add a dark option. |
 | `dash_common.py` | The only dashboard file that makes HTTP calls. Also the shared freshness line, CSV download and URL-state helpers every page uses. |
 | `jobmarket.bat` | The single launcher. |
 | `tests/` | pytest suite. |

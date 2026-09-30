@@ -1,0 +1,5 @@
+# Light theme only. Setting a theme here makes it the app's own; viewers do not
+# get Streamlit's light/dark switch, and the dashboard's colours were chosen
+# against a white background.
+[theme]
+base = "light"
