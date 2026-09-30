@@ -216,7 +216,7 @@ win that turned out not to exist for this particular connection.
 | `migrations/` | Dated, idempotent `ALTER`s for a database that already has data — `schema.sql` drops the postings tables, so it cannot bring an existing one forward. |
 | `trends_setup.sql` | Daily skill snapshots and the views over them. Run second. |
 | `api/` | FastAPI. `main.py` app, `database.py` query helpers, `models.py` response shapes, `routers/` endpoints. |
-| `Home.py`, `pages/` | Streamlit dashboard (Skills — including a "One skill" deep-dive tab — Market, Trends, Composition, Jobs). |
+| `Home.py`, `pages/` | Streamlit dashboard (Skills — including a "One skill" deep-dive tab — Market, with an "Over time" arrivals tab, Trends, Composition, Jobs). |
 | `dash_common.py` | The only dashboard file that makes HTTP calls. Also the shared freshness line, CSV download and URL-state helpers every page uses. |
 | `jobmarket.bat` | The single launcher. |
 | `tests/` | pytest suite. |
@@ -236,7 +236,7 @@ the first runs anywhere:
   running. Slow, skips itself if nothing is listening. Also covers shared links
   restoring Jobs/Trends filters and the Jobs CSV holding every match.
 
-**Run the whole suite, not a subset.** `pytest` collects 256 tests across 12
+**Run the whole suite, not a subset.** `pytest` collects 268 tests across 12
 files (2026-09-30). The fast-path command above is four of those files; `test_data_integrity`,
 `test_liveness_run`, `test_record_identity`, `test_education_degrees` and
 `test_hirist_collector` are in neither that list nor `test_api`. Running only the
@@ -600,6 +600,15 @@ why the three skill columns were not merged into one.
   dates) was evaluated and declined, because each one loses history or changes
   what the trend numbers mean. ARCHITECTURE.md section 8 has the measurements.
   Revisit only if the database approaches a few hundred MB.
+- **Changing the searches in `jobmarket.bat` needs an `instrument_changes`
+  row.** A search's first run counts every posting it can see as new, so the
+  Market page's "Over time" chart shows a spike that is not hiring. Searches
+  first run after 2026-08-19 are detected from `scrape_runs` automatically; the
+  row is still what `/trends/movers` warns from, and it is the only record for
+  anything `scrape_runs` cannot see. The 2026-08-18 Naukri search swap was
+  missing until 2026-09-30 and was reconstructed from the scrape logs. Add the
+  row to `trends_setup.sql` *and* the live table — the 2026-09-16 merge row
+  had existed only live until the same day.
 - **Not every migration lives in `migrations/`.** The 2026-08-18 taxonomy sync
   (commit `755fa6f`) merged 18 duplicate skill pairs and renamed 23 more
   directly against the live database — carefully, with a backup and real

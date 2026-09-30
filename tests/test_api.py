@@ -154,6 +154,47 @@ def test_skill_suggestions_base_counts_alternatives_too(client, top_skill):
     assert round(s["postings"] / (s["share_pct"] / 100)) == postings
 
 
+# ---------------------------------------------------------------------
+# Arrivals -- rebuilt from first_seen_date, so they must add up exactly
+# ---------------------------------------------------------------------
+@pytest.mark.parametrize("by", ["role", "experience", "company", "source"])
+@pytest.mark.parametrize("period", ["day", "week"])
+def test_arrivals_account_for_every_posting_once(client, by, period):
+    total = client.get("/analytics/summary").json()["total_postings"]
+    body = client.get("/analytics/arrivals", params={"by": by, "period": period}).json()
+    assert sum(r["postings"] for r in body["rows"]) == total
+    shares = {}
+    for r in body["rows"]:
+        shares[r["period_start"]] = shares.get(r["period_start"], 0) + r["share_pct"]
+    assert all(abs(s - 100) < 0.1 for s in shares.values())
+
+
+def test_arrivals_by_city_counts_multi_city_postings_in_each(client):
+    body = client.get("/analytics/arrivals", params={"by": "city"}).json()
+    total = client.get("/analytics/summary").json()["total_postings"]
+    assert sum(r["postings"] for r in body["rows"]) >= total
+
+
+def test_arrivals_marks_startup_and_the_partial_current_week(client):
+    body = client.get("/analytics/arrivals", params={"by": "role", "period": "week"}).json()
+    assert body["startup_ranges"] and body["startup_ranges"][0]["start"] == "2026-08-06"
+    from datetime import date, timedelta
+    today = date.today()
+    this_week = today - timedelta(days=today.weekday())
+    assert (str(this_week) in body["partial_periods"]) == (today.weekday() != 6)
+
+
+def test_arrivals_date_range_and_skill_filter(client):
+    body = client.get("/analytics/arrivals", params={
+        "by": "source", "period": "day", "since": "2026-09-20", "until": "2026-09-26"}).json()
+    assert body["rows"] and all("2026-09-20" <= r["period_start"] <= "2026-09-26"
+                                for r in body["rows"])
+    assert body["partial_periods"] == []
+    name, postings = client.get("/analytics/skills", params={"limit": 1}).json()[0].values()
+    k = client.get("/analytics/arrivals", params={"by": "role", "skill": name}).json()
+    assert sum(r["postings"] for r in k["rows"]) == postings
+
+
 def test_skill_profile_unknown_skill_is_empty_not_an_error(client):
     body = client.get("/analytics/skill-profile", params={"skill": "No Such Skill"}).json()
     assert body["postings"] == 0 and body["paired_with"] == [] and body["top_employers"] == []

@@ -6,6 +6,8 @@ Most of these accept the same filters as /postings, so a client can ask
 stuck with global totals.
 """
 
+from datetime import date, timedelta
+
 from fastapi import APIRouter, HTTPException, Query
 
 from ..database import fetch_all, fetch_one, fetch_value, WhereBuilder
@@ -13,7 +15,7 @@ from ..models import (
     Summary, Bucket, SkillPair, SkillSuggestion, NamedCount,
     ScrapeHealthReport, ScrapeRunSummary, FieldHealthWarning, PendingLocation,
     DescriptionMismatch, SkillChoice, SkillFlexibility, ExperienceFlexibility,
-    ClosureRate, SkillProfile,
+    ClosureRate, SkillProfile, Arrivals, ArrivalRow, DateRange,
 )
 from job_database import check_field_health, pending_locations, mismatched_descriptions
 
@@ -56,6 +58,20 @@ def scope(role_family, city, state, experience_min, experience_max,
     w.add("c.experience_min <= %s", experience_max)
     w.add("c.posted_date >= %s", posted_after)
     return w
+
+
+# The experience bands every chart shares. Was written out by hand three times
+# (experience, flexibility-by-experience, closures); one copy now, so a band
+# edge cannot drift between charts that are read side by side.
+EXPERIENCE_BAND = """
+    CASE
+        WHEN c.experience_min IS NULL THEN 'Not stated'
+        WHEN c.experience_min <= 1  THEN '0-1 years'
+        WHEN c.experience_min <= 3  THEN '2-3 years'
+        WHEN c.experience_min <= 6  THEN '4-6 years'
+        WHEN c.experience_min <= 10 THEN '7-10 years'
+        ELSE '10+ years'
+    END"""
 
 
 @router.get("/summary", response_model=Summary, summary="Headline figures")
@@ -265,14 +281,7 @@ def experience_distribution(
 
     return fetch_all(f"""
         SELECT
-            CASE
-                WHEN c.experience_min IS NULL THEN 'Not stated'
-                WHEN c.experience_min <= 1  THEN '0-1 years'
-                WHEN c.experience_min <= 3  THEN '2-3 years'
-                WHEN c.experience_min <= 6  THEN '4-6 years'
-                WHEN c.experience_min <= 10 THEN '7-10 years'
-                ELSE '10+ years'
-            END AS bucket,
+            {EXPERIENCE_BAND} AS bucket,
             COUNT(*)::int AS postings,
             ROUND(100.0 * COUNT(*) / {total}, 2)::float AS share_pct
         FROM cleaned_postings c {w.sql}
@@ -498,6 +507,119 @@ def skill_profile(
     )
 
 
+# ---------------------------------------------------------------------
+# ARRIVALS -- new postings per day or week, by component
+# ---------------------------------------------------------------------
+# Employers below this are folded into one line: a company with a handful of
+# postings over the whole history plots as zeros with the odd spike.
+ARRIVAL_MIN_COMPANY_POSTINGS = 10
+
+ARRIVAL_GROUPS = {
+    "role": ("COALESCE(c.role_family, 'Not recorded')", ""),
+    "experience": (EXPERIENCE_BAND, ""),
+    "source": ("c.source", ""),
+    "company": (f"""CASE WHEN c.company IN (SELECT company FROM cleaned_postings
+                        GROUP BY company HAVING COUNT(*) >= {ARRIVAL_MIN_COMPANY_POSTINGS})
+                    THEN c.company ELSE 'All other employers' END""", ""),
+    # A posting naming two cities counts once in each, so city shares can sum
+    # past 100%. No resolved city is its own line rather than dropped.
+    "city": ("COALESCE(ci.city_name, 'No resolved city')",
+             "LEFT JOIN posting_cities pc ON pc.job_id = c.job_id "
+             "LEFT JOIN cities ci ON ci.city_id = pc.city_id"),
+}
+
+# Collection started before scrape_runs existed (2026-08-19), so its opening
+# days cannot be found from that table: every search's first run fell here.
+COLLECTION_START = DateRange(start=date(2026, 8, 6), end=date(2026, 8, 10),
+                             label="Collection began: every open posting counted as new")
+
+
+def _merge_days(days: list[date], label: str) -> list[DateRange]:
+    ranges: list[DateRange] = []
+    for d in sorted(set(days)):
+        if ranges and (d - ranges[-1].end).days == 1:
+            ranges[-1].end = d
+        else:
+            ranges.append(DateRange(start=d, end=d, label=label))
+    return ranges
+
+
+@router.get("/arrivals", response_model=Arrivals,
+            summary="New postings per day or week, by role, experience, city, company or board")
+def arrivals(
+    by: str = Query("role", pattern="^(role|experience|city|company|source)$"),
+    period: str = Query("week", pattern="^(day|week)$"),
+    since: date | None = Query(None, description="First-seen on or after"),
+    until: date | None = Query(None, description="First-seen on or before"),
+    skill: str | None = Query(None, description="Only postings demanding this skill"),
+):
+    """Counts postings by the day (or Monday-start week) they FIRST appeared in
+    our searches -- not the employer's posting date, which is missing on 28%."""
+    group_sql, join_sql = ARRIVAL_GROUPS[by]
+    bucket_sql = ("c.first_seen_date" if period == "day"
+                  else "date_trunc('week', c.first_seen_date)::date")
+    w = scope(None, None, None, None, None, None, None, skill=skill)
+    w.add("c.first_seen_date >= %s", since)
+    w.add("c.first_seen_date <= %s", until)
+
+    rows = fetch_all(f"""
+        WITH base AS (
+            SELECT c.job_id, {bucket_sql} AS period_start, {group_sql} AS grp
+            FROM cleaned_postings c {join_sql} {w.sql}
+        ),
+        totals AS (SELECT period_start, COUNT(DISTINCT job_id) AS n FROM base GROUP BY 1)
+        SELECT b.period_start, b.grp AS "group",
+               COUNT(DISTINCT b.job_id)::int AS postings,
+               ROUND(100.0 * COUNT(DISTINCT b.job_id) / t.n, 2)::float AS share_pct
+        FROM base b JOIN totals t USING (period_start)
+        GROUP BY b.period_start, b.grp, t.n
+        ORDER BY b.period_start, postings DESC, b.grp
+    """, w.values)
+
+    # A search's first run counts every posting it can see as new. Found two
+    # ways: searches whose first scrape_runs row came after that table began
+    # (automatic from then on), and search changes recorded in
+    # instrument_changes -- the only record of the 2026-08-18 switch, which
+    # predates scrape_runs.
+    first_runs = fetch_all("""
+        SELECT MIN(started_at)::date AS d FROM scrape_runs GROUP BY search_url
+        HAVING MIN(started_at)::date > (SELECT MIN(started_at)::date FROM scrape_runs)
+        UNION
+        SELECT changed_on FROM instrument_changes
+        WHERE component IN ('search_coverage', 'source')
+    """)
+    startup = [COLLECTION_START] + _merge_days(
+        [r["d"] for r in first_runs],
+        "New searches added: already-open postings counted as new")
+
+    lo = since or fetch_value("SELECT MIN(first_seen_date) FROM cleaned_postings")
+    hi = until or date.today()
+    collected = {r["d"] for r in fetch_all("""
+        SELECT first_seen_date AS d FROM cleaned_postings WHERE first_seen_date BETWEEN %s AND %s
+        UNION SELECT snapshot_date FROM skill_daily_counts WHERE snapshot_date BETWEEN %s AND %s
+    """, (lo, hi, lo, hi))} if lo else set()
+    no_scrape = [lo + timedelta(days=i) for i in range((hi - lo).days + 1)
+                 if lo + timedelta(days=i) not in collected] if lo else []
+    # Today before the 11:00 run is not a missed day, just an early one.
+    no_scrape = [d for d in no_scrape if d != date.today()]
+
+    partial: list[date] = []
+    if period == "week" and lo:
+        first_week = lo - timedelta(days=lo.weekday())
+        last_week = hi - timedelta(days=hi.weekday())
+        if lo != first_week:
+            partial.append(first_week)
+        if hi - last_week < timedelta(days=6):
+            partial.append(last_week)
+
+    return Arrivals(by=by, period=period,
+                    rows=[ArrivalRow(**r) for r in rows],
+                    startup_ranges=[r for r in startup
+                                    if not (since and r.end < since) and not (until and r.start > until)],
+                    partial_periods=sorted(set(partial)),
+                    no_scrape_days=no_scrape)
+
+
 @router.get("/scrape-health", response_model=ScrapeHealthReport, summary="Scraper pipeline health")
 def scrape_health(lookback: int = Query(20, ge=1, le=100)):
     # Uses job_database.py's own connection, not the pool — a deliberate bend.
@@ -639,14 +761,7 @@ def flexibility_by_experience(
     # is a breakdown of nearly everything rather than of a self-selected few.
     return fetch_all(f"""
         SELECT
-            CASE
-                WHEN c.experience_min IS NULL THEN 'Not stated'
-                WHEN c.experience_min <= 1  THEN '0-1 years'
-                WHEN c.experience_min <= 3  THEN '2-3 years'
-                WHEN c.experience_min <= 6  THEN '4-6 years'
-                WHEN c.experience_min <= 10 THEN '7-10 years'
-                ELSE '10+ years'
-            END AS bucket,
+            {EXPERIENCE_BAND} AS bucket,
             COUNT(*)::int AS postings,
             COUNT(*) FILTER (WHERE ps.skill_groups <> '[]')::int AS offering_a_choice,
             ROUND(100.0 * COUNT(*) FILTER (WHERE ps.skill_groups <> '[]')
@@ -670,16 +785,7 @@ def flexibility_by_experience(
 # on 19 Aug, so their "not stated" bucket is really "collected earlier",
 # and earlier postings have had longer to close.
 CLOSURE_DIMENSIONS = {
-    "experience_band": """
-        CASE
-            WHEN c.experience_min IS NULL THEN 'Not stated'
-            WHEN c.experience_min <= 1  THEN '0-1 years'
-            WHEN c.experience_min <= 3  THEN '2-3 years'
-            WHEN c.experience_min <= 6  THEN '4-6 years'
-            WHEN c.experience_min <= 10 THEN '7-10 years'
-            ELSE '10+ years'
-        END
-    """,
+    "experience_band": EXPERIENCE_BAND,
     "role_family": "COALESCE(c.role_family, 'Uncategorised')",
 }
 

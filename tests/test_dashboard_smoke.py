@@ -113,6 +113,17 @@ def test_one_skill_tab_opens_on_the_linked_skill():
     assert not at.exception
 
 
+def test_market_over_time_tab_handles_every_breakdown():
+    at = AppTest.from_file(str(ROOT / "pages" / "2_Market.py"), default_timeout=60)
+    at.run()
+    for by in ("Experience level", "City", "Company", "Job board", "Role"):
+        at.radio(key="arr_by").set_value(by).run()
+        assert not at.exception, by
+    at.radio(key="arr_period").set_value("Days").run()
+    at.radio(key="arr_measure").set_value("Share").run()
+    assert not at.exception
+
+
 def test_trends_skills_are_restored_from_a_shared_link():
     at = AppTest.from_file(str(ROOT / "pages" / "3_Trends.py"), default_timeout=30)
     at.query_params["skill"] = ["Python", "SQL"]

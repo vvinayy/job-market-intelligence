@@ -207,6 +207,37 @@ class SkillSuggestion(BaseModel):
     share_pct: float
 
 
+class ArrivalRow(BaseModel):
+    period_start: date = Field(description="The day, or the Monday of the week")
+    group: str
+    postings: int
+    share_pct: float = Field(description="Of all postings first seen in that period")
+
+
+class DateRange(BaseModel):
+    start: date
+    end: date
+    label: str
+
+
+class Arrivals(BaseModel):
+    """Postings by the day or week they first appeared in our searches. Exact
+    for every past day: first_seen_date never changes, and neither does any
+    grouping field -- company, title, location and experience are the
+    fingerprint, so changing one makes a new posting."""
+    by: str
+    period: str
+    rows: list[ArrivalRow] = []
+    startup_ranges: list[DateRange] = Field(
+        default=[], description="Days a search first ran: every posting already "
+                                "open counted as new, so arrivals are inflated")
+    partial_periods: list[date] = Field(
+        default=[], description="Weeks only partly inside the requested dates")
+    no_scrape_days: list[date] = Field(
+        default=[], description="Days nothing was collected; their postings "
+                                "appear on the next collected day")
+
+
 class SkillProfile(BaseModel):
     """One skill's reach. postings counts demand -- outright or as an
     alternative -- the same definition as /analytics/skills."""

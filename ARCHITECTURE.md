@@ -98,6 +98,22 @@ them the same way (added 2026-09-30, no API change):
   `/analytics/skills`. Offered only for skills in 20+ postings (136 on
   2026-09-30); its "See postings" button is a Jobs shared link, which is why the
   Jobs skill list was widened from 80 to 200.
+- **The Market page's "Over time" tab** is `/analytics/arrivals`: postings by the
+  day or Monday-start week they were *first seen*, by role, experience band,
+  city, company (10+ postings, the rest as one line) or board, as counts or as
+  a share of that period's new postings, over any date range. Unlike every other
+  component, skills aside, this history needs no snapshot: `first_seen_date`
+  never changes, and neither do role, experience, city or company, because
+  those fields are the fingerprint — edit one and it is a new posting. So all
+  past days rebuild exactly. What it cannot rebuild is how many were *open*.
+  Start-up days — when a search first ran and counted every open posting as
+  new — are shaded, found from `scrape_runs` (searches first run after
+  2026-08-19) plus `instrument_changes` rows of kind `search_coverage`/`source`,
+  plus the fixed 6–10 Aug collection start. The 2026-08-18 Naukri search swap
+  (111 "new" postings in a day) predates `scrape_runs` and was recovered from
+  the logs into `instrument_changes`; **record any future search change there**
+  or it will plot as a hiring surge. Weeks cut by the date range are drawn
+  hollow and dashed; days nothing was collected are gaps, not zeros.
 - **`from_url()` / `to_url()`** — Jobs filters and the Trends skill selection
   live in the address bar, so a view can be bookmarked or shared. The URL only
   seeds the first render; values not in a widget's options are dropped, so a

@@ -1,10 +1,11 @@
-"""Market — roles, employers, locations. Ranked bars throughout."""
+"""Market — roles, employers, locations, and how new postings arrive over time."""
 
-from datetime import date
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 import streamlit as st
 import plotly.express as px
+import plotly.graph_objects as go
 
 import dash_common as dc
 
@@ -41,7 +42,7 @@ RELIABLE_POSTINGS = 15
 RESIDUAL_BUCKETS = {"Other", "Uncategorised"}
 
 
-tab1, tab2, tab3 = st.tabs(["Roles", "Employers", "Locations"])
+tab1, tab2, tab3, tab4 = st.tabs(["Roles", "Employers", "Locations", "Over time"])
 
 
 with tab1:
@@ -326,5 +327,158 @@ with tab3:
             states = states.rename(columns={"state_name": "state"})
             st.plotly_chart(ranked_bar(states, "postings", "state"), use_container_width=True)
 
+
+with tab4:
+    st.subheader("New postings over time")
+    st.write("How many postings appeared for the first time each day or week, "
+             "broken down by what you pick.")
+
+    BY_OPTIONS = {"Role": "role", "Experience level": "experience", "City": "city",
+                  "Company": "company", "Job board": "source"}
+    PLURAL = {"Role": "Roles", "Experience level": "Experience levels", "City": "Cities",
+              "Company": "Companies", "Job board": "Job boards"}
+    # Leftover buckets are real postings but not a peer of the named groups, so
+    # they are offered, never pre-selected.
+    RESIDUAL_GROUPS = {"Other", "Not recorded", "All other employers", "No resolved city"}
+
+    c1, c2, c3 = st.columns([3, 2, 2])
+    by_label = c1.radio("Break down by", list(BY_OPTIONS), horizontal=True, key="arr_by")
+    period_label = c2.radio("Group by", ["Weeks", "Days"], horizontal=True, key="arr_period",
+                            help="Weeks run Monday to Sunday. About 17 new postings arrive "
+                                 "a day in total, so one group's daily line is mostly 0-5.")
+    measure = c3.radio("Show", ["Count", "Share"], horizontal=True, key="arr_measure",
+                       help="Share = this group's percentage of all postings first seen in "
+                            "that day or week, which evens out quiet days and failed scrapes.")
+    by, period = BY_OPTIONS[by_label], ("week" if period_label == "Weeks" else "day")
+
+    # Bounds come from an unfiltered call, so the range slider always spans all
+    # collected days whatever is picked.
+    bounds = pd.DataFrame(dc.arrivals(by=by, period="day").get("rows") or [])
+    if bounds.empty:
+        st.info("No postings collected yet.")
+    else:
+        first_day = pd.to_datetime(bounds["period_start"]).min().date()
+        today = date.today()
+        since, until = st.slider("Dates", min_value=first_day, max_value=today,
+                                 value=(first_day, today), format="D MMM YYYY", key="arr_dates")
+
+        data = dc.arrivals(by=by, period=period, since=since, until=until)
+        rows = pd.DataFrame(data.get("rows") or [])
+        if rows.empty:
+            st.info("No postings first appeared in those dates.")
+        else:
+            rows["period_start"] = pd.to_datetime(rows["period_start"]).dt.date
+            ranking = rows.groupby("group")["postings"].sum().sort_values(ascending=False)
+            options = ranking.index.tolist()
+            default = [g for g in options if g not in RESIDUAL_GROUPS][:5]
+            chosen = st.multiselect(f"{PLURAL[by_label]} to show", options, default=default,
+                                    key=f"arr_groups_{by}",
+                                    help="Ordered by postings in the selected dates.")
+
+            if period == "day":
+                axis = [since + timedelta(days=i) for i in range((until - since).days + 1)]
+            else:
+                start = since - timedelta(days=since.weekday())
+                axis = [start + timedelta(weeks=i)
+                        for i in range((until - start).days // 7 + 1)]
+            no_scrape = {date.fromisoformat(d) for d in data.get("no_scrape_days") or []}
+            partial = {date.fromisoformat(d) for d in data.get("partial_periods") or []}
+            value = "postings" if measure == "Count" else "share_pct"
+
+            fig = go.Figure()
+            for i, g in enumerate(chosen):
+                series = (rows[rows["group"] == g].set_index("period_start")[value]
+                          .reindex(axis, fill_value=0).astype(float))
+                # A day nothing was collected is a gap, not a zero: its postings
+                # land on the next collected day instead.
+                if period == "day":
+                    series[[d for d in axis if d in no_scrape]] = None
+                colour = dc.LINES[i % len(dc.LINES)]
+                solid = series.where([d not in partial for d in axis])
+                fig.add_trace(go.Scatter(
+                    x=axis, y=solid, name=g, mode="lines+markers", legendgroup=g,
+                    line=dict(color=colour), connectgaps=False,
+                    hovertemplate=("%{x|%d %b %Y}" if period == "day" else "week of %{x|%d %b}")
+                                  + f"<br>{g}: %{{y}}" + ("" if value == "postings" else "%")
+                                  + "<extra></extra>"))
+                if partial:
+                    # Dashed and hollow into a partial week, so it never reads as a drop.
+                    near = {d for p in partial for d in (p - timedelta(weeks=1), p,
+                                                         p + timedelta(weeks=1))}
+                    fig.add_trace(go.Scatter(
+                        x=axis, y=series.where([d in near for d in axis]), legendgroup=g,
+                        showlegend=False, mode="lines+markers", connectgaps=False,
+                        line=dict(color=colour, dash="dot"),
+                        marker=dict(symbol=["circle-open" if d in partial else "circle"
+                                            for d in axis], size=9),
+                        hovertemplate="week of %{x|%d %b} (partial)<br>" + g
+                                      + ": %{y}<extra></extra>"))
+
+            def on_axis(r: dict) -> tuple[date, date]:
+                """A start-up range as the axis points it covers."""
+                s, e = date.fromisoformat(r["start"]), date.fromisoformat(r["end"])
+                if period == "week":
+                    s, e = s - timedelta(days=s.weekday()), e - timedelta(days=e.weekday())
+                return s, e
+
+            startup_spans = [on_axis(r) for r in data.get("startup_ranges") or []]
+            # datetime, not date: date minus 12 hours is the same date, which drew
+            # a one-day start-up (18 Aug) as a zero-width band.
+            half = timedelta(hours=12) if period == "day" else timedelta(days=3, hours=12)
+            for s, e in startup_spans:
+                s, e = datetime.combine(s, datetime.min.time()), datetime.combine(e, datetime.min.time())
+                fig.add_vrect(x0=s - half, x1=e + half, fillcolor="#9aa5a2", opacity=0.15,
+                              layer="below", line_width=0, annotation_text="start-up",
+                              annotation_position="top left")
+            fig.update_layout(height=460, margin=dict(l=0, r=0, t=30, b=0),
+                              yaxis_title="new postings" if value == "postings"
+                              else "% of that period's new postings",
+                              xaxis_title=None, legend_title=None, **dc.TRANSPARENT)
+            st.plotly_chart(fig, use_container_width=True)
+
+            notes = ["Counted on the day a posting **first appeared in our searches**, "
+                     "not the employer's posting date."]
+            def span(r: dict) -> str:
+                s, e = date.fromisoformat(r["start"]), date.fromisoformat(r["end"])
+                if s == e:
+                    return f"{s.day} {s:%b}"
+                return (f"{s.day}–{e.day} {e:%b}" if s.month == e.month
+                        else f"{s.day} {s:%b}–{e.day} {e:%b}")
+
+            if data.get("startup_ranges"):
+                notes.append("**Shaded = start-up:** "
+                             + "; ".join(f"{span(r)} ({r['label'].lower()})"
+                                         for r in data["startup_ranges"])
+                             + ". Those spikes are postings that were already open, not a "
+                               "hiring surge.")
+            if partial and period == "week":
+                notes.append("**Hollow points** are weeks only partly inside the dates, so "
+                             "they read low.")
+            if no_scrape and period == "day":
+                notes.append(f"**Gaps** are the {len(no_scrape)} day(s) nothing was "
+                             "collected; their postings show on the next day.")
+            if by == "city":
+                notes.append("A posting naming several cities counts in each, so shares "
+                             "add up to more than 100%.")
+            st.caption(" ".join(notes))
+
+            st.markdown("**What arrived on a given " + ("day" if period == "day" else "week") + "**")
+            periods = sorted(rows["period_start"].unique(), reverse=True)
+            picked = st.selectbox(
+                "Pick one", periods, key=f"arr_pick_{period}",
+                format_func=lambda d: (d.strftime("%a %d %b %Y") if period == "day"
+                                       else f"week of {d.strftime('%d %b %Y')}")
+                                      + (" (partial)" if d in partial else "")
+                                      + (" (start-up)" if any(s <= d <= e for s, e in startup_spans)
+                                         else ""))
+            that = rows[rows["period_start"] == picked].sort_values("postings", ascending=False)
+            total_that = int(that["postings"].sum()) if by != "city" else None
+            st.caption(f"{PLURAL[by_label]} by postings first seen then"
+                       + (f" — {total_that} postings in all." if total_that else "."))
+            st.plotly_chart(ranked_bar(that.head(15), "postings", "group"),
+                            use_container_width=True)
+
+            dc.csv_download(rows.rename(columns={"group": by_label.lower()}),
+                            f"new_postings_by_{by}_{period}.csv")
 
 dc.sampling_note()

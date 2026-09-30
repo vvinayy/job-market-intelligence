@@ -229,7 +229,30 @@ INSERT INTO instrument_changes (changed_on, component, summary) VALUES
      'developer, frontend developer), taking hirist from three searches to '
      'seven. A skill concentrated in those specialisms jumps the first day '
      'they run: DevOps went from 2 postings to 21, of which 20 were hirist. '
-     'That is the sample widening, not demand rising.')
+     'That is the sample widening, not demand rising.'),
+    ('2026-09-16', 'skill_identity',
+     'Twenty skill rows merged into their canonical spelling -- Iac Terraform '
+     'into Terraform, Ci Cd Pipeline and Ci/Cd Pipelines into Ci/Cd Pipeline, '
+     'Snowflake Db into Snowflake, Django Framework and Django Web Framework into '
+     'Django, Data Build Tool into dbt, Reacts Js into React, Datalake into Data '
+     'Lake, Restapi into REST API, Rabbitmq. into RabbitMQ, Ml Ops into MLOps, '
+     'Cybersecurity into Cyber Security, Cloud Watch into Cloudwatch, Event '
+     'Bridge into Eventbridge, Pl-Sql into PL/SQL, Reactnative into React '
+     'Native, Ab Testing into A/B Testing, Sales Force Development into '
+     'Salesforce Development, Java Full Stack Developer into Java Fullstack '
+     'Developer. Each had auto-registered before that spelling entered the '
+     'taxonomy, so demand was split across two ids -- Iac Terraform read 23 '
+     'postings while 22 of those already held Terraform too, so the merge '
+     'recovered 1 genuinely new posting, not 23; Ci/Cd Pipeline went 34 to 72 '
+     'absorbing two spellings of itself. Same mechanism as the 2026-09-04 merge '
+     'above, applied to the next batch that had drifted since.'),
+    ('2026-08-18', 'search_coverage',
+     'Naukri search set replaced: software-engineer, devops, data-engineer and '
+     'full-stack gave way to python-developer, java-full-stack, '
+     'machine-learning-engineer and python-full-stack (data-science kept). The '
+     'new searches surfaced 111 postings as new that day against about 17 '
+     'normally, 34 of them Full Stack. Found 2026-09-30 from the scrape logs; '
+     'scrape_runs did not exist yet, so nothing else recorded it.')
 ON CONFLICT (changed_on, component) DO NOTHING;
 
 

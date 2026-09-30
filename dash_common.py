@@ -42,6 +42,11 @@ CACHE_TTL = 1800
 
 PALETTE = ["#00b4c8", "#c8d400", "#6b7280", "#0891a5", "#9aa300", "#4b5563"]
 SCALE = ["#6b7280", "#00b4c8", "#c8d400"]
+# For charts with several lines at once. PALETTE comes in near-identical pairs
+# (two teals, two limes), which is fine for a single ranked bar but made
+# Full Stack and Backend indistinguishable on the arrivals chart.
+LINES = ["#0891a5", "#e0a100", "#7c3aed", "#dc2626", "#16a34a",
+         "#db2777", "#2563eb", "#6b7280", "#a16207", "#0d9488"]
 TRANSPARENT = dict(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
 
 # Static, real coordinates for every city in the `cities` reference
@@ -171,6 +176,16 @@ def skill_profile(skill: str, open_only: bool = False, limit: int = 10) -> dict:
     for it come from role_distribution(skill=...) / experience_distribution(skill=...)."""
     return one("/analytics/skill-profile",
                (("skill", skill), ("open_only", open_only), ("limit", limit)))
+
+
+def arrivals(by: str = "role", period: str = "week", since=None, until=None,
+             skill: str | None = None) -> dict:
+    """New postings per day/week by component, plus the start-up ranges,
+    partial weeks and no-scrape days the chart has to mark."""
+    params = [("by", by), ("period", period)] + _filter_params(
+        {"since": str(since) if since else None, "until": str(until) if until else None,
+         "skill": skill})
+    return one("/analytics/arrivals", tuple(params))
 
 
 def role_distribution(**filters) -> pd.DataFrame:
