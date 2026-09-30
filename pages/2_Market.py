@@ -2,6 +2,7 @@
 
 from datetime import date
 
+import pandas as pd
 import streamlit as st
 import plotly.express as px
 
@@ -91,7 +92,9 @@ with tab1:
     # still serves the counts if it is ever worth stating as a plain figure.
 
     st.divider()
-    st.subheader("How quickly are these roles being filled?")
+    # "Close", not "filled": Naukri only says a posting is gone, never whether
+    # anyone was hired.
+    st.subheader("How quickly do these postings close?")
     dim_label = st.radio("Compare by", ["Experience level", "Role"],
                          horizontal=True, key="closure_dim")
     dimension = "experience_band" if dim_label == "Experience level" else "role_family"
@@ -140,43 +143,74 @@ with tab1:
                 f"{b}  ({n} postings)" if b in thin else b
                 for b, n in zip(shown["bucket"], shown["postings"])
             ]
+            # Two plain readings of the same rate (closures per 100 posting-days).
+            # Per week is only a rescale, so the bar keeps it. Days open is its
+            # inverse, which assumes a steady closing pace -- so it is the label,
+            # not the bar, and the caption says so.
+            shown["per_week"] = shown["per_100_posting_days"] * 7
+            shown["days_open"] = [100 / r if r > 0 else None
+                                  for r in shown["per_100_posting_days"]]
+            shown["text"] = [
+                f"{w:.0f} a week · ~{d:.0f} days" if pd.notna(d) else f"{w:.0f} a week"
+                for w, d in zip(shown["per_week"], shown["days_open"])
+            ]
+            shown["days_hover"] = [f"~{d:.0f} days" if pd.notna(d) else "(none closed yet)"
+                                   for d in shown["days_open"]]
 
-            fig = px.bar(shown, x="per_100_posting_days", y="label", orientation="h",
-                         text=shown["per_100_posting_days"].map(lambda v: f"{v:.2f}"),
-                         color="per_100_posting_days", color_continuous_scale=dc.SCALE,
-                         custom_data=["postings", "closed", "pct_closed", "mean_exposure_days"])
+            fig = px.bar(shown, x="per_week", y="label", orientation="h",
+                         text="text", color="per_week", color_continuous_scale=dc.SCALE,
+                         custom_data=["postings", "closed", "pct_closed",
+                                      "mean_exposure_days", "days_hover"])
             fig.update_traces(
-                textposition="outside", cliponaxis=False,
+                # Inside the bar where it fits, so the dotted average line does not
+                # run through a label; hatched bars keep theirs outside, where it
+                # stays legible.
+                textposition=["outside" if b in thin else "auto" for b in shown["bucket"]],
+                insidetextanchor="end", cliponaxis=False,
                 marker_pattern_shape=["/" if b in thin else "" for b in shown["bucket"]],
-                hovertemplate="%{y}<br>%{customdata[1]} of %{customdata[0]} postings closed "
-                              "(%{customdata[2]}%)<br>watched %{customdata[3]} days on "
+                hovertemplate="%{y}<br>about %{x:.0f} of every 100 open postings close in a week"
+                              "<br>a typical posting stays open %{customdata[4]}"
+                              "<br>%{customdata[1]} of %{customdata[0]} postings closed so far "
+                              "(%{customdata[2]}%), each watched %{customdata[3]} days on "
                               "average<extra></extra>")
             # A rate means nothing on its own -- the line is what makes a bar
             # readable as faster or slower than the market.
-            fig.add_vline(x=baseline, line_dash="dot", line_color="#9aa5a2",
-                          annotation_text="all postings", annotation_position="top")
+            fig.add_vline(x=baseline * 7, line_dash="dot", line_color="#9aa5a2", layer="below",
+                          annotation_text=f"all postings: {baseline * 7:.0f} a week · "
+                                          f"~{100 / baseline:.0f} days" if baseline else "all postings",
+                          annotation_position="top")
             fig.update_layout(height=max(300, len(shown) * 46),
-                              margin=dict(l=0, r=60, t=26, b=0), coloraxis_showscale=False,
+                              margin=dict(l=0, r=150, t=26, b=0), coloraxis_showscale=False,
                               yaxis_title=None,
-                              xaxis_title="closures per 100 days a posting is under observation",
+                              xaxis_title="out of every 100 open postings, how many close in a week",
                               **dc.TRANSPARENT)
             st.plotly_chart(fig, use_container_width=True)
+            # Explain with the fastest group that has enough postings -- a hatched
+            # bar is the one reading the chart warns against.
+            solid = shown[~shown["bucket"].isin(thin)]
+            top = (solid if not solid.empty else shown).iloc[-1]
+            example = (f"*\"{top['per_week']:.0f} a week\"* for {top['bucket']} means "
+                       f"that out of every 100 such postings that are open, about "
+                       f"{top['per_week']:.0f} close in a typical week. ")
+            if pd.notna(top["days_open"]):
+                example += (f"*\"~{top['days_open']:.0f} days\"* is what that works "
+                            "out to for one posting — an estimate that assumes they "
+                            "keep closing at the same pace. ")
             st.caption(
-                f"Closures per 100 days a posting spends **under observation**, "
-                f"counted only from {started} — the day closure checking began. "
-                "Days before that are not exposure: nothing was checking, so no "
-                "closure could have been seen. Postings already expired when "
-                "checking started are excluded entirely; they died at unknown "
-                "earlier dates. The dotted line is every posting observed, not "
-                "just the roles selected. Naukri only says a posting is gone, "
-                "never whether anyone was hired."
+                "**How to read it:** a longer bar means postings of that kind close "
+                "faster. " + example + f"Counted from {started}, when "
+                "daily checking began, and Naukri only (hirist never says when a "
+                "posting closes). The dotted line is all postings. \"Closed\" means "
+                "Naukri took the posting down — it does not tell us whether anyone "
+                "was hired."
             )
             closed_shown = int(shown["closed"].sum())
             st.info(
-                f"**Treat the ordering as provisional.** The observation window is "
-                f"{window_days} days old and holds {closed_shown} closure(s) across "
-                f"{len(shown)} group(s) — a handful of events per bar, which is "
-                "not enough to separate them. It sharpens as the window lengthens."
+                f"**Treat the ordering as provisional.** {window_days} days of "
+                f"checking so far: {closed_shown} closure(s) across {len(shown)} "
+                f"group(s), about {closed_shown / len(shown):.0f} per group. Bars a "
+                "few postings a week apart can still differ by chance; this "
+                "sharpens as more days are checked."
             )
 
             charted_thin = [b for b in shown["bucket"] if b in thin]
