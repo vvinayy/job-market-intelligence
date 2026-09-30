@@ -149,7 +149,8 @@ per overturned closure — `closed_on`, the old and new URL — written by
 `save_records()` just before `STATE_UPSERT_SQL` wipes them. Same `job_id`
 throughout; a relisting is the same job continuing, not a new posting. Before
 this, 25 closures (24 postings) had been silently erased; they were rebuilt from
-the liveness and scrape logs.
+the liveness and scrape logs. The closure-rate chart does not count them, by
+decision: a posting that came back is shown as having come back, not as closed.
 
 `description_foreign_cities` stays on the spine rather than moving with the
 description it is derived from. It is 13 bytes, and it is a flag *about* the

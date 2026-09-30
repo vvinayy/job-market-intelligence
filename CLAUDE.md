@@ -554,6 +554,10 @@ those facts exist. Rebuilt from the logs by
 postings, 18 relisted under a new link and 7 back at the same link, 5 of them
 since closed again. `old_url = new_url` cannot tell an employer reopening
 from a wrong closure reading; the table records both, it does not judge.
+**`/analytics/closures` deliberately does not read this table** (user decision,
+2026-09-30): folding a reopened posting's earlier closure into the rate would
+present it as closed and hide that it came back. The table is a record, not a
+closure-rate input.
 
 Fuller versions of several of these live in `docs/superpowers/specs/`, including
 why the three skill columns were not merged into one.
