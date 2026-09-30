@@ -266,6 +266,18 @@ WHERE posting_state.is_expired IS DISTINCT FROM FALSE
    OR posting_state.source IS DISTINCT FROM EXCLUDED.source
 """
 
+# Runs BEFORE STATE_UPSERT_SQL, which clears a recorded expiry: this is the last
+# moment the closure date and the old link can be read. Without it a relisted
+# posting looked continuously open and its closure vanished from every metric.
+REOPENING_SQL = """
+INSERT INTO posting_reopenings (job_id, closed_on, expiry_basis, old_url, new_url)
+SELECT s.job_id, s.expired_on, s.expiry_basis, s.url, v.url
+FROM (VALUES %s) AS v(job_id, source, url)
+JOIN posting_state s ON s.job_id = v.job_id
+WHERE s.is_expired
+ON CONFLICT (job_id, reopened_on) DO NOTHING
+"""
+
 # Guarded the same way as the spine: a description is the single widest thing
 # the pipeline stores, and rewriting an identical one is the most expensive
 # no-op in the schema.
@@ -577,6 +589,7 @@ def save_records(records: list[dict]) -> tuple[int, int]:
             # row per posting and posting_sightings has to READ its own
             # times_seen to increment it — a delete would reset the count.
             if state_rows:
+                execute_values(cur, REOPENING_SQL, state_rows)
                 execute_values(cur, STATE_UPSERT_SQL, state_rows)
             if content_rows:
                 execute_values(cur, CONTENT_UPSERT_SQL, content_rows)

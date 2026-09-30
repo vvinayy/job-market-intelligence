@@ -143,6 +143,14 @@ So the tables are split by **write frequency first**, read frequency second:
 | `posting_content` | `description` | only when the description changes |
 | `posting_sightings` | `last_seen_date`, `times_seen`, applicant and company-rating observations | **every scrape** |
 
+Clearing a stale expiry is the one place a scrape overwrites liveness, so it
+leaves a record first: **`posting_reopenings`** (added 2026-09-30) gets one row
+per overturned closure — `closed_on`, the old and new URL — written by
+`save_records()` just before `STATE_UPSERT_SQL` wipes them. Same `job_id`
+throughout; a relisting is the same job continuing, not a new posting. Before
+this, 25 closures (24 postings) had been silently erased; they were rebuilt from
+the liveness and scrape logs.
+
 `description_foreign_cities` stays on the spine rather than moving with the
 description it is derived from. It is 13 bytes, and it is a flag *about* the
 posting that `?description_flagged=` filters list queries on — moving it would

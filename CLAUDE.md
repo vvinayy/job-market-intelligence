@@ -236,7 +236,7 @@ the first runs anywhere:
   running. Slow, skips itself if nothing is listening. Also covers shared links
   restoring Jobs/Trends filters and the Jobs CSV holding every match.
 
-**Run the whole suite, not a subset.** `pytest` collects 268 tests across 12
+**Run the whole suite, not a subset.** `pytest` collects 271 tests across 13
 files (2026-09-30). The fast-path command above is four of those files; `test_data_integrity`,
 `test_liveness_run`, `test_record_identity`, `test_education_degrees` and
 `test_hirist_collector` are in neither that list nor `test_api`. Running only the
@@ -541,6 +541,19 @@ a block, or a 404 is "unknown" and writes nothing; otherwise a single bad night
 would write off the whole table. The checker uses a plain HEAD request rather
 than a browser — measured 40/40 against a browser census — which is why it is
 allowed a shorter pause than the scraper.
+
+**A closure can be overturned, and is recorded rather than erased.** A search
+finding a closed posting's fingerprint again keeps the same `job_id`, clears
+the expiry in `posting_state` and swaps in the new URL -- the advert is being
+served, so the old verdict is void. Until 2026-09-30 that left no trace: the
+posting read as open all along and its closure dropped out of
+`/analytics/closures`. `save_records()` now writes a `posting_reopenings` row
+(closed_on, old and new URL) *immediately before* the clear, the last moment
+those facts exist. Rebuilt from the logs by
+`migrations/2026-09-30-backfill-posting-reopenings.py`: 25 reopenings on 24
+postings, 18 relisted under a new link and 7 back at the same link, 5 of them
+since closed again. `old_url = new_url` cannot tell an employer reopening
+from a wrong closure reading; the table records both, it does not judge.
 
 Fuller versions of several of these live in `docs/superpowers/specs/`, including
 why the three skill columns were not merged into one.

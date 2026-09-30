@@ -109,6 +109,7 @@ DROP TABLE IF EXISTS posting_cities;
 DROP TABLE IF EXISTS hirist_liveness_observations;
 DROP TABLE IF EXISTS posting_sightings;
 DROP TABLE IF EXISTS posting_content;
+DROP TABLE IF EXISTS posting_reopenings;
 DROP TABLE IF EXISTS posting_state;
 DROP TABLE IF EXISTS cleaned_postings;
 DROP TABLE IF EXISTS role_categories CASCADE;
@@ -301,6 +302,26 @@ CREATE TABLE posting_state (
 CREATE INDEX IF NOT EXISTS idx_posting_state_queue
     ON posting_state (source, last_checked_on)
     WHERE is_expired IS NOT TRUE;
+
+-- A closure overturned by a later scrape. A search finding the same fingerprint
+-- again clears posting_state's expiry (the advert is being served, so the old
+-- verdict is void) -- which used to erase the closure without a trace: 20 of
+-- 382 logged closures by 2026-09-30. Written by save_records() just before the
+-- clear, so both facts survive. The posting keeps its job_id either way.
+-- old_url = new_url means the same link came back; otherwise it was relisted.
+CREATE TABLE posting_reopenings (
+    job_id        BIGINT NOT NULL REFERENCES cleaned_postings(job_id) ON DELETE CASCADE,
+    reopened_on   DATE   NOT NULL DEFAULT CURRENT_DATE,
+    closed_on     DATE,   -- posting_state.expired_on as it stood
+    expiry_basis  TEXT CHECK (expiry_basis IS NULL
+                              OR expiry_basis IN ('observed', 'delisted')),
+    old_url       TEXT   NOT NULL,
+    new_url       TEXT   NOT NULL,
+    -- 'log_backfill' rows were rebuilt from the liveness and scrape logs.
+    recorded_from TEXT   NOT NULL DEFAULT 'scrape'
+                  CHECK (recorded_from IN ('scrape', 'log_backfill')),
+    PRIMARY KEY (job_id, reopened_on)
+);
 
 
 -- 466 of the old row's 1,194 bytes, read on the detail path alone.
