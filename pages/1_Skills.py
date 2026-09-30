@@ -1,4 +1,7 @@
-"""Skills — demand, pairings, interchangeable sets, experience split, category mix."""
+"""Skills — demand, one skill in depth, pairings, interchangeable sets,
+experience split, category mix."""
+
+from urllib.parse import quote_plus
 
 import pandas as pd
 import streamlit as st
@@ -10,8 +13,23 @@ st.set_page_config(page_title="Skills", layout="wide", page_icon="◎")
 st.title("Skills")
 dc.freshness_note()
 
-tab1, tab2, tab5, tab3, tab4 = st.tabs(
-    ["Demand", "Pairings", "Interchangeable", "By experience level", "By category"])
+tab1, tab_one, tab2, tab5, tab3, tab4 = st.tabs(
+    ["Demand", "One skill", "Pairings", "Interchangeable", "By experience level", "By category"])
+
+# Below this a skill's role and employer breakdowns are one or two postings
+# each -- a chart of noise. 136 skills cleared it on 2026-09-30.
+ONE_SKILL_MIN_POSTINGS = 20
+EXPERIENCE_ORDER = ["0-1 years", "2-3 years", "4-6 years", "7-10 years", "10+ years", "Not stated"]
+
+
+def _hbar(frame: pd.DataFrame, x: str, y: str, xaxis_title: str | None = None, text=None):
+    fig = px.bar(frame, x=x, y=y, orientation="h", text=text if text is not None else x,
+                 color=x, color_continuous_scale=dc.SCALE)
+    fig.update_traces(textposition="outside", cliponaxis=False)
+    fig.update_layout(height=max(260, len(frame) * 30), margin=dict(l=0, r=50, t=10, b=0),
+                      coloraxis_showscale=False, xaxis_title=xaxis_title, yaxis_title=None,
+                      **dc.TRANSPARENT)
+    st.plotly_chart(fig, use_container_width=True)
 
 
 with tab1:
@@ -38,6 +56,87 @@ with tab1:
             "so they don't crowd out real tools."
         )
         dc.csv_download(data, f"skill_demand_top{n}.csv")
+
+
+with tab_one:
+    st.write("Everything about a single skill in one place: who asks for it, at what "
+             "level, what comes with it, and how demand has moved.")
+
+    ranked = dc.skill_demand(limit=200)
+    options = (ranked.loc[ranked["postings"] >= ONE_SKILL_MIN_POSTINGS, "skill"].tolist()
+               if not ranked.empty else [])
+
+    if not options:
+        st.info("No skill has enough postings yet.")
+    else:
+        # ?skill=Kubernetes opens this tab's picker on that skill.
+        dc.from_url("one_skill", "skill", options=options)
+        c1, c2 = st.columns([3, 2])
+        chosen = c1.selectbox(
+            "Skill", options, key="one_skill",
+            help=f"Skills asked for in at least {ONE_SKILL_MIN_POSTINGS} postings, most "
+                 "in-demand first. Below that the breakdowns are one or two postings each.")
+        counted = c2.radio(
+            "Count", ["All postings", "Open only"], horizontal=True, key="one_skill_scope",
+            help="Open only leaves out postings Naukri has confirmed closed. hirist "
+                 "never says when a posting closes, so its postings always count as open.")
+        open_only = counted == "Open only"
+        dc.to_url(skill=chosen)
+
+        profile = dc.skill_profile(chosen, open_only=open_only)
+        n = int(profile.get("postings") or 0)
+        which = "open postings" if open_only else "postings"
+
+        m1, m2, m3 = st.columns(3)
+        m1.metric(f"{which.capitalize()} asking for it", f"{n:,}")
+        m2.metric(f"Share of all {which}", f"{profile.get('share_pct', 0):.0f}%")
+        m3.metric("Either/or only", int(profile.get("alternative_only") or 0),
+                  help=f"Postings that accept {chosen} as one of several choices "
+                       f"(e.g. '{chosen} or similar') rather than as a must-have. "
+                       "They are included in the count, as everywhere else on this dashboard.")
+
+        left, right = st.columns(2)
+        with left:
+            st.markdown("**Which roles ask for it**")
+            roles_for = dc.role_distribution(skill=chosen, open_only=open_only)
+            if not roles_for.empty:
+                _hbar(roles_for.head(8).sort_values("postings"), "postings", "role")
+        with right:
+            st.markdown("**At what experience level**")
+            exp_for = dc.experience_distribution(skill=chosen, open_only=open_only)
+            if not exp_for.empty:
+                exp_for["order"] = exp_for["bucket"].map(EXPERIENCE_ORDER.index)
+                _hbar(exp_for.sort_values("order", ascending=False), "postings", "bucket")
+
+        left, right = st.columns(2)
+        with left:
+            st.markdown("**Usually asked for together**")
+            paired = pd.DataFrame(profile.get("paired_with") or [])
+            if not paired.empty:
+                _hbar(paired.sort_values("share_pct"), "share_pct", "skill",
+                      xaxis_title=f"% of {chosen} postings",
+                      text=paired.sort_values("share_pct")["share_pct"].map(lambda v: f"{v:.0f}%"))
+        with right:
+            st.markdown("**Who asks for it most**")
+            employers = pd.DataFrame(profile.get("top_employers") or [])
+            if not employers.empty:
+                _hbar(employers.sort_values("postings"), "postings", "name")
+
+        st.markdown("**Demand over time**")
+        series = dc.skill_series([chosen])
+        if not series.empty:
+            fig = px.line(series, x="snapshot_date", y="posting_count", markers=True,
+                          color_discrete_sequence=[dc.PALETTE[0]])
+            fig.update_layout(height=300, margin=dict(l=0, r=0, t=10, b=0),
+                              xaxis_title=None, yaxis_title="postings", **dc.TRANSPARENT)
+            st.plotly_chart(fig, use_container_width=True)
+            st.caption("Postings asking for it that the daily searches found on each "
+                       "day — the same series as the Trends page, whatever the Count "
+                       "setting above. A step can come from what we collect rather "
+                       "than the market: the hirist searches added on 2–4 Sep lifted "
+                       "most skills at once.")
+
+        st.link_button(f"See {chosen} postings in Jobs", f"/Jobs?skill={quote_plus(chosen)}")
 
 
 with tab2:

@@ -207,6 +207,17 @@ class SkillSuggestion(BaseModel):
     share_pct: float
 
 
+class SkillProfile(BaseModel):
+    """One skill's reach. postings counts demand -- outright or as an
+    alternative -- the same definition as /analytics/skills."""
+    skill: str
+    postings: int
+    share_pct: float = Field(description="Share of all postings (or all open ones) demanding it")
+    alternative_only: int = Field(description="Postings accepting it only as one of several options")
+    paired_with: list[SkillSuggestion] = []
+    top_employers: list[NamedCount] = []
+
+
 class SkillChoice(BaseModel):
     """One set of skills employers treat as interchangeable — a posting
     carrying this set wants any ONE of them, not all."""

@@ -24,7 +24,10 @@ dc.freshness_note()
 # =====================================================================
 # Every filter is seeded from the page URL (once) and written back to it below,
 # so a search can be bookmarked or shared and reopens exactly as it was.
-SKILL_OPTIONS = dc.top_skills(80)
+# 200, not 80: the Skills page's "One skill" tab links here for any skill in at
+# least 20 postings (136 of them), and a skill missing from this list would be
+# dropped from the link.
+SKILL_OPTIONS = dc.top_skills(200)
 ROLE_OPTIONS = dc.roles()
 cities_df = dc.cities_reference()
 CITY_OPTIONS = cities_df["city_name"].tolist() if not cities_df.empty else []

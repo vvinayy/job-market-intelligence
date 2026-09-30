@@ -166,6 +166,13 @@ def skill_flexibility(limit: int = 15, min_postings: int = 5) -> pd.DataFrame:
               (("limit", limit), ("min_postings", min_postings)))
 
 
+def skill_profile(skill: str, open_only: bool = False, limit: int = 10) -> dict:
+    """Reach, pairings and top employers for one skill. Roles and experience
+    for it come from role_distribution(skill=...) / experience_distribution(skill=...)."""
+    return one("/analytics/skill-profile",
+               (("skill", skill), ("open_only", open_only), ("limit", limit)))
+
+
 def role_distribution(**filters) -> pd.DataFrame:
     data = df("/analytics/roles", tuple(_filter_params(filters)))
     return data.rename(columns={"bucket": "role"}) if not data.empty else data

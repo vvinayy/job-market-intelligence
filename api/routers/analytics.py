@@ -13,7 +13,7 @@ from ..models import (
     Summary, Bucket, SkillPair, SkillSuggestion, NamedCount,
     ScrapeHealthReport, ScrapeRunSummary, FieldHealthWarning, PendingLocation,
     DescriptionMismatch, SkillChoice, SkillFlexibility, ExperienceFlexibility,
-    ClosureRate,
+    ClosureRate, SkillProfile,
 )
 from job_database import check_field_health, pending_locations, mismatched_descriptions
 
@@ -21,10 +21,23 @@ router = APIRouter(prefix="/analytics", tags=["analytics"])
 
 
 def scope(role_family, city, state, experience_min, experience_max,
-          posted_after, company) -> WhereBuilder:
+          posted_after, company, skill=None, open_only=False) -> WhereBuilder:
     """A smaller filter set than /postings, covering the dimensions that
-    make sense to slice an aggregate by."""
+    make sense to slice an aggregate by.
+
+    `skill` means demand -- outright OR offered as an alternative -- through
+    posting_skill_demand, the one definition every skill count uses."""
     w = WhereBuilder()
+    if skill:
+        w.add_raw("""c.job_id IN (SELECT d.job_id FROM posting_skill_demand d
+                     JOIN skills sk ON sk.skill_id = d.skill_id
+                     WHERE sk.skill_name = %s)""")
+        w.params.append(skill)
+    if open_only:
+        # "Not known to have closed": hirist is never checked, so a NULL counts
+        # as open here -- the same reading /analytics/skills?open_only uses.
+        w.add_raw("EXISTS (SELECT 1 FROM posting_state s "
+                  "WHERE s.job_id = c.job_id AND s.is_expired IS NOT TRUE)")
     if role_family:
         w.add("c.role_family = ANY(%s)", list(role_family))
     if company:
@@ -167,14 +180,9 @@ def skill_demand(
     to 9 -- so the default is left cumulative, but that gap widens as closures
     accumulate."""
     w = scope(role_family, city, state, experience_min, experience_max,
-              posted_after, company)
+              posted_after, company, open_only=open_only)
     if not include_blocked:
         w.add_raw("sk.skill_name NOT IN (SELECT skill FROM skill_blocklist)")
-    if open_only:
-        # EXISTS rather than a join: scope() is shared, and every caller
-        # would otherwise have to change its FROM clause too.
-        w.add_raw("EXISTS (SELECT 1 FROM posting_state s "
-                  "WHERE s.job_id = c.job_id AND s.is_expired IS NOT TRUE)")
 
     return fetch_all(f"""
         SELECT sk.skill_name AS name, COUNT(*)::int AS postings
@@ -192,8 +200,11 @@ def role_distribution(
     state: list[str] | None = Query(None),
     experience_min: int | None = Query(None, ge=0),
     experience_max: int | None = Query(None, ge=0),
+    skill: str | None = Query(None, description="Only postings demanding this skill"),
+    open_only: bool = Query(False, description="Only postings not known to have closed"),
 ):
-    w = scope(None, city, state, experience_min, experience_max, None, None)
+    w = scope(None, city, state, experience_min, experience_max, None, None,
+              skill=skill, open_only=open_only)
     total = fetch_value(
         f"SELECT COUNT(*) FROM cleaned_postings c {w.sql}", w.values) or 1
 
@@ -244,8 +255,11 @@ def experience_distribution(
     role_family: list[str] | None = Query(None),
     city: list[str] | None = Query(None),
     state: list[str] | None = Query(None),
+    skill: str | None = Query(None, description="Only postings demanding this skill"),
+    open_only: bool = Query(False, description="Only postings not known to have closed"),
 ):
-    w = scope(role_family, city, state, None, None, None, None)
+    w = scope(role_family, city, state, None, None, None, None,
+              skill=skill, open_only=open_only)
     total = fetch_value(
         f"SELECT COUNT(*) FROM cleaned_postings c {w.sql}", w.values) or 1
 
@@ -405,10 +419,12 @@ def skill_suggestions(
     role_family: list[str] | None = Query(None),
 ):
     w = WhereBuilder()
-    w.add_raw("""EXISTS (
-        SELECT 1 FROM posting_skills ps
-        WHERE ps.job_id = c.job_id
-          AND ps.skill_ids && (SELECT array_agg(skill_id) FROM skills WHERE skill_name = ANY(%s)))""")
+    # Through posting_skill_demand, not skill_ids alone: a posting offering
+    # AWS as one of several options still wants AWS. skill_ids only used to
+    # base AWS on 361 postings against a real 508 (2026-09-30).
+    w.add_raw("""c.job_id IN (SELECT d.job_id FROM posting_skill_demand d
+                 JOIN skills sk ON sk.skill_id = d.skill_id
+                 WHERE sk.skill_name = ANY(%s))""")
     w.params.append(list(skill))
     if role_family:
         w.add("c.role_family = ANY(%s)", list(role_family))
@@ -429,6 +445,57 @@ def skill_suggestions(
           AND sk.skill_name NOT IN (SELECT skill FROM skill_blocklist)
         GROUP BY sk.skill_name ORDER BY postings DESC LIMIT %s
     """, w.values + (list(skill), limit))
+
+
+@router.get("/skill-profile", response_model=SkillProfile,
+            summary="Everything about one skill: reach, pairings, employers")
+def skill_profile(
+    skill: str = Query(..., description="Canonical skill name, e.g. 'Kubernetes'"),
+    open_only: bool = Query(False, description="Only postings not known to have closed"),
+    limit: int = Query(10, ge=1, le=50),
+):
+    """Roles and experience bands for a skill come from /analytics/roles and
+    /analytics/experience with ?skill=, so their buckets match the Market page."""
+    w = scope(None, None, None, None, None, None, None, skill=skill, open_only=open_only)
+    postings = fetch_value(f"SELECT COUNT(*) FROM cleaned_postings c {w.sql}", w.values) or 0
+    if postings == 0:
+        return SkillProfile(skill=skill, postings=0, share_pct=0, alternative_only=0)
+
+    everything = scope(None, None, None, None, None, None, None, open_only=open_only)
+    total = fetch_value(f"SELECT COUNT(*) FROM cleaned_postings c {everything.sql}",
+                        everything.values) or 1
+    # Postings that accept it only as one of several options ("AWS or Azure").
+    alternative_only = fetch_value(f"""
+        SELECT COUNT(*) FROM cleaned_postings c
+        JOIN posting_skills ps ON ps.job_id = c.job_id
+        {w.sql} AND NOT ((SELECT skill_id FROM skills WHERE skill_name = %s) = ANY(ps.skill_ids))
+    """, w.values + (skill,)) or 0
+
+    paired = fetch_all(f"""
+        SELECT sk.skill_name AS skill, COUNT(*)::int AS postings,
+               ROUND(100.0 * COUNT(*) / {postings}, 2)::float AS share_pct
+        FROM cleaned_postings c
+        JOIN posting_skill_demand d ON d.job_id = c.job_id
+        JOIN skills sk ON sk.skill_id = d.skill_id
+        {w.sql}
+          AND sk.skill_name <> %s
+          AND sk.skill_name NOT IN (SELECT skill FROM skill_blocklist)
+        GROUP BY sk.skill_name ORDER BY postings DESC, sk.skill_name LIMIT %s
+    """, w.values + (skill, limit))
+
+    employers = fetch_all(f"""
+        SELECT c.company AS name, COUNT(*)::int AS postings
+        FROM cleaned_postings c {w.sql} AND c.company IS NOT NULL
+        GROUP BY c.company ORDER BY postings DESC, c.company LIMIT %s
+    """, w.values + (limit,))
+
+    return SkillProfile(
+        skill=skill, postings=postings,
+        share_pct=round(100.0 * postings / total, 1),
+        alternative_only=alternative_only,
+        paired_with=[SkillSuggestion(**p) for p in paired],
+        top_employers=[NamedCount(**e) for e in employers],
+    )
 
 
 @router.get("/scrape-health", response_model=ScrapeHealthReport, summary="Scraper pipeline health")

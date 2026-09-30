@@ -103,6 +103,16 @@ def test_jobs_csv_holds_every_match_not_just_the_visible_page():
     assert not csv["skills"].map(lambda v: isinstance(v, list)).any()
 
 
+def test_one_skill_tab_opens_on_the_linked_skill():
+    at = AppTest.from_file(str(ROOT / "pages" / "1_Skills.py"), default_timeout=30)
+    at.query_params["skill"] = "Docker"
+    at.run()
+    assert not at.exception
+    assert at.selectbox(key="one_skill").value == "Docker"
+    at.radio(key="one_skill_scope").set_value("Open only").run()
+    assert not at.exception
+
+
 def test_trends_skills_are_restored_from_a_shared_link():
     at = AppTest.from_file(str(ROOT / "pages" / "3_Trends.py"), default_timeout=30)
     at.query_params["skill"] = ["Python", "SQL"]

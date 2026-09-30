@@ -216,7 +216,7 @@ win that turned out not to exist for this particular connection.
 | `migrations/` | Dated, idempotent `ALTER`s for a database that already has data — `schema.sql` drops the postings tables, so it cannot bring an existing one forward. |
 | `trends_setup.sql` | Daily skill snapshots and the views over them. Run second. |
 | `api/` | FastAPI. `main.py` app, `database.py` query helpers, `models.py` response shapes, `routers/` endpoints. |
-| `Home.py`, `pages/` | Streamlit dashboard (Skills, Market, Trends, Jobs). |
+| `Home.py`, `pages/` | Streamlit dashboard (Skills — including a "One skill" deep-dive tab — Market, Trends, Composition, Jobs). |
 | `dash_common.py` | The only dashboard file that makes HTTP calls. Also the shared freshness line, CSV download and URL-state helpers every page uses. |
 | `jobmarket.bat` | The single launcher. |
 | `tests/` | pytest suite. |
@@ -236,7 +236,7 @@ the first runs anywhere:
   running. Slow, skips itself if nothing is listening. Also covers shared links
   restoring Jobs/Trends filters and the Jobs CSV holding every match.
 
-**Run the whole suite, not a subset.** `pytest` collects 250 tests across 12
+**Run the whole suite, not a subset.** `pytest` collects 256 tests across 12
 files (2026-09-30). The fast-path command above is four of those files; `test_data_integrity`,
 `test_liveness_run`, `test_record_identity`, `test_education_degrees` and
 `test_hirist_collector` are in neither that list nor `test_api`. Running only the
@@ -424,6 +424,15 @@ request and keeps no history, so correcting it moved the past and the present
 at once. Both forms were diffed row for row over today's 642 snapshot rows:
 zero differences. Hence no `instrument_changes` row and no
 `skill_daily_corrections` row — nothing recorded was ever wrong.
+
+**A ninth path was found on 2026-09-30: `/analytics/skill-suggestions`** (Home's
+"What should I learn next?") matched the reader's skills against `skill_ids`
+alone, so AWS was based on 361 postings against a true 508. It now filters
+through the view like everything else, and
+`test_skill_suggestions_base_counts_alternatives_too` holds it there. The
+analytics `scope()` helper also takes `skill=` (through the view) and
+`open_only=`, which is how the Skills page's "One skill" tab gets roles and
+experience bands that add up to the same total as `/analytics/skills`.
 
 The single deliberate exception is `skill_flexibility()`, where `required`
 means "demanded outright" as opposed to negotiable — there the distinction *is*

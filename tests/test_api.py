@@ -112,6 +112,54 @@ def test_analytics_skill_suggestions_requires_no_params_but_accepts_skill(client
 
 
 # ---------------------------------------------------------------------
+# One skill -- every count for a skill must use the same demand definition
+# (outright OR as an alternative), or the tab disagrees with the Skills page.
+# ---------------------------------------------------------------------
+@pytest.fixture(scope="module")
+def top_skill(client):
+    row = client.get("/analytics/skills", params={"limit": 1}).json()[0]
+    return row["name"], row["postings"]
+
+
+def test_skill_profile_count_matches_skill_demand(client, top_skill):
+    name, postings = top_skill
+    body = client.get("/analytics/skill-profile", params={"skill": name}).json()
+    assert body["postings"] == postings
+    assert 0 <= body["alternative_only"] <= postings
+    assert body["paired_with"] and name not in [p["skill"] for p in body["paired_with"]]
+    assert body["top_employers"]
+
+
+def test_skill_filter_on_roles_and_experience_covers_the_same_postings(client, top_skill):
+    name, postings = top_skill
+    for path in ("/analytics/roles", "/analytics/experience"):
+        rows = client.get(path, params={"skill": name}).json()
+        assert sum(r["postings"] for r in rows) == postings, path
+
+
+def test_open_only_never_exceeds_all(client, top_skill):
+    name, postings = top_skill
+    open_ = client.get("/analytics/skill-profile",
+                       params={"skill": name, "open_only": True}).json()["postings"]
+    assert 0 < open_ <= postings
+    rows = client.get("/analytics/roles", params={"skill": name, "open_only": True}).json()
+    assert sum(r["postings"] for r in rows) == open_
+
+
+def test_skill_suggestions_base_counts_alternatives_too(client, top_skill):
+    # The Home "learn next" box used to base itself on skill_ids alone,
+    # dropping postings that accept the skill as one of several options.
+    name, postings = top_skill
+    s = client.get("/analytics/skill-suggestions", params={"skill": name, "limit": 1}).json()[0]
+    assert round(s["postings"] / (s["share_pct"] / 100)) == postings
+
+
+def test_skill_profile_unknown_skill_is_empty_not_an_error(client):
+    body = client.get("/analytics/skill-profile", params={"skill": "No Such Skill"}).json()
+    assert body["postings"] == 0 and body["paired_with"] == [] and body["top_employers"] == []
+
+
+# ---------------------------------------------------------------------
 # Trends -- /skills requires at least one `skill` param
 # ---------------------------------------------------------------------
 def test_trends_coverage(client):

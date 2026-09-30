@@ -91,6 +91,13 @@ them the same way (added 2026-09-30, no API change):
 - **`csv_download()`** — Skills demand and pairings, the Trends series, and on
   Jobs *every* match (paged through `/postings` 200 at a time on request), not
   just the rows on screen.
+- **The Skills page's "One skill" tab** is built from `/analytics/skill-profile`
+  (reach, either/or count, paired skills, top employers) plus `/analytics/roles`
+  and `/analytics/experience` with `?skill=` — reusing those two keeps its
+  buckets identical to the Market page, and a test holds their totals equal to
+  `/analytics/skills`. Offered only for skills in 20+ postings (136 on
+  2026-09-30); its "See postings" button is a Jobs shared link, which is why the
+  Jobs skill list was widened from 80 to 200.
 - **`from_url()` / `to_url()`** — Jobs filters and the Trends skill selection
   live in the address bar, so a view can be bookmarked or shared. The URL only
   seeds the first render; values not in a widget's options are dropped, so a
