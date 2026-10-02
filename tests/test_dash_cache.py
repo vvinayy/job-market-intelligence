@@ -4,7 +4,7 @@ so a chart stayed blank long after the API had recovered."""
 
 import requests
 
-import dash_common as dc
+from frontend import dash_common as dc
 
 
 class _Resp:

@@ -9,8 +9,8 @@ pipeline.
 
 from unittest.mock import MagicMock
 
-import cleaning
-import hirist_collector as hc
+from services import cleaning
+from services import hirist_collector as hc
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 
@@ -140,7 +140,7 @@ def test_no_preferred_skill_survives_the_whole_hirist_chain():
     actually produces, so a default reintroduced anywhere between the payload
     and the row fails here rather than a day later in the data.
     """
-    import cleaning
+    from services import cleaning
     cleaned = cleaning.clean_record(hc.build_record(PAYLOAD),
                                     city_name_to_id={"Hyderabad": 1})
     assert cleaned["preferred_skills"] == []

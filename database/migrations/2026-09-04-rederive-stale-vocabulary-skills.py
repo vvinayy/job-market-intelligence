@@ -44,10 +44,10 @@ from collections import Counter
 import psycopg2
 from psycopg2.extras import Json, execute_values
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-import cleaning                                          # noqa: E402
-from skill_taxonomy import extract_skills, find_skill_choice_groups   # noqa: E402
+from services import cleaning                                          # noqa: E402
+from services.skill_taxonomy import extract_skills, find_skill_choice_groups   # noqa: E402
 
 CUTOFF = "2026-09-02"
 

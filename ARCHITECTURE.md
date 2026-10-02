@@ -70,6 +70,11 @@ no pattern and invents nothing. A fallback over *absence* is a fabrication.
 Streamlit pages → dash_common → HTTP → FastAPI → Postgres
 ```
 
+Since 2026-10-02 each layer has its own folder: `frontend/` (pages and
+`dash_common`), `backend/api/` (FastAPI), `database/` (`job_database.py`, the SQL
+and migrations), with the collectors, cleaning and liveness in `services/` and
+toasts in `communication/`. Imports are package-qualified from the project root.
+
 Pages never import `psycopg2` and never name a table or a column. Verified
 rather than assumed: a sweep of `pages/` and `Home.py` on 15 September 2026
 found **zero** references to either.
@@ -563,7 +568,7 @@ along, and it hid a subtler fault: the two columns are *meant* to be disjoint
 but nothing enforces it, and four rows hold one skill in both. Concatenating
 yields that skill twice, so every `COUNT(*)` path over-counted — Terraform 150
 postings against a true 148, Django 107 against 106, Snowflake 67 against 66.
-The cause was `migrations/2026-09-16-merge-duplicate-skill-spellings.sql`,
+The cause was `database/migrations/2026-09-16-merge-duplicate-skill-spellings.sql`,
 which repointed losing spellings into `skill_ids` and verified no id appeared
 twice *within* that column, never *across* both.
 
@@ -933,7 +938,7 @@ Recorded because each was discovered the expensive way.
   the HOT headroom) and 8 dead PL/pgSQL cleaning functions from before August's
   move to `cleaning.py` were still in the database. Both fixed that day; the
   functions' exact definitions are kept in
-  `migrations/2026-09-28-restore-legacy-sql-cleaning-functions.sql`.
+  `database/migrations/2026-09-28-restore-legacy-sql-cleaning-functions.sql`.
 - **Scheduled tasks are live.** `JobMarket` scrapes at 11:00 and `JobMarket
   Liveness Check` runs at 17:00, both enabled. A code change that expects a
   schema the database does not yet have will fail on the next firing — check
@@ -973,7 +978,7 @@ needed:
 
 | | |
 | --- | --- |
-| `migrations/*.sql` | Each one's header states what it changed and why. `2026-09-15-split-cleaned-postings.sql` carries the full rationale for the four-table split. |
+| `database/migrations/*.sql` | Each one's header states what it changed and why. `2026-09-15-split-cleaned-postings.sql` carries the full rationale for the four-table split. |
 | `docs/superpowers/specs/` | Longer design records, including why the three skill columns were not merged into one. |
 | Code comments | Deliberately carry the *reason* and the measurement, not the mechanics. `postings.py`'s skill filter and `liveness_checker.py`'s hirist note are the densest. |
 | [jd_scraped schema guide](https://claude.ai/code/artifact/a7f67824-ba4d-473e-9362-64004fffd9c8) | The storage-only database: all 22 tables, the write path, operating commands. Also at `C:\Users\Acer\Desktop\jd_scraped_schema.docx`. |

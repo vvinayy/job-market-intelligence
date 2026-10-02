@@ -22,30 +22,39 @@ Naukri.com → Playwright scraper → Python cleaning layer (in-process)
 ## Project structure
 
 ```
-naukri_collector.py      scraper — discovery + detail extraction
-skill_taxonomy.py        regex skill vocabulary used by the scraper
-cleaning.py               cleaning layer — one scraped record in, a cleaned record out
-job_database.py            writes cleaned_postings + posting_skills/qualifications/cities
-liveness.py                 decides whether a posting URL is still live (pure, no I/O)
-liveness_checker.py          daily pass over stored URLs, finds expired postings
-notify.py                    Windows toasts, so unattended runs aren't silent
-schema.sql                   every table shape — cities/states, cleaned_postings, skills dictionary, posting_cities/skills/qualifications
-trends_setup.sql                daily snapshot + trend views
-api/
-  main.py               FastAPI app, lifespan-managed connection pool
-  database.py           pooled cursor helpers, WhereBuilder
-  models.py             Pydantic response models
-  routers/              postings, reference, analytics, trends
-Home.py                 dashboard landing page
-pages/
-  1_Skills.py           demand, pairings, interchangeable sets, category mix
-  2_Market.py           roles, employers, locations, how fast roles close
-  3_Trends.py           demand over time, movers, new arrivals
-  4_Composition.py      industry, department, role category, qualifications
-  5_Jobs.py             individual posting search
-dash_common.py           shared API client for every dashboard page
-jobmarket.bat            the only launcher: scrape → snapshot → API → dashboard
+frontend/                  the Streamlit dashboard
+  Home.py                  landing page
+  pages/                   Skills, Market, Trends, Composition, Jobs
+  dash_common.py           the dashboard's only API client + shared helpers
+backend/
+  api/                     FastAPI — the endpoints the dashboard reads
+    main.py                app, lifespan-managed connection pool
+    database.py            pooled cursor helpers, WhereBuilder
+    models.py              Pydantic response models
+    routers/               postings, reference, analytics, trends
+services/                  scraping and processing
+  naukri_collector.py      Naukri scraper — discovery + detail extraction
+  hirist_collector.py      hirist scraper
+  skill_taxonomy.py        regex skill vocabulary
+  cleaning.py              one scraped record in, a cleaned record out
+  liveness.py              decides whether a posting URL is still live (pure, no I/O)
+  liveness_checker.py      daily pass over stored URLs, finds expired postings
+  hirist_liveness_probe.py hirist expiry experiment (not scheduled)
+communication/
+  notify.py                Windows toasts, so unattended runs aren't silent
+database/
+  job_database.py          writes postings and their satellite tables
+  schema.sql               every table
+  trends_setup.sql         daily snapshot + trend views
+  migrations/              dated changes for an existing database
+tests/                     pytest suite
+tools/                     one-off benchmarks
+docs/                      design records
+jobmarket.bat              the only launcher: scrape → snapshot → API → dashboard
 ```
+
+Scripts inside these folders run as modules from the project root, e.g.
+`python -m services.naukri_collector "<search url>" --limit 20`.
 
 ## Setup
 
@@ -60,8 +69,8 @@ playwright install chromium
 **Database** — run once, in this order:
 
 ```
-psql -U postgres -d jobmarket -f schema.sql
-psql -U postgres -d jobmarket -f trends_setup.sql
+psql -U postgres -d jobmarket -f database/schema.sql
+psql -U postgres -d jobmarket -f database/trends_setup.sql
 ```
 
 **Configuration** — connection settings come from environment variables, never from a file:
@@ -79,8 +88,8 @@ The API additionally accepts a single `DATABASE_URL`, and the dashboard accepts 
 ## Running it
 
 ```
-uvicorn api.main:app --reload      # in one terminal
-streamlit run Home.py              # in another
+uvicorn backend.api.main:app --reload      # in one terminal
+streamlit run frontend/Home.py              # in another
 ```
 
 Or, on Windows, `jobmarket.bat` does everything — refreshes data, starts the API, waits for a real health check, then starts the dashboard. Add `--skip-scrape` if today's data is already fresh.
@@ -88,7 +97,7 @@ Or, on Windows, `jobmarket.bat` does everything — refreshes data, starts the A
 To scrape on demand:
 
 ```
-python naukri_collector.py "https://www.naukri.com/software-engineer-jobs-in-hyderabad" --limit 20
+python -m services.naukri_collector "https://www.naukri.com/software-engineer-jobs-in-hyderabad" --limit 20
 ```
 
 Each run cleans and writes as it scrapes — no separate cleaning step, and it folds itself into the trend history automatically (the scraper calls `snapshot_daily_skills()` when it finishes, so a manually-started scrape records the day too).

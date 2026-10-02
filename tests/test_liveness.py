@@ -8,7 +8,7 @@ otherwise mass-mark live postings dead and the damage would be
 indistinguishable from a real market event afterwards.
 """
 
-import liveness
+from services import liveness
 
 
 JOB_URL = "https://www.naukri.com/job-listings-software-engineer-acme-hyderabad-2-to-4-years-123456789"
@@ -138,7 +138,7 @@ def test_404_is_unknown_not_expired():
 # can break, and it breaks on text nobody thought to escape.
 # ---------------------------------------------------------------------
 def test_toast_escapes_xml_metacharacters(monkeypatch):
-    import notify
+    from communication import notify
 
     captured = {}
 
@@ -157,7 +157,7 @@ def test_toast_escapes_xml_metacharacters(monkeypatch):
 
 
 def test_toast_never_raises(monkeypatch):
-    import notify
+    from communication import notify
 
     def boom(cmd, **kwargs):
         raise OSError("powershell missing")

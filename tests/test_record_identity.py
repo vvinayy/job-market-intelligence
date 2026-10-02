@@ -12,8 +12,8 @@ this input.
 These tests are about the shape of a record, so they need no database.
 """
 
-import cleaning
-import job_database
+from services import cleaning
+from database import job_database
 
 
 LOOKUP = {"Hyderabad": 1}

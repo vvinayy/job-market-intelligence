@@ -11,8 +11,8 @@ import psycopg2
 import pytest
 from psycopg2.extras import execute_values
 
-import job_database
-from job_database import REOPENING_SQL, STATE_UPSERT_SQL, connection_params
+from database import job_database
+from database.job_database import REOPENING_SQL, STATE_UPSERT_SQL, connection_params
 
 
 def _db_reachable() -> bool:

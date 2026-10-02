@@ -14,7 +14,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from psycopg2.pool import SimpleConnectionPool
 
-from job_database import connection_params
+from database.job_database import connection_params
 
 
 _pool: SimpleConnectionPool | None = None

@@ -37,9 +37,9 @@ import shutil
 from urllib.parse import urlparse
 from datetime import date, datetime, timedelta
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
-import liveness
-from skill_taxonomy import extract_skills
-from job_database import (save_records, record_scrape_run, check_field_health,
+from services import liveness
+from services.skill_taxonomy import extract_skills
+from database.job_database import (save_records, record_scrape_run, check_field_health,
                           snapshot_daily_skills)
 
 
@@ -551,7 +551,7 @@ def _report_pending_locations():
     unmapped_locations — printed here, since a column nobody reads is the same
     as dropping it."""
     try:
-        from job_database import pending_locations
+        from database.job_database import pending_locations
         pending = pending_locations()
         if pending:
             print(f"\n[LOCATIONS AWAITING A CITY_ALIASES ENTRY — {len(pending)}]")
@@ -567,7 +567,7 @@ def _report_mismatched_descriptions():
     for nineteen days. Warns only: about half of what this flags is a
     recruiter naming a different location in the body, which is not a bug."""
     try:
-        from job_database import mismatched_descriptions
+        from database.job_database import mismatched_descriptions
         flagged = mismatched_descriptions()
         if flagged:
             print(f"\n[DESCRIPTIONS THAT MAY BELONG TO ANOTHER POSTING — {len(flagged)}]")

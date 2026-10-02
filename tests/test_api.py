@@ -15,7 +15,7 @@ from decimal import Decimal, ROUND_HALF_UP
 import pytest
 from fastapi.testclient import TestClient
 
-from api.main import app
+from backend.api.main import app
 
 
 def _db_reachable() -> bool:

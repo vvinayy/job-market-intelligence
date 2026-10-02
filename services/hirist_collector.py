@@ -41,8 +41,8 @@ from datetime import datetime, date
 import httpx
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
-from skill_taxonomy import extract_skills
-from job_database import (save_records, record_scrape_run, check_field_health,
+from services.skill_taxonomy import extract_skills
+from database.job_database import (save_records, record_scrape_run, check_field_health,
                           snapshot_daily_skills)
 
 NOT_FOUND = "not found"

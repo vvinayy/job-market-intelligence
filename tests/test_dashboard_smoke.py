@@ -33,39 +33,39 @@ pytestmark = pytest.mark.skipif(not _api_reachable(), reason=f"API not reachable
 
 
 def test_home_page_loads_without_exception():
-    at = AppTest.from_file(str(ROOT / "Home.py"), default_timeout=30)
+    at = AppTest.from_file(str(ROOT / "frontend" / "Home.py"), default_timeout=30)
     at.run()
     assert not at.exception
 
 
 def test_market_page_loads_without_exception():
-    at = AppTest.from_file(str(ROOT / "pages" / "2_Market.py"), default_timeout=30)
+    at = AppTest.from_file(str(ROOT / "frontend" / "pages" / "2_Market.py"), default_timeout=30)
     at.run()
     assert not at.exception
 
 
 def test_jobs_page_loads_without_exception():
-    at = AppTest.from_file(str(ROOT / "pages" / "5_Jobs.py"), default_timeout=30)
+    at = AppTest.from_file(str(ROOT / "frontend" / "pages" / "5_Jobs.py"), default_timeout=30)
     at.run()
     assert not at.exception
 
 
 @pytest.mark.parametrize("page", ["1_Skills.py", "3_Trends.py", "4_Composition.py"])
 def test_other_pages_load_without_exception(page):
-    at = AppTest.from_file(str(ROOT / "pages" / page), default_timeout=30)
+    at = AppTest.from_file(str(ROOT / "frontend" / "pages" / page), default_timeout=30)
     at.run()
     assert not at.exception
 
 
 def test_every_page_says_how_fresh_the_data_is():
-    at = AppTest.from_file(str(ROOT / "pages" / "4_Composition.py"), default_timeout=30)
+    at = AppTest.from_file(str(ROOT / "frontend" / "pages" / "4_Composition.py"), default_timeout=30)
     at.run()
     shown = [c.value for c in at.caption] + [w.value for w in at.warning]
     assert any("Data last collected" in s for s in shown)
 
 
 def test_jobs_filters_are_restored_from_a_shared_link():
-    at = AppTest.from_file(str(ROOT / "pages" / "5_Jobs.py"), default_timeout=30)
+    at = AppTest.from_file(str(ROOT / "frontend" / "pages" / "5_Jobs.py"), default_timeout=30)
     at.query_params["skill"] = ["Python", "Not A Real Skill"]
     at.query_params["exp"] = "2-8"
     at.query_params["status"] = "Still open"
@@ -80,7 +80,7 @@ def test_jobs_filters_are_restored_from_a_shared_link():
 
 
 def test_a_malformed_link_is_ignored_not_fatal():
-    at = AppTest.from_file(str(ROOT / "pages" / "5_Jobs.py"), default_timeout=30)
+    at = AppTest.from_file(str(ROOT / "frontend" / "pages" / "5_Jobs.py"), default_timeout=30)
     at.query_params["exp"] = "junk"
     at.query_params["per_page"] = "7"
     at.run()
@@ -90,7 +90,7 @@ def test_a_malformed_link_is_ignored_not_fatal():
 
 
 def test_jobs_csv_holds_every_match_not_just_the_visible_page():
-    at = AppTest.from_file(str(ROOT / "pages" / "5_Jobs.py"), default_timeout=60)
+    at = AppTest.from_file(str(ROOT / "frontend" / "pages" / "5_Jobs.py"), default_timeout=60)
     at.run()
     button = next(b for b in at.button if b.label.startswith("Prepare CSV"))
     total = int(button.label.split()[4])   # "Prepare CSV of all N matching postings"
@@ -104,7 +104,7 @@ def test_jobs_csv_holds_every_match_not_just_the_visible_page():
 
 
 def test_one_skill_tab_opens_on_the_linked_skill():
-    at = AppTest.from_file(str(ROOT / "pages" / "1_Skills.py"), default_timeout=30)
+    at = AppTest.from_file(str(ROOT / "frontend" / "pages" / "1_Skills.py"), default_timeout=30)
     at.query_params["skill"] = "Docker"
     at.run()
     assert not at.exception
@@ -114,7 +114,7 @@ def test_one_skill_tab_opens_on_the_linked_skill():
 
 
 def test_market_over_time_tab_handles_every_breakdown():
-    at = AppTest.from_file(str(ROOT / "pages" / "2_Market.py"), default_timeout=60)
+    at = AppTest.from_file(str(ROOT / "frontend" / "pages" / "2_Market.py"), default_timeout=60)
     at.run()
     for by in ("Experience level", "City", "Company", "Job board", "Role"):
         at.radio(key="arr_by").set_value(by).run()
@@ -125,7 +125,7 @@ def test_market_over_time_tab_handles_every_breakdown():
 
 
 def test_trends_skills_are_restored_from_a_shared_link():
-    at = AppTest.from_file(str(ROOT / "pages" / "3_Trends.py"), default_timeout=30)
+    at = AppTest.from_file(str(ROOT / "frontend" / "pages" / "3_Trends.py"), default_timeout=30)
     at.query_params["skill"] = ["Python", "SQL"]
     at.run()
     assert not at.exception

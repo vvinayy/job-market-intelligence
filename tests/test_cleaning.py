@@ -4,7 +4,7 @@ kind of selector/logic regressions that have hit this project before
 (Industry Type grabbing the wrong span, applicant count losing the
 +/less-than direction)."""
 
-import cleaning
+from services import cleaning
 
 
 # ---------------------------------------------------------------------

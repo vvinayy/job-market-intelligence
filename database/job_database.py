@@ -41,7 +41,7 @@ import os
 import psycopg2
 from psycopg2.extras import execute_values, RealDictCursor, Json
 
-from cleaning import clean_record, categorize_skill, foreign_cities
+from services.cleaning import clean_record, categorize_skill, foreign_cities
 
 
 def _resolve_reference_ids(conn, table: str, id_col: str, name_col: str, names: set[str]) -> dict[str, int]:

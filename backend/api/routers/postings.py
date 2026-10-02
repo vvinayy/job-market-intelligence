@@ -14,7 +14,7 @@ from ..models import PostingSummary, PostingDetail, PostingPage, Qualification
 
 # The API's only import from outside api/. responsibilities_text and
 # requirements_text recompute exactly from `description`, so they are not stored.
-from cleaning import split_description_sections
+from services.cleaning import split_description_sections
 
 router = APIRouter(prefix="/postings", tags=["postings"])
 

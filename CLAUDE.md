@@ -65,7 +65,7 @@ that was already on this machine; nothing was downloaded to fix this.
 liveness checker, and both the API and the dashboard (`"%PY%" -m uvicorn`
 / `"%PY%" -m streamlit`, not the bare `uvicorn`/`streamlit` commands, which
 would resolve through PATH to whatever installed them first). Running
-anything by hand — `pip install`, `pytest`, `uvicorn api.main:app --reload`
+anything by hand — `pip install`, `pytest`, `uvicorn backend.api.main:app --reload`
 — must go through `D:\python\python.exe` too, or it silently runs against
 the Store build's *different* copy of every package.
 
@@ -120,7 +120,7 @@ and pull the investigation sideways again.
 liveness checker, and both the API and the dashboard (`"%PY%" -m uvicorn`
 / `"%PY%" -m streamlit`, not the bare `uvicorn`/`streamlit` commands, which
 would resolve through PATH to whatever installed them first). Running
-anything by hand — `pip install`, `pytest`, `uvicorn api.main:app --reload`
+anything by hand — `pip install`, `pytest`, `uvicorn backend.api.main:app --reload`
 — must go through `D:\python\python.exe` too, or it silently runs against
 the Store build's *different* copy of every package, which will pass tests
 today and still crash Streamlit.
@@ -146,8 +146,8 @@ $PY = "D:\python\python.exe"
 & $PY -m playwright install chromium   # only if %LOCALAPPDATA%\ms-playwright is empty
 
 # one-time database setup, in this order
-& "C:\Program Files\PostgreSQL\18\bin\psql.exe" -U postgres -d jobmarket -f schema.sql
-& "C:\Program Files\PostgreSQL\18\bin\psql.exe" -U postgres -d jobmarket -f trends_setup.sql
+& "C:\Program Files\PostgreSQL\18\bin\psql.exe" -U postgres -d jobmarket -f database/schema.sql
+& "C:\Program Files\PostgreSQL\18\bin\psql.exe" -U postgres -d jobmarket -f database/trends_setup.sql
 
 .\jobmarket.bat                # scrape, then start API + dashboard
 .\jobmarket.bat --skip-scrape  # data is fresh, just start the app
@@ -155,8 +155,8 @@ $PY = "D:\python\python.exe"
 .\jobmarket.bat --check-only   # find expired postings (the 5pm task)
 
 # or run the two services by hand
-& $PY -m uvicorn api.main:app --reload   # terminal 1 — docs at /docs
-& $PY -m streamlit run Home.py           # terminal 2
+& $PY -m uvicorn backend.api.main:app --reload   # terminal 1 — docs at /docs
+& $PY -m streamlit run frontend/Home.py           # terminal 2
 
 & $PY -m pytest                          # everything
 & $PY -m pytest tests/test_cleaning.py tests/test_skill_taxonomy.py `
@@ -201,24 +201,37 @@ win that turned out not to exist for this particular connection.
 
 ## Where things are
 
+Organised into folders on 2026-10-02 (contents unchanged, only paths and
+imports): `frontend/` the dashboard, `backend/api/` the endpoints, `services/`
+scraping and processing, `communication/` notifications, `database/` the writer,
+SQL and migrations, plus `tests/`, `tools/` and `docs/`. **Imports are
+package-qualified** (`from database.job_database import save_records`,
+`from services import liveness`), so anything inside a folder runs **as a
+module from the project root** — `python -m services.naukri_collector "<url>"`,
+`python -m services.liveness_checker`, `uvicorn backend.api.main:app`,
+`streamlit run frontend/Home.py`. Running `python services/naukri_collector.py`
+directly fails: Python then only sees `services/`, not the root.
+`.streamlit/config.toml` stays at the root because Streamlit reads it from the
+working directory, which `jobmarket.bat` sets to the root.
+
 | Path | Role |
 | --- | --- |
-| `naukri_collector.py` | The Naukri scraper. Finds job URLs from a search, then reads each posting. DOM selectors throughout. |
-| `hirist_collector.py` | The hirist scraper, and 7 of the 12 daily runs. Needs a browser only to read search results; the detail data comes back as JSON from hirist's own API, which is why its detail throttle is 1–2 s against Naukri's 3–6 s. |
-| `skill_taxonomy.py` | Regex vocabulary for finding skills and certifications in description text. |
-| `cleaning.py` | Turns raw scraped text into clean values. `clean_record()` is the way in. |
-| `job_database.py` | Writes to Postgres. `save_records()` cleans, inserts-or-updates, resolves ids. |
-| `liveness.py` | Decides whether a posting URL is still live. Pure functions, no I/O. |
-| `liveness_checker.py` | Visits stored URLs daily to find expired postings. Naukri only. |
-| `hirist_liveness_probe.py` | Records what a hirist expiry check *would* conclude, into its own table. Writes nothing to `cleaned_postings`. **No longer scheduled** — the rule it tested turned out to be a clock. Kept for a by-hand run around 2026-11-07. |
-| `notify.py` | Windows toast notifications, so unattended runs are not silent. `toast()` for a Python caller, `python notify.py TITLE MESSAGE [--urgent]` for `jobmarket.bat` (added 2026-09-23 — see below). |
-| `schema.sql` | Every table. Run first. |
-| `migrations/` | Dated, idempotent `ALTER`s for a database that already has data — `schema.sql` drops the postings tables, so it cannot bring an existing one forward. |
-| `trends_setup.sql` | Daily skill snapshots and the views over them. Run second. |
-| `api/` | FastAPI. `main.py` app, `database.py` query helpers, `models.py` response shapes, `routers/` endpoints. |
-| `Home.py`, `pages/` | Streamlit dashboard (Skills — including a "One skill" deep-dive tab — Market, with an "Over time" arrivals tab, Trends, Composition, Jobs). |
+| `services/naukri_collector.py` | The Naukri scraper. Finds job URLs from a search, then reads each posting. DOM selectors throughout. |
+| `services/hirist_collector.py` | The hirist scraper, and 7 of the 12 daily runs. Needs a browser only to read search results; the detail data comes back as JSON from hirist's own API, which is why its detail throttle is 1–2 s against Naukri's 3–6 s. |
+| `services/skill_taxonomy.py` | Regex vocabulary for finding skills and certifications in description text. |
+| `services/cleaning.py` | Turns raw scraped text into clean values. `clean_record()` is the way in. |
+| `database/job_database.py` | Writes to Postgres. `save_records()` cleans, inserts-or-updates, resolves ids. |
+| `services/liveness.py` | Decides whether a posting URL is still live. Pure functions, no I/O. |
+| `services/liveness_checker.py` | Visits stored URLs daily to find expired postings. Naukri only. |
+| `services/hirist_liveness_probe.py` | Records what a hirist expiry check *would* conclude, into its own table. Writes nothing to `cleaned_postings`. **No longer scheduled** — the rule it tested turned out to be a clock. Kept for a by-hand run around 2026-11-07. |
+| `communication/notify.py` | Windows toast notifications, so unattended runs are not silent. `toast()` for a Python caller, `python -m communication.notify TITLE MESSAGE [--urgent]` for `jobmarket.bat` (added 2026-09-23 — see below). |
+| `database/schema.sql` | Every table. Run first. |
+| `database/migrations/` | Dated, idempotent `ALTER`s for a database that already has data — `schema.sql` drops the postings tables, so it cannot bring an existing one forward. |
+| `database/trends_setup.sql` | Daily skill snapshots and the views over them. Run second. |
+| `backend/api/` | FastAPI. `main.py` app, `database.py` query helpers, `models.py` response shapes, `routers/` endpoints. |
+| `frontend/Home.py`, `frontend/pages/` | Streamlit dashboard (Skills — including a "One skill" deep-dive tab — Market, with an "Over time" arrivals tab, Trends, Composition, Jobs). |
 | `.streamlit/config.toml` | `[theme] base = "light"` — light theme only, by decision (2026-09-30). Setting it removes Streamlit's theme picker from the menu; don't add a dark option. |
-| `dash_common.py` | The only dashboard file that makes HTTP calls. Also the shared freshness line, CSV download and URL-state helpers every page uses. |
+| `frontend/dash_common.py` | The only dashboard file that makes HTTP calls. Also the shared freshness line, CSV download and URL-state helpers every page uses. |
 | `jobmarket.bat` | The single launcher. |
 | `tests/` | pytest suite. |
 | `docs/superpowers/specs/` | Design records for decisions worth keeping. |
@@ -355,7 +368,7 @@ of `posting_skills` / `posting_qualification_*` / `posting_cities` — verified
 0 of 918 rows differing. Their five GIN indexes went with them, having never
 been scanned once in the database's life. **The working copies on
 `posting_skills` are untouched** and still serve the `?skill=` filter, which
-[postings.py](api/routers/postings.py) documents as a measured 14×. This
+[postings.py](backend/api/routers/postings.py) documents as a measured 14×. This
 reverses the older rule that every normalised value was also duplicated onto
 `cleaned_postings`; production code now joins for them.
 
@@ -396,7 +409,7 @@ concatenating first.
 **The two columns are not guaranteed disjoint, and `DISTINCT` is why that
 stopped mattering.** Four rows hold one skill both outright *and* in a choice
 group (jobs 2250 Django, 2695 Snowflake, 2952 and 2963 Terraform). They came
-from `migrations/2026-09-16-merge-duplicate-skill-spellings.sql`, which
+from `database/migrations/2026-09-16-merge-duplicate-skill-spellings.sql`, which
 repointed "Iac Terraform" into Terraform inside `skill_ids` on postings that
 already offered Terraform as an alternative — it verified no id appeared twice
 *within* `skill_ids` and never checked *across* the two columns. Every
@@ -498,7 +511,7 @@ whatever exception type isn't one of the ones just caught.** Every
 `naukri_collector.py`/`hirist_collector.py` call routes through a
 `:run_collector` subroutine (`jobmarket.bat`, end of file) instead of
 being invoked directly — `if errorlevel 1` after it logs `[FAILED]` and
-fires `python notify.py "..." "..." --urgent`, which is why `notify.py`
+fires `python -m communication.notify "..." "..." --urgent`, which is why `notify.py`
 gained a CLI. Before this, no collector call anywhere in `jobmarket.bat`
 checked its own exit code, and neither collector ever called `notify.py`
 — only `liveness_checker.py` did — so a crash of this kind was invisible
@@ -551,7 +564,7 @@ posting read as open all along and its closure dropped out of
 `/analytics/closures`. `save_records()` now writes a `posting_reopenings` row
 (closed_on, old and new URL) *immediately before* the clear, the last moment
 those facts exist. Rebuilt from the logs by
-`migrations/2026-09-30-backfill-posting-reopenings.py`: 25 reopenings on 24
+`database/migrations/2026-09-30-backfill-posting-reopenings.py`: 25 reopenings on 24
 postings, 18 relisted under a new link and 7 back at the same link, 5 of them
 since closed again. `old_url = new_url` cannot tell an employer reopening
 from a wrong closure reading; the table records both, it does not judge.
@@ -572,7 +585,7 @@ why the three skill columns were not merged into one.
   verified 2026-09-15 by building a database from those two files alone and
   diffing it against `jobmarket`: 0 column differences either way, 25 tables,
   49 indexes, and the real `save_records()` ran against it. The migrations in
-  `migrations/` are for bringing an EXISTING database forward and should not be
+  `database/migrations/` are for bringing an EXISTING database forward and should not be
   run on a fresh one. It had drifted twice — a missing `expiry_basis`, and
   `hirist_liveness_observations` which had only ever existed in a migration —
   so re-run that diff after any schema change.
@@ -585,7 +598,7 @@ why the three skill columns were not merged into one.
   functions (`clean_and_populate()` and helpers) that commit `59f9094` removed
   from the files in August but never dropped from the database — dead, with
   `normalize_working_type()` still carrying the fabricating `ELSE 'On-site'`.
-  Dropped by `migrations/2026-09-28-drop-legacy-sql-cleaning-functions.sql`;
+  Dropped by `database/migrations/2026-09-28-drop-legacy-sql-cleaning-functions.sql`;
   `...-restore-legacy-sql-cleaning-functions.sql` recreates them exactly if
   ever needed. What still differs is cosmetic: 15 constraint *names*
   (`cleaned_postings_new_…_fkey1`, left by table rebuilds) and column *order*
@@ -627,13 +640,13 @@ why the three skill columns were not merged into one.
   missing until 2026-09-30 and was reconstructed from the scrape logs. Add the
   row to `trends_setup.sql` *and* the live table — the 2026-09-16 merge row
   had existed only live until the same day.
-- **Not every migration lives in `migrations/`.** The 2026-08-18 taxonomy sync
+- **Not every migration lives in `database/migrations/`.** The 2026-08-18 taxonomy sync
   (commit `755fa6f`) merged 18 duplicate skill pairs and renamed 23 more
   directly against the live database — carefully, with a backup and real
   verification, just never saved as a `.sql` file. It surfaced only while
   chasing the rename problem below: 98 of 118 stranded skill names had no
   migration explaining their disappearance, and this is why.
-  `migrations/2026-08-18-skill-taxonomy-sync-record.sql` documents it after
+  `database/migrations/2026-08-18-skill-taxonomy-sync-record.sql` documents it after
   the fact and cannot replay it — the individual pairs were never written
   down, only the counts and method. When you do a cleanup by hand, write the
   file first.
@@ -790,7 +803,7 @@ why the three skill columns were not merged into one.
   is resolved: the parser handled them all along, those rows simply predated
   the fix. Seven such stale rows -- three of which carried no city at all --
   were replayed through the alias table by
-  `migrations/2026-09-02-backfill-resolvable-locations.sql`.
+  `database/migrations/2026-09-02-backfill-resolvable-locations.sql`.
 - **Closure metrics are limited to experience band and role.** Department,
   industry and education look ready but are not: those fields only began being
   collected on 19 Aug, so their "not stated" group is really "collected

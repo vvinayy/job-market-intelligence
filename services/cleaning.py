@@ -22,7 +22,7 @@ import re
 import math
 import hashlib
 
-from skill_taxonomy import (SKILL_ALIASES as _TAXONOMY_ALIASES,
+from services.skill_taxonomy import (SKILL_ALIASES as _TAXONOMY_ALIASES,
                             extract_certifications, find_skill_choice_groups)
 
 

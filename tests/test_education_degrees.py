@@ -7,7 +7,7 @@ things (a new degree, or another specialization for the same degree)
 with no punctuation telling them apart, so each case here is a real
 example, not an invented one."""
 
-import cleaning
+from services import cleaning
 
 
 def _by_degree(result: list[dict]) -> dict[str, dict]:

@@ -17,7 +17,7 @@ import pytest
 
 psycopg2 = pytest.importorskip("psycopg2")
 
-import liveness_checker  # noqa: E402
+from services import liveness_checker  # noqa: E402
 
 
 @pytest.fixture

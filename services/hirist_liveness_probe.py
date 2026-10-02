@@ -52,8 +52,8 @@ from datetime import datetime
 import httpx
 import psycopg2
 
-import liveness
-from job_database import connection_params
+from services import liveness
+from database.job_database import connection_params
 
 # The same endpoint hirist_collector.py already reads postings from. Deliberately
 # not re-declared there and imported here: this script must keep working if the

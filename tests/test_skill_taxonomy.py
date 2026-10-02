@@ -1,6 +1,6 @@
 """Unit tests for the regex skill/certification vocabulary. No database."""
 
-import skill_taxonomy as st
+from services import skill_taxonomy as st
 
 
 def test_extract_skills_finds_known_tools():

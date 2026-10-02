@@ -29,10 +29,10 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from job_database import get_connection  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from database.job_database import get_connection  # noqa: E402
 
-LOGS = Path(__file__).resolve().parent.parent / "logs"
+LOGS = Path(__file__).resolve().parents[2] / "logs"
 STAMP = re.compile(r"(\d{2})/(\d{2})/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})")
 CLOSED = re.compile(r"^\s{4,}(\d+)\s{2,}\S.*1st seen.*?(https://\S+)")
 DETAIL = re.compile(r"^\[detail \d+/\d+\] (\S+?)(?:\.\.\.)?$")

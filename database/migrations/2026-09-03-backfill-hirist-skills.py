@@ -38,11 +38,11 @@ import httpx
 import psycopg2
 from psycopg2.extras import Json, execute_values
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-import cleaning                      # noqa: E402
-import hirist_collector as hc        # noqa: E402
-import liveness                      # noqa: E402
+from services import cleaning                      # noqa: E402
+from services import hirist_collector as hc        # noqa: E402
+from services import liveness                      # noqa: E402
 
 TARGET_FIRST_SEEN = "2026-09-02"
 USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "

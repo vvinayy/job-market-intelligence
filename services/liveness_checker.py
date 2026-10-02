@@ -50,9 +50,9 @@ from datetime import datetime
 import httpx
 import psycopg2
 
-import liveness
-import notify
-from job_database import connection_params
+from services import liveness
+from communication import notify
+from database.job_database import connection_params
 
 # A real browser UA. Naukri serves the redirect to a plain client, but an
 # obviously-scripted agent is the first thing any site rate-limits.

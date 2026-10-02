@@ -17,7 +17,7 @@ from ..models import (
     DescriptionMismatch, SkillChoice, SkillFlexibility, ExperienceFlexibility,
     ClosureRate, SkillProfile, Arrivals, ArrivalRow, DateRange,
 )
-from job_database import check_field_health, pending_locations, mismatched_descriptions
+from database.job_database import check_field_health, pending_locations, mismatched_descriptions
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 

@@ -17,7 +17,7 @@ as test_api.py, so offline runs of the pure-function tests are unaffected.
 import pytest
 from fastapi.testclient import TestClient
 
-from api.main import app
+from backend.api.main import app
 
 
 def _db_reachable() -> bool:
@@ -33,7 +33,7 @@ pytestmark = pytest.mark.skipif(not _db_reachable(), reason="local Postgres not 
 
 @pytest.fixture(scope="module")
 def rows():
-    from api.database import fetch_all
+    from backend.api.database import fetch_all
     return fetch_all
 
 

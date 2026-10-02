@@ -7,7 +7,7 @@ stored identically to a floor)."""
 from datetime import date, timedelta
 from unittest.mock import MagicMock
 
-import naukri_collector as nc
+from services import naukri_collector as nc
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 
