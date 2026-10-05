@@ -124,6 +124,18 @@ def test_market_over_time_tab_handles_every_breakdown():
     assert not at.exception
 
 
+def test_jobs_never_calls_an_unchecked_posting_open():
+    # hirist is never checked; a re-sighting writes is_expired = FALSE anyway.
+    # It must read "Listed · seen <date>", not "Open".
+    at = AppTest.from_file(str(ROOT / "frontend" / "pages" / "5_Jobs.py"), default_timeout=60)
+    at.query_params["board"] = ["hirist"]
+    at.query_params["status"] = "Still open"
+    at.run()
+    assert not at.exception
+    statuses = set(at.dataframe[0].value["status"])
+    assert statuses and all(s.startswith("Listed") for s in statuses), statuses
+
+
 def test_trends_skills_are_restored_from_a_shared_link():
     at = AppTest.from_file(str(ROOT / "frontend" / "pages" / "3_Trends.py"), default_timeout=30)
     at.query_params["skill"] = ["Python", "SQL"]

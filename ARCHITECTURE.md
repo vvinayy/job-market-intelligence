@@ -995,10 +995,14 @@ Each was confirmed against the running system, not inferred.
   FALSE on every re-sighting of every board, because a page being served voids
   an old closure. For Naukri the checker then confirms it; for hirist nothing
   ever does. Measured 2026-10-05: 299 hirist postings are FALSE with
-  `last_checked_on` NULL, and only 61 are NULL. Anything reading `is_expired`
-  alone — the Jobs page's Open badge and "Still open" filter — counts those
-  299 as open; Home's card and the closure chart also require
-  `last_checked_on` and are right. Left unchanged by decision.
+  `last_checked_on` NULL, and only 61 are NULL. Home's card and the closure
+  chart require `last_checked_on` and were always right. The Jobs page's badge
+  read `is_expired` alone and called those 299 "Open"; since 2026-10-05 it
+  says "Open" only when `last_checked_on` is set and "Listed · seen <date>"
+  otherwise, and `/postings` returns both dates for it. The *Still open*
+  filter deliberately still includes them, so no count moved — relabelled,
+  not reclassified (user decision). `test_jobs_never_calls_an_unchecked_posting_open`
+  holds it.
 - **Defaults filter silently.** The Jobs page's experience slider always sends
   0–20, and `experience_min` NULL fails that test, so 12 postings never appear
   unless someone narrows and widens the slider. It is why the One-skill tab says

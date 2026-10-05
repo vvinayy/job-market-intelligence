@@ -250,8 +250,8 @@ the first runs anywhere:
   running. Slow, skips itself if nothing is listening. Also covers shared links
   restoring Jobs/Trends filters and the Jobs CSV holding every match.
 
-**Run the whole suite, not a subset.** `pytest` collects 271 tests across 13
-files (2026-09-30). The fast-path command above is four of those files; `test_data_integrity`,
+**Run the whole suite, not a subset.** `pytest` collects 272 tests across 13
+files (2026-10-05). The fast-path command above is four of those files; `test_data_integrity`,
 `test_liveness_run`, `test_record_identity`, `test_education_degrees` and
 `test_hirist_collector` are in neither that list nor `test_api`. Running only the
 advertised subset after the 2026-09-15 split reported a clean 172 while five
@@ -743,12 +743,13 @@ section 17 has the evidence behind each.
 - **One Naukri URL under two `job_id`s is intended, not a dedup bug.** Editing
   title, company, location or experience changes the fingerprint, so it is a
   new posting (user decision, 2026-09-30; 6 known pairs).
-- **"Open" on the Jobs page includes 299 hirist postings nobody checked.**
-  `STATE_UPSERT_SQL` writes `is_expired = FALSE` on every re-sighting, any
-  board, so a hirist posting the scraper saw twice reads "Open" and matches
-  "Still open". Only the 61 seen once show "Not checked" — contrary to the
-  page's own help text. Home's "verified still open" is right: it also
-  requires `last_checked_on`. Left as is, 2026-10-05.
+- **`is_expired = FALSE` does not mean "checked and open".**
+  `STATE_UPSERT_SQL` writes it on every re-sighting, any board, so 299 hirist
+  postings nobody ever checked carry FALSE. Anything that means "verified"
+  must also require `last_checked_on` — Home's card and the closure chart do.
+  The Jobs page badge does since 2026-10-05: "Open" only when checked,
+  otherwise "Listed · seen <date>". Its *Still open* filter still includes
+  those hirist rows on purpose, so no count changed (user decision).
 - **The Jobs page hides postings with no stated experience by default.** Its
   experience slider always sends 0–20, which excludes NULLs: 1,128 of 1,140
   postings, and 304 Kubernetes jobs against 306 on the Skills tab.

@@ -76,7 +76,7 @@ BASE_SELECT = """
         c.working_type, c.is_full_time, c.contract_type,
         c.posted_date, c.openings, sg.applicant_count, sg.applicant_count_qualifier,
         sg.company_rating, sg.company_reviews, st.url, c.source,
-        st.is_expired, st.expired_on,
+        st.is_expired, st.expired_on, st.last_checked_on, sg.last_seen_date,
         COALESCE(c.description_foreign_cities, '{}') AS description_foreign_cities
     -- Both satellites are 1:1 with the spine, so these joins neither drop nor
     -- duplicate a row, and the COUNT below stays correct with the same pair.

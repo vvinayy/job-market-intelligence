@@ -93,22 +93,21 @@ status = st.radio(
     "Listing status", STATUS_OPTIONS, horizontal=True, key="jobs_status",
     help="Checked daily against Naukri only. 'Closed' means Naukri now "
          "redirects the posting as expired — it does not mean the role was "
-         "filled. Postings from other boards are never checked, so they are "
-         "'Not checked' and match neither Still open nor Closed.",
+         "filled. hirist never says when a posting closes, so its postings "
+         "show 'Listed' with the date our searches last saw them: they appear "
+         "under Still open once seen more than once, never under Closed.",
 )
 is_expired = {"All": None, "Still open": False, "Closed": True}[status]
 
-# The liveness checker only visits Naukri URLs, so every other board's rows
-# are is_expired NULL -- and NULL matches neither branch of this filter.
-# Combining the two silently returns nothing, which reads as "no such jobs"
-# rather than "nothing here has ever been checked".
+# hirist rows are never checked. A scrape writes is_expired = FALSE on every
+# re-sighting, so a hirist posting seen twice matches Still open (shown as
+# "Listed", not "Open"); one seen only once is NULL and matches neither.
 if is_expired is not None and any(s != "naukri" for s in source):
-    st.warning(
-        "**Listing status is only known for Naukri postings.** The daily "
-        "checker visits Naukri URLs and nothing else, so postings from the "
-        "other boards selected here are recorded as never checked — they "
-        "match neither *Still open* nor *Closed*, and will not appear below. "
-        "Set status to *All* to see them."
+    st.info(
+        "**Only Naukri postings are checked for closure.** hirist postings "
+        "appear under *Still open* only once our searches have seen them more "
+        "than once, labelled *Listed* with that date — not confirmed open — "
+        "and never under *Closed*. Set status to *All* to see every one."
     )
 
 seniority_level = st.multiselect(
@@ -199,8 +198,20 @@ display["experience"] = display.apply(
 display["salary"] = display.apply(
     lambda r: f"{r.salary_min:g}-{r.salary_max:g} LPA" if pd.notna(r.salary_min) else "Not disclosed",
     axis=1)
-display["status"] = display["is_expired"].map(
-    {True: "Closed", False: "Open"}).fillna("Not checked")
+def _status(r) -> str:
+    """'Open' only when the checker verified it. A posting nothing has checked
+    -- every hirist one, and a Naukri one before its first check -- says what we
+    do know: when our searches last saw it."""
+    if pd.notna(r.is_expired) and bool(r.is_expired):
+        return "Closed"
+    if pd.notna(r.last_checked_on):
+        return "Open"
+    if pd.notna(r.last_seen_date):
+        return f"Listed · seen {pd.Timestamp(r.last_seen_date):%d %b}"
+    return "Not checked"
+
+
+display["status"] = display.apply(_status, axis=1)
 display["cities"] = display["cities"].apply(lambda c: ", ".join(c) if c else "Not stated")
 display["skills"] = display["skills"].apply(lambda s: ", ".join(s[:6]) + (f" +{len(s)-6} more" if len(s) > 6 else ""))
 
@@ -281,6 +292,12 @@ if selected_rows:
             )
         elif detail.get("is_expired") is False and detail.get("last_checked_on"):
             st.success(f"Still listed as of {detail['last_checked_on']}.")
+        elif not detail.get("last_checked_on"):
+            board = ("hirist never says when a posting closes"
+                     if detail.get("source") == "hirist"
+                     else "it has not been checked for closure yet")
+            st.info(f"**Not verified open** — {board}. Our searches last saw it "
+                    f"on {detail.get('last_seen_date') or 'an unknown date'}.")
 
         # Says "may" and names the evidence on purpose. Roughly half of these
         # are a recruiter writing a different office into the body, so the

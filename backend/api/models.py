@@ -63,6 +63,11 @@ class PostingSummary(BaseModel):
     # for truthiness -- an unchecked posting is not an open one.
     is_expired: bool | None = None
     expired_on: date | None = None
+    # is_expired = False alone does not mean "checked and open": a scrape writes
+    # it on every re-sighting, and hirist is never checked. last_checked_on says
+    # whether anything verified it; last_seen_date is what we can say instead.
+    last_checked_on: date | None = None
+    last_seen_date: date | None = None
     description_foreign_cities: list[str] = Field(
         default=[],
         description="Cities the description names when it names none of this "
