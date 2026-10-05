@@ -142,7 +142,7 @@ actually succeed against `cdn.playwright.dev` first.
 # %PY%, so set it once per session:
 $PY = "D:\python\python.exe"
 
-& $PY -m pip install -r requirements.txt; & $PY -m pip install -r api/requirements.txt
+& $PY -m pip install -r requirements.txt; & $PY -m pip install -r backend/api/requirements.txt
 & $PY -m playwright install chromium   # only if %LOCALAPPDATA%\ms-playwright is empty
 
 # one-time database setup, in this order
@@ -184,7 +184,7 @@ connect. Outbound, the scrapers are throttled (see Scraper etiquette).
 
 **`PGHOST`'s default was also hand-typed four times and had drifted: two
 copies said `"localhost"`, two said `"127.0.0.1"`.** `job_database.py`,
-`api/database.py`, `liveness_checker.py` and `hirist_liveness_probe.py` each
+`backend/api/database.py`, `liveness_checker.py` and `hirist_liveness_probe.py` each
 declared their own five connection kwargs (`dbname`/`user`/`password`/
 `host`/`port`) instead of sharing one definition — the same shape of mistake
 as the skill-demand expression, one rule copied by hand into several places.
@@ -296,7 +296,7 @@ Missing labels become NULL. Never add a model call or a guess to fill a gap.
 
 **One direction of dependency.** Dashboard pages → `dash_common` → HTTP → API →
 Postgres. Pages never import `psycopg2` and never know a table or column name. A
-schema change should be absorbable in `api/routers/` alone.
+schema change should be absorbable in `backend/api/routers/` alone.
 
 **The sample is not the market.** Postings come from a fixed set of searches and
 cities — mostly Hyderabad. That caveat is surfaced in the API description, the
@@ -724,7 +724,7 @@ why the three skill columns were not merged into one.
 - Section banners: `# ===...===` in Python, `-- ---...---` in SQL.
 - Modern typing: `str | None`, `list[dict]`. No `Optional` or `typing.List`.
 - Every endpoint declares a `response_model` and a `summary=`, with the model in
-  `api/models.py`.
+  `backend/api/models.py`.
 - Dashboard charts use `dc.PALETTE` / `dc.SCALE` / `**dc.TRANSPARENT`. New API
   calls go through a named wrapper in `dash_common.py`.
 - Commit messages: imperative, one line, then a body explaining *why* if the

@@ -82,7 +82,7 @@ found **zero** references to either.
 The payoff is concrete. The four-table split below changed the physical schema
 underneath every metric in the product, and the dashboard needed **no change at
 all** — and 29 of 35 API endpoints needed none either, because they read only
-columns that stayed put. A schema change is absorbable inside `api/routers/` by
+columns that stayed put. A schema change is absorbable inside `backend/api/routers/` by
 design, and that design held the first time it was tested seriously.
 
 Three page-level conveniences live in `dash_common` too, so every page gets
@@ -556,7 +556,7 @@ accept AWS" are different claims and the schema keeps them separable.
 
 Four places had the full expression from the start —
 `snapshot_daily_skills()`, the `?skill=` filter on `/postings`, the
-preferred-subset CHECK, and the GIN index. Eight read paths in `api/routers/`
+preferred-subset CHECK, and the GIN index. Eight read paths in `backend/api/routers/`
 did not, and nobody noticed for weeks because each endpoint was internally
 consistent. The contradiction was only visible by asking two pages the same
 question: the Skills chart said AWS appeared in 295 postings, the Jobs filter
@@ -635,7 +635,7 @@ would have caught the original bug on the day it shipped.
 
 ## 10a-1. The same lesson, found a third time, in the connection code
 
-`job_database.py`, `api/database.py`, `liveness_checker.py` and
+`job_database.py`, `backend/api/database.py`, `liveness_checker.py` and
 `hirist_liveness_probe.py` each hand-declared their own five psycopg2
 kwargs (`dbname`/`user`/`password`/`host`/`port`) instead of sharing one
 definition — identical shape to the skill-demand duplication above, found
@@ -643,7 +643,7 @@ definition — identical shape to the skill-demand duplication above, found
 after any bug like this: *where else does this pattern already exist?*
 
 Two of the four had drifted on `PGHOST`'s default: `job_database.py` and
-`api/database.py` said `"localhost"`, `liveness_checker.py` and
+`backend/api/database.py` said `"localhost"`, `liveness_checker.py` and
 `hirist_liveness_probe.py` said `"127.0.0.1"`. `job_database.connection_params()`
 is now the one definition; the other three import it.
 
