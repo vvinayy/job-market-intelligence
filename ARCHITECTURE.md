@@ -963,10 +963,83 @@ Recorded because each was discovered the expensive way.
   twice the same day with zero errors to verify the migration field by field,
   so it is a tested rollback rather than an assumed one.
 
+### Traps that look like normal behaviour (recorded 2026-10-05)
+
+Each was confirmed against the running system, not inferred.
+
+- **The two scheduled tasks are not configured alike.** Read from
+  `schtasks /query /xml`:
+
+  | | `JobMarket` (11:00) | `JobMarket Liveness Check` (17:00) |
+  | --- | --- | --- |
+  | Starts on battery | no — skipped | yes |
+  | Stops when unplugged | yes | no |
+  | Time limit | 1 hour | 3 hours |
+  | Wakes the machine | no | no |
+  | Missed run | runs at next wake | runs at next wake |
+  | Previous run still going | new run skipped | new run skipped |
+
+  So the snapshot — the one record that cannot be rebuilt — depends on the
+  laptop being awake *and plugged in* at some point that day. The time limits
+  are wall-clock in name only: the 3 Oct check slept for 21 hours mid-run
+  (Windows power log, 20:03 to 17:24) and was not stopped, but because it was
+  still "running" the 4 Oct check was skipped. And a scrape that grows past an
+  hour — more searches, a second results page — is killed with no log line
+  saying which searches never ran.
+- **The daily snapshot is recomputed after every search** (the 3 Oct log: 115,
+  191, 235, 270… skill rows as each search finishes), so its final value is
+  whatever the last successful search left. A crashed search therefore shows
+  on the Trends page as a fall in demand — Python read 113 on 17 Sep and 129
+  on 23 Sep against ~146–159 on the days around them. Neither was the market.
+- **`is_expired = FALSE` does not mean "checked and open".** The scrape writes
+  FALSE on every re-sighting of every board, because a page being served voids
+  an old closure. For Naukri the checker then confirms it; for hirist nothing
+  ever does. Measured 2026-10-05: 299 hirist postings are FALSE with
+  `last_checked_on` NULL, and only 61 are NULL. Anything reading `is_expired`
+  alone — the Jobs page's Open badge and "Still open" filter — counts those
+  299 as open; Home's card and the closure chart also require
+  `last_checked_on` and are right. Left unchanged by decision.
+- **Defaults filter silently.** The Jobs page's experience slider always sends
+  0–20, and `experience_min` NULL fails that test, so 12 postings never appear
+  unless someone narrows and widens the slider. It is why the One-skill tab says
+  306 Kubernetes postings and its "see in Jobs" link shows 304.
+- **Two trend readers, two definitions.** `/trends/movers` and
+  `/trends/new-skills` read `skill_daily_counts_corrected`; `/trends/skills`
+  reads the raw table. Corrections and renames therefore appear in one place and
+  not the other — the 12–17 Aug C++ spike is gone from movers and still drawn on
+  the per-skill line. Deliberately left; a fix would move a displayed line.
+- **Evidence before 2026-08-19 lives only in the logs.** `scrape_runs` began
+  that day, so "when did this search first run" has no database answer earlier
+  — the 18 Aug Naukri search swap was found by reading log files. The logs print
+  each detail URL cut to 90 characters, which drops Naukri's numeric job id,
+  so a relisting and its original are indistinguishable there.
+- **The running process is not the code on disk.** Streamlit re-executes an
+  edited page but keeps every module it has already imported, so adding a
+  function to `dash_common.py` raised `AttributeError` in the live dashboard
+  while every test passed (2026-09-30). Moving files under `uvicorn --reload`
+  took the API down mid-session (2026-10-02). After changing shared code,
+  restart both.
+- **The project only runs from its root.** Imports are package-qualified since
+  the 2026-10-02 reorganisation, so a script run by file path sees its own
+  folder and not the root, and fails on its first import; `python -m` from the
+  root works. Streamlit reads `.streamlit/config.toml` from the working
+  directory, so the light theme also depends on starting from the root.
+- **The repository is public and the root holds untracked files that are not
+  ignored.** `git add -A` would publish them. Every commit in this project
+  stages named paths.
+- **Two encoding traps on the Windows toolchain.** PowerShell's `-Encoding
+  utf8` writes a byte-order mark (it reached a commit subject once), and
+  `.bat` files must stay ASCII with CRLF or `cmd.exe` drops characters
+  without an error.
+- **psycopg2 reads placeholders inside SQL comments.** A `%` in a comment
+  within a query string shifts every positional parameter after it; the
+  closures query carries a warning to that effect.
+
 ### The rule these share
 
 Each of the above is the same failure in a different costume: **the artefact
-that runs is not the artefact you edited.** A `.sql` file is not the function,
+that runs is not the artefact you edited** — or, for the traps just listed,
+the setting that decides is not the one you were looking at. A `.sql` file is not the function,
 a dump file is not the database, a stats counter is not the query plan, and a
 patched module is not the schema. Verify by exercising the thing that actually
 runs.

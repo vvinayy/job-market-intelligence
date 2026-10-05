@@ -714,6 +714,73 @@ why the three skill columns were not merged into one.
   Plan a periodic `VACUUM FULL ANALYZE` (or `pg_repack` at real scale — `VACUUM
   FULL` locks the table for the whole rewrite).
 
+### Looks normal, is not (checked 2026-10-05)
+
+Each of these behaves sensibly on a quiet day and bites later. ARCHITECTURE.md
+section 17 has the evidence behind each.
+
+**The scheduler and the laptop**
+- **The 11:00 scrape does not run on battery, and stops if unplugged
+  mid-run.** `JobMarket` has `DisallowStartIfOnBatteries` and
+  `StopIfGoingOnBatteries` on; the liveness task has neither. Neither task wakes
+  the machine. A day with no scrape is a day with no snapshot, lost for good
+  (27 Sep). `StartWhenAvailable` runs a missed task at the next wake, so a
+  "11:00" scrape or "17:00" check can land at any hour.
+- **A run suspended by sleep blocks the next day's run.** Both tasks are
+  `IgnoreNew`. The 3 Oct liveness check slept from 20:03 to 17:24 next day,
+  finished at 17:31 on 4 Oct, and the 4 Oct check was skipped as a duplicate.
+  Its 3-hour time limit did not stop it. Nothing was lost, only delayed.
+- **The scrape is killed at one hour.** `JobMarket`'s limit is `PT1H`; a full
+  run takes about 15 minutes today. Adding searches or a second results page
+  can push it past the hour, and the searches left at that moment — plus the
+  backstop snapshot — are silently not run.
+
+**What the numbers mean**
+- **Today's snapshot is rewritten after every search**, so it is only final
+  after the last one. A search that crashes lowers that day's counts, and the
+  Trends line shows a dip that is the scraper, not the market (17 Sep: Python
+  113 against ~146 either side; 23 Sep: 129).
+- **One Naukri URL under two `job_id`s is intended, not a dedup bug.** Editing
+  title, company, location or experience changes the fingerprint, so it is a
+  new posting (user decision, 2026-09-30; 6 known pairs).
+- **"Open" on the Jobs page includes 299 hirist postings nobody checked.**
+  `STATE_UPSERT_SQL` writes `is_expired = FALSE` on every re-sighting, any
+  board, so a hirist posting the scraper saw twice reads "Open" and matches
+  "Still open". Only the 61 seen once show "Not checked" — contrary to the
+  page's own help text. Home's "verified still open" is right: it also
+  requires `last_checked_on`. Left as is, 2026-10-05.
+- **The Jobs page hides postings with no stated experience by default.** Its
+  experience slider always sends 0–20, which excludes NULLs: 1,128 of 1,140
+  postings, and 304 Kubernetes jobs against 306 on the Skills tab.
+- **The per-skill trend line reads the raw snapshot.** `/trends/skills` (Trends
+  "Demand over time", the One-skill tab's line) skips corrections and renames,
+  so the false 12–17 Aug C++ spike and split renamed series still show there,
+  while movers and new-skills read the corrected view. Left as is by decision.
+- **`scrape_runs` only starts on 2026-08-19.** Nothing before that can be
+  derived from it — the 18 Aug search swap had to be rebuilt from logs — and
+  the logs print only the first 90 characters of a URL, which cuts off
+  Naukri's numeric job id.
+
+**Running and changing the code**
+- **Run anything inside a folder as a module from the root**
+  (`python -m services.naukri_collector`); `python services\x.py` fails on its
+  imports. `.streamlit/config.toml` is read from the working directory, so
+  start Streamlit from the root too.
+- **Restart the dashboard after editing anything a page imports.** Streamlit
+  reloads the edited page but keeps `dash_common` as first loaded — a new
+  function in it raised `AttributeError` on 2026-09-30 until a restart.
+  Moving files under a running `uvicorn --reload` kills the API the same way.
+- **Untracked files at the root are not gitignored, and the GitHub repo is
+  public.** Stage paths explicitly; never `git add -A` or `git add .` at the
+  root.
+- **PowerShell's `utf8` encoding writes a byte-order mark.** A commit message
+  written with `Set-Content -Encoding utf8` put an invisible character at the
+  start of a commit subject. Write with `New-Object Text.UTF8Encoding $false`.
+- **A `%` inside an SQL comment in a query string breaks psycopg2.** It scans
+  the whole string for placeholders, comments included, and every positional
+  parameter after it shifts. Keep per-cent signs out of SQL comments in
+  `backend/api/routers/`.
+
 ## Style
 
 - Module docstrings explain *why* the file exists and what it deliberately does
